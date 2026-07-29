@@ -1,7 +1,7 @@
 using Test
 using CorePotts
 
-module Phase8DownstreamFixture
+module DownstreamLifecycleFixture
 using CorePotts
 
 struct OddMCS <: AbstractMCSSchedule end
@@ -60,7 +60,7 @@ function CorePotts.emit_initial_claims!(collector::InitialClaimCollector{2}, lay
 end
 end
 
-@testset "Phase 8 open scalar protocols" begin
+@testset "lifecycle and persistence open scalar protocols" begin
     @test is_due(EveryMCS(), 11)
     @test is_due(OnceAtMCS(3), 3)
     @test !is_due(OnceAtMCS(3), 4)
@@ -68,17 +68,17 @@ end
     @test isbits(AtMCS((9, 1, 5)))
     @test is_due(PeriodicMCS(2, 3), 8)
     @test !is_due(PeriodicMCS(2, 3; stop = 7), 8)
-    @test is_due(Phase8DownstreamFixture.OddMCS(), 7)
+    @test is_due(DownstreamLifecycleFixture.OddMCS(), 7)
     @test_throws ArgumentError is_due(EveryMCS(), 0)
     @test_throws ArgumentError OnceAtMCS(0)
     @test_throws ArgumentError AtMCS((0, 1))
 
-    provenance = ComponentIdentity(:phase8_fixture, v"1.0.0", :test)
+    provenance = ComponentIdentity(:lifecycle_fixture, v"1.0.0", :test)
     schema = PropertySchema(PropertyDescriptor(:resource, Int32,
         ConstantInitializer(Int32(10)); requester = provenance,
-        division = Phase8DownstreamFixture.VolumeWeightedDivision(),
-        transition = Phase8DownstreamFixture.OffsetTransition(Int32(4)),
-        retirement = Phase8DownstreamFixture.SentinelRetirement(Int32(-9))))
+        division = DownstreamLifecycleFixture.VolumeWeightedDivision(),
+        transition = DownstreamLifecycleFixture.OffsetTransition(Int32(4)),
+        retirement = DownstreamLifecycleFixture.SentinelRetirement(Int32(-9))))
     owners = reshape(OwnerRef[CellOwner(1), CellOwner(1), MediumOwner(1), MediumOwner(1)], 2, 2)
     state = LogicalPottsState(owners, CellCapacity(3);
         cell_types = Dict(CellID(1) => CellTypeID(1)), medium_domains = (MediumID(1),),
@@ -86,11 +86,11 @@ end
     @test property_values(state, :resource) == Int32[10, -9, -9]
 
     snapshot = PreLifecycleSnapshot(state, 2)
-    trigger = Phase8DownstreamFixture.AboveVolume(Int32(1))
-    effect = Phase8DownstreamFixture.RecordDivision()
+    trigger = DownstreamLifecycleFixture.AboveVolume(Int32(1))
+    effect = DownstreamLifecycleFixture.RecordDivision()
     @test lifecycle_triggered(trigger, snapshot, CellID(1))
     @test plan_lifecycle_effect(effect, snapshot, CellID(1)) == (cell = CellID(1), mcs = 2)
-    event = LifecycleEvent(ActiveCellsTarget(), Phase8DownstreamFixture.OddMCS(), trigger,
+    event = LifecycleEvent(ActiveCellsTarget(), DownstreamLifecycleFixture.OddMCS(), trigger,
         effect; semantic_id = 0x42, priority = 7)
     @test isbits(event)
 
@@ -116,7 +116,7 @@ end
     @test_throws LifecycleConflictError resolve_lifecycle_conflicts(
         StableLifecyclePriority(), tied)
 
-    geometry = Phase8DownstreamFixture.OffsetPlane(0.0f0)
+    geometry = DownstreamLifecycleFixture.OffsetPlane(0.0f0)
     contexts = [DivisionSiteContext((Float32(x), 0.0f0), (0.0f0, 0.0f0)) for x in (-1, 1)]
     labels = UInt8[division_region(geometry, context) for context in contexts]
     report = validate_binary_partition(labels)
@@ -125,8 +125,8 @@ end
     @test !validate_binary_partition(UInt8[1, 1]).valid
     @test !validate_binary_partition(UInt8[1, 3]).valid
 
-    custom = Phase8DownstreamFixture.DiagonalLayout(ProvisionalCellID(80), false)
-    custom_reversed = Phase8DownstreamFixture.DiagonalLayout(ProvisionalCellID(80), true)
+    custom = DownstreamLifecycleFixture.DiagonalLayout(ProvisionalCellID(80), false)
+    custom_reversed = DownstreamLifecycleFixture.DiagonalLayout(ProvisionalCellID(80), true)
     other = CoordinateCellLayout(20, 2, CartesianIndex{2}[CartesianIndex(1, 2)])
     initialized_a = finalize_initial_state((2, 2), custom, other;
         capacity = CellCapacity(2), medium_domains = (MediumID(1),))

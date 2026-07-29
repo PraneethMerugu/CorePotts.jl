@@ -15,7 +15,12 @@ function _extension_default_profile()
     )
 end
 
-@testset "Phase 13 frozen contract versions" begin
+@testset "frozen contract versions" begin
+    @test PHASE13_RESULT_EVIDENCE_SCHEMA_VERSION === RESULT_EVIDENCE_SCHEMA_VERSION
+    @test Phase14ContractVersions === CoupledContractVersions
+    @test PHASE14_CONTRACT_SET_VERSION === COUPLED_CONTRACT_SET_VERSION
+    @test PHASE14_CONTRACT_VERSIONS === COUPLED_CONTRACT_VERSIONS
+    @test phase14_contract_versions === coupled_contract_versions
     versions = scientific_contract_versions()
     @test versions === SCIENTIFIC_CONTRACT_VERSIONS
     @test versions.freeze_status === :phase13_frozen
@@ -26,7 +31,7 @@ end
           CorePotts._CHECKPOINT_SCHEMA_VERSION
     @test versions.semantic_fingerprint == SEMANTIC_FINGERPRINT_VERSION
     @test versions.execution_fingerprint == EXECUTION_FINGERPRINT_VERSION
-    @test versions.result_evidence_schema == PHASE13_RESULT_EVIDENCE_SCHEMA_VERSION
+    @test versions.result_evidence_schema == RESULT_EVIDENCE_SCHEMA_VERSION
     @test component_identity(SequentialCPM()).version ==
           SEQUENTIAL_ALGORITHM_CONTRACT_VERSION
     @test component_identity(SequentialEquilibrium()).version ==
@@ -39,7 +44,7 @@ end
     @test occursin("phase13_frozen", sprint(show, versions))
 end
 
-@testset "Phase 13 guarantee metadata defaults and scope" begin
+@testset "algorithm guarantee metadata defaults and scope" begin
     @test algorithm_guarantee_taxonomy() === ALGORITHM_GUARANTEE_TAXONOMY
     default = _extension_default_profile()
     @test default.guarantee_label === :unqualified
@@ -63,7 +68,7 @@ end
     @test sequential.tested_backends ==
           checkerboard.tested_backends == (:cpu, :metal, :amdgpu)
     @test sequential.evidence_version ==
-          checkerboard.evidence_version == PHASE13_RESULT_EVIDENCE_SCHEMA_VERSION
+          checkerboard.evidence_version == RESULT_EVIDENCE_SCHEMA_VERSION
     @test sequential.qualified_domain.transition.registration ===
           checkerboard.qualified_domain.transition.registration ===
           :phase13_transition_evidence_v2
@@ -100,7 +105,7 @@ end
         qualified_domain = (fixture = :example,),
         maximum_observed_discrepancy = 0.01,
         tested_backends = (:cpu,),
-        evidence_version = PHASE13_RESULT_EVIDENCE_SCHEMA_VERSION,
+        evidence_version = RESULT_EVIDENCE_SCHEMA_VERSION,
     )
     @test qualified.guarantee_label === :observably_comparable
     @test qualified.tested_backends == (:cpu,)

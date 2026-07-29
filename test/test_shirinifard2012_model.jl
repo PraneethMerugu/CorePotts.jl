@@ -109,7 +109,7 @@ function _cnv_payload(result, name)
     only(delta.payload for delta in result.deltas if delta.target == target)
 end
 
-@testset "Phase 16.H CNV source trace and generated startup" begin
+@testset "CNV source trace and generated startup" begin
     state = CorePotts.cnv2012_initial_state()
     @test size(state.labels) == (40, 40, 35)
     @test maximum(state.labels) == UInt32(5151)
@@ -136,7 +136,7 @@ end
         CorePotts.CNV_RPE, :RPE_VEGF, 1.0, 2.0) == 0.0
 end
 
-@testset "Phase 16.H CNV lifecycle and degradation microfixtures" begin
+@testset "CNV lifecycle and degradation microfixtures" begin
     state = _cnv_reduced_state()
     oxygen = fill(80.0, size(state.labels))
     oxygen[6:7, 6:7, 4:5] .= 10.0
@@ -180,7 +180,7 @@ end
     @test death_result.diagnostics.deaths >= 1
 end
 
-@testset "Phase 16.H CNV managed four-field assembly" begin
+@testset "CNV managed four-field assembly" begin
     state = _cnv_reduced_state()
     scale = PB.TimeScale(216, 1, :second)
     composite = CorePotts.cnv2012_native_composite(state)

@@ -1,4 +1,4 @@
-module Phase10ExternalEnergyExtension
+module ExternalEnergyExtension
 
 using CorePotts
 
@@ -7,7 +7,7 @@ struct ConstantProposalEnergy{T <: AbstractFloat} <: AbstractEnergy
 end
 
 CorePotts.component_identity(::ConstantProposalEnergy) =
-    ComponentIdentity(:phase10_constant_proposal_energy, v"1.0.0", :energy)
+    ComponentIdentity(:constant_proposal_energy, v"1.0.0", :energy)
 CorePotts.energy_change(component::ConstantProposalEnergy, proposal::CopyProposal,
     state::LogicalPottsState) = component.value
 CorePotts.proposal_energy_change(component::ConstantProposalEnergy,
@@ -20,7 +20,7 @@ struct TwoDimensionalEnergy{T <: AbstractFloat} <: AbstractEnergy
     value::T
 end
 CorePotts.component_identity(::TwoDimensionalEnergy) =
-    ComponentIdentity(:phase10_two_dimensional_energy, v"1.0.0", :energy)
+    ComponentIdentity(:two_dimensional_energy, v"1.0.0", :energy)
 CorePotts.energy_change(component::TwoDimensionalEnergy,
     proposal::CopyProposal, state::LogicalPottsState) = component.value
 CorePotts.proposal_energy_change(component::TwoDimensionalEnergy,
@@ -33,14 +33,14 @@ CorePotts.component_semantic_data(component::TwoDimensionalEnergy) =
 
 struct IncompleteCompiledEnergy <: AbstractEnergy end
 CorePotts.component_identity(::IncompleteCompiledEnergy) =
-    ComponentIdentity(:phase10_incomplete_compiled_energy, v"1.0.0", :energy)
+    ComponentIdentity(:incomplete_compiled_energy, v"1.0.0", :energy)
 CorePotts.energy_change(::IncompleteCompiledEnergy,
     proposal::CopyProposal, state::LogicalPottsState) = 0.0f0
 
 end
 
 
-@testset "Phase 10 composable lifecycle trigger protocol" begin
+@testset "extension protocol composable lifecycle trigger protocol" begin
     owners = reshape(OwnerRef[CellOwner(1), CellOwner(2)], 1, 2)
     state = LogicalPottsState(owners, CellCapacity(2);
         cell_types = Dict(CellID(1) => CellTypeID(1), CellID(2) => CellTypeID(2)),
@@ -60,14 +60,14 @@ end
 end
 
 
-@testset "Phase 10 downstream compiled-component protocol" begin
-    component = Phase10ExternalEnergyExtension.ConstantProposalEnergy(2.5f0)
+@testset "extension protocol downstream compiled-component protocol" begin
+    component = ExternalEnergyExtension.ConstantProposalEnergy(2.5f0)
     @test validate_energy_component(component).category === :energy
     @test validate_proposal_component(component) === component
     @test scientific_access(component) isa SnapshotScientificAccess
 
     metadata = component_metadata(component)
-    @test metadata.identity.key === :phase10_constant_proposal_energy
+    @test metadata.identity.key === :constant_proposal_energy
     @test metadata.identity.category === :energy
     @test metadata.semantic_data == (value = 2.5f0,)
 
@@ -116,7 +116,7 @@ end
         fixture_3d.boundary.metric, fixture_3d.boundary.relation)
     dimensions_model = PottsModel(fixture_3d.proposal_relation, tracker_3d;
         components = ScientificComponentSet(energies =
-            (Phase10ExternalEnergyExtension.TwoDimensionalEnergy(1.0f0),)))
+            (ExternalEnergyExtension.TwoDimensionalEnergy(1.0f0),)))
     dimensions_problem = PottsProblem(
         dimensions_model, fixture_3d.state, fixture_3d.domain, (0, 1))
     dimensions_report = compatibility_report(dimensions_problem, SequentialCPM())
@@ -126,7 +126,7 @@ end
 
     incomplete_model = PottsModel(fixture.proposal_relation, tracker;
         components = ScientificComponentSet(energies =
-            (Phase10ExternalEnergyExtension.IncompleteCompiledEnergy(),)))
+            (ExternalEnergyExtension.IncompleteCompiledEnergy(),)))
     incomplete_problem = PottsProblem(
         incomplete_model, fixture.state, fixture.domain, (0, 1))
     incomplete_report = compatibility_report(incomplete_problem, SequentialCPM())

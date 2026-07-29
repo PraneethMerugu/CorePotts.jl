@@ -5,7 +5,7 @@ using SciMLBase
 using HDF5
 using Zarr
 
-function phase8_persistence_integrator(algorithm = SequentialCPM(temperature = 2.0f0))
+function persistence_integrator_fixture(algorithm = SequentialCPM(temperature = 2.0f0))
     energy = QuadraticVolumeHamiltonian(number_type = Float32)
     owners = fill(MediumOwner(1), 6, 6)
     fill!(view(owners, 2:5, 2:3), CellOwner(1))
@@ -30,8 +30,8 @@ function phase8_persistence_integrator(algorithm = SequentialCPM(temperature = 2
         seed = 0x7065727369737401, plan, lifecycle)
 end
 
-@testset "Phase 8 canonical persistence" begin
-    initial = phase8_persistence_integrator()
+@testset "lifecycle and persistence canonical persistence" begin
+    initial = persistence_integrator_fixture()
     root = capture_checkpoint(initial)
     @test root.mcs == 0
     @test root.initial_state_fingerprint != ntuple(_ -> UInt8(0), 32)
@@ -91,7 +91,7 @@ end
     for algorithm in (SequentialCPM(temperature = 2.0f0),
             CheckerboardSweepCPM(temperature = 2.0f0),
             LotteryCPM(temperature = 2.0f0))
-        uninterrupted = phase8_persistence_integrator(algorithm)
+        uninterrupted = persistence_integrator_fixture(algorithm)
         step!(uninterrupted, 2)
         checkpoint = capture_checkpoint(uninterrupted; ancestry = root)
         @test checkpoint.initial_state_fingerprint == root.initial_state_fingerprint
@@ -109,10 +109,10 @@ end
         @test current_mcs_report(resumed) == current_mcs_report(uninterrupted)
     end
 
-    source = phase8_persistence_integrator()
+    source = persistence_integrator_fixture()
     step!(source)
     checkpoint = capture_checkpoint(source; ancestry = root)
-    different = phase8_persistence_integrator(LotteryCPM(temperature = 2.0f0))
+    different = persistence_integrator_fixture(LotteryCPM(temperature = 2.0f0))
     @test_throws CheckpointCompatibilityError restore_checkpoint(checkpoint, different)
     imported, report = import_checkpoint(checkpoint, different)
     @test imported.mcs == checkpoint.mcs

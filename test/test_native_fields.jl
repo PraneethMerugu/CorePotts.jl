@@ -20,7 +20,7 @@ function p16c_engine(
         number_type=eltype(values),
     )
     CorePotts.NativeFieldEngine(
-        :phase16_native,
+        :native_field,
         values,
         plan;
         geometry,
@@ -75,7 +75,7 @@ function p16c_periodic_reference(
     result
 end
 
-@testset "Phase 16.C native CPU staged transaction" begin
+@testset "native field CPU staged transaction" begin
     initial = reshape(Float64.(1:20), 4, 5)
     engine = p16c_engine(
         initial;
@@ -129,7 +129,7 @@ end
     @test_throws ArgumentError CorePotts.stage_native_field!(engine, 3)
 end
 
-@testset "Phase 16.C native CPU 2D/3D and boundary oracle" begin
+@testset "native field CPU 2D/3D and boundary oracle" begin
     for dimensions in ((4, 5), (3, 4, 5))
         initial = fill(2.5f0, dimensions)
         engine = p16c_engine(
@@ -179,7 +179,7 @@ end
     )
 end
 
-@testset "Phase 16.C native CPU conservation and manufactured refinement" begin
+@testset "native field CPU conservation and manufactured refinement" begin
     impulse = zeros(Float64, 16, 12)
     impulse[3, 7] = 1.0
     engine = p16c_engine(
@@ -222,7 +222,7 @@ end
     @test errors[2] < errors[1] / 3
 end
 
-@testset "Phase 16.C native CPU failure, allocation, and restart" begin
+@testset "native field CPU failure, allocation, and restart" begin
     initial = fill(1.0f0, 32, 32)
     failing = p16c_engine(
         initial;
@@ -284,7 +284,7 @@ end
             CorePotts.advance_native_field!(engine, tick)
             if tick == cut
                 engine = CorePotts.NativeFieldEngine(
-                    :phase16_native,
+                    :native_field,
                     copy(engine.published),
                     ExecutionPlan(KernelAbstractions.CPU(); block_size=64);
                     geometry=engine.geometry,

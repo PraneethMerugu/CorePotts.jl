@@ -1,4 +1,4 @@
-function _phase14_relationship_process_plan(
+function _relationship_process_plan(
         execution_mode)
     fixture = _scientific_fixture(
         Float32, (4, 4))
@@ -118,12 +118,12 @@ function _phase14_relationship_process_plan(
         first, second)
 end
 
-@testset "Phase 14 scheduled retune and cleanup execute through the root plan" begin
+@testset "coupled dynamics scheduled retune and cleanup execute through the root plan" begin
     host =
-        _phase14_relationship_process_plan(
+        _relationship_process_plan(
         CorePotts.HostCoupledExecution())
     portable =
-        _phase14_relationship_process_plan(
+        _relationship_process_plan(
         CorePotts.PortableCoupledExecution())
 
     for fixture in (host, portable)

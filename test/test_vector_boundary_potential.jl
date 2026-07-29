@@ -1,4 +1,4 @@
-function _phase14_vector_boundary_state(
+function _vector_boundary_state(
         owners, component; values)
     cell_ids = sort!(unique(
         Int(owner.value) for owner in owners
@@ -21,14 +21,14 @@ function _phase14_vector_boundary_state(
     return state
 end
 
-CorePotts.KernelAbstractions.@kernel function _phase14_vector_boundary_probe!(
+CorePotts.KernelAbstractions.@kernel function _vector_boundary_probe!(
         output, state, component, proposal)
     output[1] = energy_change(
         component, proposal, state,
         state.domain)
 end
 
-@testset "Phase 14 CC3D-derived vector boundary potential" begin
+@testset "coupled dynamics CC3D-derived vector boundary potential" begin
     T = Float32
     boundaries = (
         AxisBoundary(ClosedBoundary()),
@@ -84,7 +84,7 @@ end
         fill(MediumOwner(1), 5, 5)
     extension_owners[2, 3] = CellOwner(1)
     extension_state =
-        _phase14_vector_boundary_state(
+        _vector_boundary_state(
         extension_owners, component;
         values = (
             force_x = T[-4],
@@ -108,7 +108,7 @@ end
     retraction_owners[2, 3] = CellOwner(1)
     retraction_owners[3, 3] = CellOwner(1)
     retraction_state =
-        _phase14_vector_boundary_state(
+        _vector_boundary_state(
         retraction_owners, component;
         values = (
             force_x = T[-4],
@@ -126,7 +126,7 @@ end
     replacement_owners[2, 3] = CellOwner(1)
     replacement_owners[3, 2] = CellOwner(2)
     replacement_state =
-        _phase14_vector_boundary_state(
+        _vector_boundary_state(
         replacement_owners, component;
         values = (
             force_x = T[1, -3],
@@ -165,7 +165,7 @@ end
         fill(MediumOwner(1), 3, 3)
     periodic_owners[3, 2] = CellOwner(1)
     periodic_state =
-        _phase14_vector_boundary_state(
+        _vector_boundary_state(
         periodic_owners,
         periodic_component;
         values = (
@@ -209,7 +209,7 @@ end
     output = zeros(T, 1)
     backend = CorePotts.KernelAbstractions.CPU()
     kernel =
-        _phase14_vector_boundary_probe!(
+        _vector_boundary_probe!(
         backend, 1)
     kernel(
         output, scientific_execution(compiled),
@@ -233,7 +233,7 @@ end
           mutable_site_count(domain)
 end
 
-@testset "Phase 14 vector boundary potential is dimension generic" begin
+@testset "coupled dynamics vector boundary potential is dimension generic" begin
     T = Float64
     boundaries = ntuple(
         _ -> AxisBoundary(ClosedBoundary()), 3)
@@ -252,7 +252,7 @@ end
             number_type = T)
     owners = fill(MediumOwner(1), 4, 4, 4)
     owners[2, 2, 2] = CellOwner(1)
-    state = _phase14_vector_boundary_state(
+    state = _vector_boundary_state(
         owners, component;
         values = (
             force_x = T[-1.5],

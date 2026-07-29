@@ -103,8 +103,8 @@ function CorePotts.synchronize_accepted_copy_effect_status!(
     return nothing
 end
 
-@testset "Phase 14 contract versions and source attempt budget" begin
-    versions = phase14_contract_versions()
+@testset "coupled dynamics contract versions and source attempt budget" begin
+    versions = coupled_contract_versions()
     @test versions.contract_set == v"2.0.0"
     @test (
         versions.state, versions.process, versions.plan,
@@ -143,7 +143,7 @@ end
           :exact_n_independent_attempts
 end
 
-@testset "Phase 14 site state and accepted-copy transaction hook" begin
+@testset "coupled dynamics site state and accepted-copy transaction hook" begin
     fixture = _scientific_fixture(Float32, (4, 4))
     tracker = BoundaryMeasureTracker(
         fixture.boundary.metric, fixture.boundary.relation)
@@ -190,7 +190,7 @@ end
     @test all(value -> 0.0f0 <= value <= 0.75f0, site_state.values)
 end
 
-@testset "Phase 14 staged accepted-copy extension transaction" begin
+@testset "coupled dynamics staged accepted-copy extension transaction" begin
     fixture = _scientific_fixture(Float32, (4, 4))
     tracker = BoundaryMeasureTracker(
         fixture.boundary.metric, fixture.boundary.relation)
@@ -235,7 +235,7 @@ end
     @test failing_probe.counters[5] == UInt32(1)
 end
 
-@testset "Phase 14 Wortel Act semantic-kernel vertical slice" begin
+@testset "coupled dynamics Wortel Act semantic-kernel vertical slice" begin
     fixture = _scientific_fixture(Float32, (6, 6))
     tracker = BoundaryMeasureTracker(
         fixture.boundary.metric, fixture.boundary.relation)
@@ -395,7 +395,7 @@ end
     @test rejected_state.site_states[1].values == before_preflight
 end
 
-@testset "Phase 14 history and relationship state" begin
+@testset "coupled dynamics history and relationship state" begin
     history = CellHistory(:centroid_history; source = :centroid,
         length = 3, initial = MissingUntilFull())
     generations = [CellGeneration(1), CellGeneration(1)]
@@ -458,7 +458,7 @@ end
         ownership, 2)
 end
 
-@testset "Phase 14 bounded portable relationship transaction" begin
+@testset "coupled dynamics bounded portable relationship transaction" begin
     fixture = _scientific_fixture(Float32, (4, 4))
     tracker = BoundaryMeasureTracker(
         fixture.boundary.metric, fixture.boundary.relation)
@@ -660,7 +660,7 @@ end
     @test cleanup_plan.metrics.launches == 3
 end
 
-@testset "Phase 14 generic contact relationship accepted-copy transaction" begin
+@testset "coupled dynamics generic contact relationship accepted-copy transaction" begin
     fixture = _focal_fixture(Float32, (5, 5))
     relation = static_relation(
         SpatialQueryRole(), CorePotts.offsets(CorePotts.MooreTopology{2}());
@@ -784,7 +784,7 @@ end
         CorePotts.CoupledIntegrator
 end
 
-@testset "Phase 14 coupled checkpoint all authoritative state families" begin
+@testset "coupled dynamics coupled checkpoint all authoritative state families" begin
     fixture = _scientific_fixture(Float32, (4, 4))
     tracker = BoundaryMeasureTracker(
         fixture.boundary.metric, fixture.boundary.relation)
@@ -861,7 +861,7 @@ end
     @test read_checkpoint(store, "stable").checksum == checkpoint.checksum
 end
 
-@testset "Phase 14 relationship persistence uses bulk device writes" begin
+@testset "coupled dynamics relationship persistence uses bulk device writes" begin
     declaration = RelationshipSet(
         :bulk_only_edges; edge = Float32,
         maximum_degree = 2, capacity = RelationshipCapacity(2))
@@ -900,7 +900,7 @@ end
     @test guarded.publication_epoch == UInt64[5]
 end
 
-@testset "Phase 14 coupled plan, protocol, and completed-MCS publication" begin
+@testset "coupled dynamics coupled plan, protocol, and completed-MCS publication" begin
     @test_throws ArgumentError MCSPlan(
         PottsAttempts(), ObservationPhase(), LifecyclePhase())
     @test_throws ArgumentError MCSPlan(
@@ -984,7 +984,7 @@ end
     @test coupled.stage == :active
 end
 
-@testset "Phase 14 general continuous systems and field coupling" begin
+@testset "coupled dynamics general continuous systems and field coupling" begin
     global_state = initialize_global_property(
         GlobalProperty(:stimulus; initial = 1.0))
     set_global_property!(global_state, 2.0; semantic_time = 1)
@@ -1546,7 +1546,7 @@ end
         steady_field.diagnostics.threshold
 end
 
-@testset "Phase 14 affine intracellular state and advancement" begin
+@testset "coupled dynamics affine intracellular state and advancement" begin
     requester = ComponentIdentity(
         :affine_intracellular_test, v"1.0.0", :test)
     schema = PropertySchema(
@@ -1787,7 +1787,7 @@ end
     @test portable_workspace.publication_epoch[1] == 1
 end
 
-@testset "Phase 14 delay, event, mapping, adapter, and multirate semantics" begin
+@testset "coupled dynamics delay, event, mapping, adapter, and multirate semantics" begin
     delay = DelayState(:past_x; source = :x, delay = 1.0,
         sampling = EveryGlobal(0.5), interpolation = ExactSample())
     delay_state = DelayStateStorage(delay, 0.0)

@@ -6,7 +6,7 @@ include(joinpath(
     "independent_custom_field_adapter.jl"))
 using .IndependentCustomFieldAdapterFixture
 
-function p16f_cross_advance!(runtime, target, forcing, native::Bool)
+function cross_adapter_advance!(runtime, target, forcing, native::Bool)
     PB.advance_managed_engine!(
         runtime,
         PB.LogicalTime(target, runtime.logical_time.scale);
@@ -23,13 +23,13 @@ function p16f_cross_advance!(runtime, target, forcing, native::Bool)
     )
 end
 
-function p16f_cross_snapshot(runtime, native::Bool)
+function cross_adapter_snapshot(runtime, native::Bool)
     native ?
         CorePotts.process_bigraph_native_field_snapshot(runtime) :
         PB.field_engine_snapshot(runtime.instance)
 end
 
-function p16f_cross_exact(initial, diffusion, decay, tick_duration, ticks)
+function cross_adapter_exact(initial, diffusion, decay, tick_duration, ticks)
     offset = eltype(initial)(2)
     amplitude = maximum(initial) - offset
     mode = 2
@@ -47,7 +47,7 @@ function p16f_cross_exact(initial, diffusion, decay, tick_duration, ticks)
     result
 end
 
-@testset "Phase 16.F native real-solver custom cross-adapter evidence" begin
+@testset "solver coupling native real-solver custom cross-adapter evidence" begin
     for T in (Float64, Float32)
         dimensions = T === Float64 ? (12, 10) : (12, 10, 4)
         initial = Array{T}(undef, dimensions)
@@ -60,7 +60,7 @@ end
         decay = T(0.03)
         tick_duration = T(0.01)
         problem = PB.BoundedCartesianFieldProblem(
-            "phase16f-cross",
+            "solver_adapter-cross",
             initial;
             diffusion,
             decay,
@@ -68,7 +68,7 @@ end
             time_scale=scale,
         )
         native_adapter = CorePotts.CorePottsNativeFieldAdapter(
-            :phase16f_cross,
+            :cross_solver_adapter,
             initial;
             diffusion,
             decay,
@@ -77,7 +77,7 @@ end
             block_size=64,
         )
         native = CorePotts.process_bigraph_native_field_runtime(
-            "phase16f-native",
+            "solver_adapter-native",
             native_adapter;
             structural_epoch="field-epoch-0",
         )
@@ -106,14 +106,14 @@ end
         ticks = 8
         forcing = zeros(T, size(initial))
         for tick in 1:ticks
-            p16f_cross_advance!(native, tick, forcing, true)
-            p16f_cross_advance!(sciml, tick, forcing, false)
-            p16f_cross_advance!(custom, tick, forcing, false)
+            cross_adapter_advance!(native, tick, forcing, true)
+            cross_adapter_advance!(sciml, tick, forcing, false)
+            cross_adapter_advance!(custom, tick, forcing, false)
         end
-        native_values = p16f_cross_snapshot(native, true)
-        sciml_values = p16f_cross_snapshot(sciml, false)
-        custom_values = p16f_cross_snapshot(custom, false)
-        exact = p16f_cross_exact(
+        native_values = cross_adapter_snapshot(native, true)
+        sciml_values = cross_adapter_snapshot(sciml, false)
+        custom_values = cross_adapter_snapshot(custom, false)
+        exact = cross_adapter_exact(
             initial, diffusion, decay, tick_duration, ticks)
         native_error = maximum(abs.(native_values .- exact))
         sciml_error = maximum(abs.(sciml_values .- exact))

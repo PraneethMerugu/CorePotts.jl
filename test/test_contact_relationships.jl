@@ -90,7 +90,7 @@ function _contact_edge_keys(relationships)
         for edge in relationships.edges)
 end
 
-@testset "Phase 14 dynamic contact spring energy is exact and counted once" begin
+@testset "coupled dynamics dynamic contact spring energy is exact and counted once" begin
     owners = fill(MediumOwner(1), 7, 7)
     owners[3, 3] = owners[3, 4] = CellOwner(1)
     owners[4, 3] = owners[4, 4] = CellOwner(2)
@@ -128,7 +128,7 @@ end
     @test only(fixture.relationships.publication_epoch) == before_epoch
 end
 
-@testset "Phase 14 dynamic contact extinction subtracts energy and removes all links" begin
+@testset "coupled dynamics dynamic contact extinction subtracts energy and removes all links" begin
     owners = fill(MediumOwner(1), 7, 7)
     owners[3, 3] = CellOwner(1)
     owners[4, 3] = owners[4, 4] = CellOwner(2)
@@ -162,7 +162,7 @@ end
         logical_snapshot(fixture.compiled.potts), CellID(1))
 end
 
-@testset "Phase 14 dynamic contact removes one canonical overlength link per endpoint" begin
+@testset "coupled dynamics dynamic contact removes one canonical overlength link per endpoint" begin
     owners = fill(MediumOwner(1), 8, 8)
     owners[3, 3] = owners[3, 4] = CellOwner(1)
     owners[4, 3] = owners[4, 4] = CellOwner(2)
@@ -198,7 +198,7 @@ end
         before_epoch + UInt64(1)
 end
 
-@testset "Phase 14 dynamic contact extinction removes every incident link" begin
+@testset "coupled dynamics dynamic contact extinction removes every incident link" begin
     owners = fill(MediumOwner(1), 8, 8)
     owners[3, 3] = CellOwner(1)
     owners[4, 3] = CellOwner(2)
@@ -228,7 +228,7 @@ end
         before_epoch + UInt64(1)
 end
 
-@testset "Phase 14 dynamic contact degree, capacity, and stale preflight are atomic" begin
+@testset "coupled dynamics dynamic contact degree, capacity, and stale preflight are atomic" begin
     owners = fill(MediumOwner(1), 8, 8)
     owners[3, 3] = owners[3, 4] = CellOwner(1)
     owners[4, 3] = owners[4, 4] = CellOwner(2)
@@ -290,7 +290,7 @@ end
     @test only(stale_fixture.relationships.publication_epoch) == UInt64(0)
 end
 
-@testset "Phase 14 dynamic contact creation is canonical and restart-safe" begin
+@testset "coupled dynamics dynamic contact creation is canonical and restart-safe" begin
     owners = fill(MediumOwner(1), 8, 8)
     owners[3, 3] = owners[3, 4] = CellOwner(1)
     owners[4, 3] = owners[4, 4] = CellOwner(2)
@@ -358,7 +358,7 @@ function _contact_zero_allocation_probe(
     return nothing
 end
 
-@testset "Phase 14 dynamic contact warm attempt path allocates zero bytes" begin
+@testset "coupled dynamics dynamic contact warm attempt path allocates zero bytes" begin
     owners = fill(MediumOwner(1), 7, 7)
     owners[3, 3] = owners[3, 4] = CellOwner(1)
     owners[4, 3] = owners[4, 4] = CellOwner(2)

@@ -3,7 +3,7 @@ import ProcessBigraphs as PB
 function p16e_native_configuration(values)
     scale = PB.TimeScale(1, 100, :second)
     adapter = CorePotts.CorePottsNativeFieldAdapter(
-        :phase16e_field,
+        :checkpoint_field,
         values;
         diffusion=0.1,
         decay=0.03,
@@ -17,7 +17,7 @@ end
 
 function p16e_direct_native_field(values)
     CorePotts.NativeFieldEngine(
-        :phase16e_field,
+        :checkpoint_field,
         values,
         ExecutionPlan(KernelAbstractions.CPU(); block_size=64);
         diffusion=0.1,
@@ -48,7 +48,7 @@ function p16e_empty_serial_runtime()
     schema = PB.BranchSchema(
         marker=PB.LeafSchema(Int; default=0, update_law=:replace),
     )
-    model = PB.compose(:P16EEmptyRuntime, schema; scale) do _, _
+    model = PB.compose(:EmptyCheckpointRuntime, schema; scale) do _, _
     end
     composite = PB.compile(model)
     executor = PB.SerialExecutor(root_seed=1605)
@@ -94,7 +94,7 @@ end
 function p16e_managed_trajectory(initial, forcings)
     adapter, scale = p16e_native_configuration(initial)
     runtime = CorePotts.process_bigraph_native_field_runtime(
-        "phase16e-field",
+        "checkpoint_adapter-field",
         adapter;
         structural_epoch="domain-epoch-0",
     )
@@ -164,7 +164,7 @@ function p16e_empty_coupled_checkpoint(base::CanonicalCheckpoint)
     )
 end
 
-@testset "Phase 16.E CorePotts native-field strangler cutover" begin
+@testset "CorePotts native-field adapter cutover" begin
     initial = reshape(Float64.(1:20), 4, 5)
     forcings = [
         fill(0.01 * tick, size(initial))
@@ -195,7 +195,7 @@ end
     @test !(:scheduler in fieldnames(typeof(adapter)))
 
     unauthorized = CorePotts.process_bigraph_native_field_runtime(
-        "phase16e-field",
+        "checkpoint_adapter-field",
         adapter;
         structural_epoch="domain-epoch-0",
     )
@@ -223,7 +223,7 @@ end
 
     failing_adapter, _ = p16e_native_configuration(zeros(Float64, 4, 5))
     failing = CorePotts.process_bigraph_native_field_runtime(
-        "phase16e-failing",
+        "checkpoint_adapter-failing",
         failing_adapter;
         structural_epoch="domain-epoch-0",
     )
@@ -252,7 +252,7 @@ end
         (cell_request,)).selected) === cell_request
 end
 
-@testset "Phase 16.E CorePotts V3 restart differential" begin
+@testset "CorePotts coupled checkpoint restart differential" begin
     initial = reshape(Float64.(1:20), 4, 5)
     forcings = [
         reshape(Float64.(tick:(tick + 19)), 4, 5) .* 1e-3
@@ -265,18 +265,18 @@ end
 
     for cut in 0:3
         prefix = CorePotts.process_bigraph_native_field_runtime(
-            "phase16e-field",
+            "checkpoint_adapter-field",
             adapter;
             structural_epoch="domain-epoch-0",
         )
         for tick in 1:cut
             p16e_advance_managed!(prefix, tick, forcings[tick])
         end
-        checkpoint = PB.phase16_checkpoint(
+        checkpoint = PB.capture_logical_checkpoint(
             serial; managed_engines=(prefix,))
         encoded = PB.encode_checkpoint(checkpoint)
-        decoded = PB.decode_phase16_checkpoint(encoded)
-        restored = PB.restore_phase16_checkpoint(
+        decoded = PB.decode_logical_checkpoint(encoded)
+        restored = PB.restore_logical_checkpoint(
             composite,
             executor,
             decoded;
@@ -292,16 +292,16 @@ end
         @test resumed.instance.engine.publication_epoch == UInt64(4)
     end
 
-    checkpoint = PB.phase16_checkpoint(
+    checkpoint = PB.capture_logical_checkpoint(
         serial; managed_engines=(baseline,))
     encoded = PB.encode_checkpoint(checkpoint)
     corrupted = copy(encoded)
     corrupted[end] ⊻= 0x01
-    @test_throws PB.ProcessBigraphError PB.decode_phase16_checkpoint(
+    @test_throws PB.ProcessBigraphError PB.decode_logical_checkpoint(
         corrupted)
 end
 
-@testset "Phase 16.E non-destructive CorePotts legacy conversion" begin
+@testset "non-destructive CorePotts legacy conversion" begin
     source = capture_checkpoint(p16e_legacy_integrator())
     source_payload = checkpoint_storage_payload(source)
     composite, executor, serial = p16e_empty_serial_runtime()
@@ -311,7 +311,7 @@ end
         source,
     )
     @test checkpoint_storage_payload(source) == source_payload
-    @test PB.decode_phase16_checkpoint(
+    @test PB.decode_logical_checkpoint(
         PB.encode_checkpoint(converted)).integrity == converted.integrity
     @test checkpoint_storage_payload(
         checkpoint_from_storage_payload(source_payload)) == source_payload
@@ -325,7 +325,7 @@ end
     )
     @test coupled.checksum == coupled_before.checksum
     @test coupled.base.checksum == coupled_before.base.checksum
-    @test PB.decode_phase16_checkpoint(
+    @test PB.decode_logical_checkpoint(
         PB.encode_checkpoint(coupled_converted)).integrity ==
         coupled_converted.integrity
     @test validate_checkpoint(coupled) === coupled

@@ -3,7 +3,7 @@ using CorePotts
 using KernelAbstractions
 using SciMLBase
 
-module Phase8LifecycleExtension
+module LifecycleExtensionFixture
 using CorePotts
 struct DoubleProperty{Key} <: AbstractLifecycleEffect end
 DoubleProperty(key::Symbol) = DoubleProperty{key}()
@@ -60,8 +60,8 @@ function CorePotts.compiled_commit_effect_stage!(::StagedSwapProperty{Key},
 end
 end
 
-function phase8_lifecycle_state(; capacity = 4)
-    provenance = ComponentIdentity(:phase8_lifecycle, v"1.0.0", :test)
+function lifecycle_state_fixture(; capacity = 4)
+    provenance = ComponentIdentity(:lifecycle_fixture, v"1.0.0", :test)
     schema = PropertySchema(
         PropertyDescriptor(:target, Int32, ConstantInitializer(Int32(0));
             requester = provenance, division = SplitOnDivision(),
@@ -81,15 +81,15 @@ function phase8_lifecycle_state(; capacity = 4)
     return state
 end
 
-@testset "Phase 8 scalar lifecycle phase" begin
-    state = phase8_lifecycle_state()
+@testset "lifecycle and persistence scalar lifecycle phase" begin
+    state = lifecycle_state_fixture()
     growth = LifecycleEvent(ActiveCellsTarget(), EveryMCS(), AlwaysLifecycleTrigger(),
         AddCellProperty(:target, Int32(2)); semantic_id = 1)
     division = LifecycleEvent(ActiveCellsTarget(), OnceAtMCS(1),
         PropertyAtLeast(:target, Int32(8)), DivideCell(VectorDivision((0.0, 1.0)));
         semantic_id = 2, priority = 3)
     custom = LifecycleEvent(ActiveCellsTarget(), OnceAtMCS(1),
-        PropertyAtLeast(:age, Int32(4)), Phase8LifecycleExtension.DoubleProperty(:age);
+        PropertyAtLeast(:age, Int32(4)), LifecycleExtensionFixture.DoubleProperty(:age);
         semantic_id = 3)
     after, report = apply_lifecycle_phase(state, (division, custom, growth), 1)
     @test report.property_updates == 3
@@ -126,7 +126,7 @@ end
     @test_throws LifecycleConflictError apply_lifecycle_phase(state,
         (transition, death), 1; resolver = RejectLifecycleConflicts())
 
-    full = phase8_lifecycle_state(capacity = 2)
+    full = lifecycle_state_fixture(capacity = 2)
     original = copy(lattice_storage(full))
     @test_throws CellCapacityError apply_lifecycle_phase(full, (division,), 1)
     @test lattice_storage(full) == original
@@ -197,7 +197,7 @@ end
 end
 
 @testset "compiled CPU lifecycle integration" begin
-    provenance = ComponentIdentity(:compiled_phase8_lifecycle, v"1.0.0", :test)
+    provenance = ComponentIdentity(:compiled_lifecycle_fixture, v"1.0.0", :test)
     schema = PropertySchema(
         PropertyDescriptor(:target, Int32, ConstantInitializer(Int32(0));
             requester = provenance, division = SplitOnDivision(),
@@ -234,7 +234,7 @@ end
 end
 
 @testset "compiled CPU lifecycle failure atomicity and open effect" begin
-    logical = phase8_lifecycle_state(capacity = 4)
+    logical = lifecycle_state_fixture(capacity = 4)
     domain = CartesianDomain((4, 4))
     proposal = first_shell_relation(ProposalRole(), Val(2))
     surface = first_shell_relation(SurfaceRole(), Val(2))
@@ -251,7 +251,7 @@ end
     end
 
     custom = LifecycleEvent(ActiveCellsTarget(), OnceAtMCS(1),
-        PropertyAtLeast(:age, Int32(4)), Phase8LifecycleExtension.DoubleProperty(:age);
+        PropertyAtLeast(:age, Int32(4)), LifecycleExtensionFixture.DoubleProperty(:age);
         semantic_id = 110)
     custom_integrator, custom_metrics = make_integrator((custom,))
     step!(custom_integrator)
@@ -260,7 +260,7 @@ end
 
     staged = LifecycleEvent(ActiveCellsTarget(), OnceAtMCS(1),
         AlwaysLifecycleTrigger(),
-        Phase8LifecycleExtension.StagedSwapProperty(:age); semantic_id = 109)
+        LifecycleExtensionFixture.StagedSwapProperty(:age); semantic_id = 109)
     staged_integrator, staged_metrics = make_integrator((staged,))
     step!(staged_integrator)
     @test staged_metrics.host_synchronizations == 0
@@ -289,7 +289,7 @@ end
     @test generation(selected, CellID(1)) == CellGeneration(1)
     @test generation(selected, CellID(2)) == CellGeneration(1)
 
-    full = phase8_lifecycle_state(capacity = 2)
+    full = lifecycle_state_fixture(capacity = 2)
     division = LifecycleEvent(ActiveCellsTarget(), OnceAtMCS(1),
         PropertyAtLeast(:target, Int32(8)),
         DivideCell(VectorDivision((1.0f0, 0.0f0))); semantic_id = 113)

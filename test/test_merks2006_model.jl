@@ -44,7 +44,7 @@ function _merks_constraint_state(neighbor_labels)
     state, domain, proposal
 end
 
-@testset "Phase 16.G Merks source-mechanism microfixtures" begin
+@testset "Merks source-mechanism microfixtures" begin
     constraint = CorePotts.MerksLocalConnectivityConstraint()
 
     contiguous = _merks_constraint_state(
@@ -127,7 +127,7 @@ function _reduced_merks_labels()
     )
 end
 
-@testset "Phase 16.G canonical startup and native assembly" begin
+@testset "Merks canonical startup and native assembly" begin
     canonical = CorePotts.merks2006_initial_labels()
     @test size(canonical) == (500, 500)
     @test maximum(canonical) == UInt32(282)
@@ -194,7 +194,7 @@ end
     @test PB.current_snapshot(failing).time.tick == 14
 end
 
-@testset "Phase 16.G arbitrary SciML field assembly" begin
+@testset "Merks arbitrary SciML field assembly" begin
     labels = _reduced_merks_labels()
     scale = PB.TimeScale(2, 1, :second)
     values = zeros(Float64, size(labels))
@@ -233,7 +233,7 @@ end
     )
 end
 
-@testset "Phase 16.G independent external field assembly" begin
+@testset "Merks independent external field assembly" begin
     labels = _reduced_merks_labels()
     scale = PB.TimeScale(2, 1, :second)
     values = zeros(Float64, size(labels))

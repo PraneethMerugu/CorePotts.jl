@@ -3,7 +3,7 @@ using CorePotts: CellHistory, MissingUntilFull, Lag,
     initialize_cell_history, history_value, maybe_history_value,
     sample_history!
 
-@testset "Phase 14 device-ready bounded cell history" begin
+@testset "coupled dynamics device-ready bounded cell history" begin
     declaration = CellHistory(:wang_centroid_history;
         source = :centroid, length = 5, initial = MissingUntilFull())
     generations = [CellGeneration(1), CellGeneration(1)]

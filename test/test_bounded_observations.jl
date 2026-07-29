@@ -90,7 +90,7 @@ function _bounded_observation_fixture(;
         coupled)
 end
 
-@testset "Phase 14 bounded cell table has exact schema and ordering" begin
+@testset "coupled dynamics bounded cell table has exact schema and ordering" begin
     fixture = _bounded_observation_fixture()
     table = fixture.table
     @test component_identity(table).category ==
@@ -163,7 +163,7 @@ end
         launches + 2
 end
 
-@testset "Phase 14 bounded cell table fails before publication" begin
+@testset "coupled dynamics bounded cell table fails before publication" begin
     insufficient = _bounded_observation_fixture(
         table_cell_capacity = 2)
     before = logical_snapshot(
@@ -204,7 +204,7 @@ end
         UInt32(1)
 end
 
-@testset "Phase 14 lossless ownership snapshot is exact and independent" begin
+@testset "coupled dynamics lossless ownership snapshot is exact and independent" begin
     fixture = _bounded_observation_fixture()
     @test component_identity(fixture.geometry).category ==
         :lossless_ownership_snapshot
@@ -240,7 +240,7 @@ end
         :small_geometry)
 end
 
-@testset "Phase 14 bounded observations preserve three-dimensional semantics" begin
+@testset "coupled dynamics bounded observations preserve three-dimensional semantics" begin
     requester = ComponentIdentity(
         :bounded_observation_3d_test, v"1.0.0", :test)
     schema = PropertySchema(PropertyDescriptor(
@@ -315,7 +315,7 @@ end
     @test geometry_publication.domain.dims == (3, 3, 3)
 end
 
-@testset "Phase 14 bounded observation restart does not duplicate or skip" begin
+@testset "coupled dynamics bounded observation restart does not duplicate or skip" begin
     fixture = _bounded_observation_fixture(
         table_schedule = AtMCS((1, 2)),
         geometry_schedule = AtMCS((1, 2)))

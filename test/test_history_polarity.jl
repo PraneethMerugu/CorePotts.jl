@@ -57,7 +57,7 @@ function _fill_linear_history!(
     return history
 end
 
-@testset "Phase 14 history declarations realize backend workspaces" begin
+@testset "coupled dynamics history declarations realize backend workspaces" begin
     fixture = _history_polarity_fixture()
     state = CorePotts.CoupledState(
         histories = (fixture.history,))
@@ -90,7 +90,7 @@ end
         Vector{Float32}
 end
 
-@testset "Phase 14 centroid history sampling is exact and portable" begin
+@testset "coupled dynamics centroid history sampling is exact and portable" begin
     fixture = _history_polarity_fixture()
     process = CorePotts.CentroidHistorySample(
         :sample_centroid, fixture.history, fixture.compiled)
@@ -146,7 +146,7 @@ end
         portable_process, -1)
 end
 
-@testset "Phase 14 lagged history direction matches Wang ordering" begin
+@testset "coupled dynamics lagged history direction matches Wang ordering" begin
     fixture = _history_polarity_fixture()
     _fill_linear_history!(
         fixture.history, fixture.generations)
@@ -202,7 +202,7 @@ end
     @test plan.metrics.device_to_host_transfers == 0
 end
 
-@testset "Phase 14 history direction failure is atomic" begin
+@testset "coupled dynamics history direction failure is atomic" begin
     fixture = _history_polarity_fixture()
     CorePotts.sample_history!(
         fixture.history,
@@ -291,7 +291,7 @@ end
         zero_candidate, :speed) == Float32[0]
 end
 
-@testset "Phase 14 history direction is dimension-generic" begin
+@testset "coupled dynamics history direction is dimension-generic" begin
     requester = ComponentIdentity(
         :history_direction_3d_test, v"1.0.0", :test)
     properties = (:direction_x, :direction_y, :direction_z, :speed)
@@ -339,7 +339,7 @@ end
     @test property_values(candidate, :speed)[1] ≈ 12
 end
 
-@testset "Phase 14 history processes compose, checkpoint, and replay" begin
+@testset "coupled dynamics history processes compose, checkpoint, and replay" begin
     requester = ComponentIdentity(
         :history_plan_test, v"1.0.0", :test)
     properties = (:direction_x, :direction_y, :speed)

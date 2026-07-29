@@ -2,7 +2,7 @@ using SciMLBase
 using KernelAbstractions
 using Serialization
 
-function phase9_fixture(; tspan = (0, 3), seed = 17, parameters = NamedTuple(),
+function device_interface_fixture(; tspan = (0, 3), seed = 17, parameters = NamedTuple(),
         parameterization = nothing, lifecycle_events = (), observables = ())
     volume = QuadraticVolumeHamiltonian(number_type = Float32)
     owners = fill(MediumOwner(1), 5, 5)
@@ -23,34 +23,34 @@ function phase9_fixture(; tspan = (0, 3), seed = 17, parameters = NamedTuple(),
     return (; volume, logical, domain, proposal, tracker, components, model, problem)
 end
 
-struct Phase9DeviceCounter{A} <: AbstractPottsDeviceCallback
+struct DeviceCounterFixture{A} <: AbstractPottsDeviceCallback
     counter::A
 end
-CorePotts.device_callback_requirements(::Phase9DeviceCounter) = ()
-CorePotts.device_callback_effects(::Phase9DeviceCounter) = (DeviceObservationEffect(),)
-CorePotts.device_callback_priority(::Phase9DeviceCounter) = 0
-CorePotts.device_callback_due(::Phase9DeviceCounter, mcs::Integer) = isodd(mcs)
-@kernel function phase9_device_counter_kernel!(counter)
+CorePotts.device_callback_requirements(::DeviceCounterFixture) = ()
+CorePotts.device_callback_effects(::DeviceCounterFixture) = (DeviceObservationEffect(),)
+CorePotts.device_callback_priority(::DeviceCounterFixture) = 0
+CorePotts.device_callback_due(::DeviceCounterFixture, mcs::Integer) = isodd(mcs)
+@kernel function device_counter_kernel!(counter)
     index = @index(Global, Linear)
     index == 1 && (@inbounds counter[1] += UInt32(1))
 end
-function CorePotts.execute_device_callback!(callback::Phase9DeviceCounter, integrator)
-    kernel = phase9_device_counter_kernel!(integrator.inner.plan.backend, 1)
+function CorePotts.execute_device_callback!(callback::DeviceCounterFixture, integrator)
+    kernel = device_counter_kernel!(integrator.inner.plan.backend, 1)
     launch!(integrator.inner.plan, kernel, callback.counter; ndrange = 1)
     return integrator
 end
 
-struct Phase9OrderedDeviceCallback{A} <: AbstractPottsDeviceCallback
+struct OrderedDeviceCallbackFixture{A} <: AbstractPottsDeviceCallback
     output::A
     identity::UInt32
     priority::Int
 end
-CorePotts.device_callback_requirements(::Phase9OrderedDeviceCallback) = ()
-CorePotts.device_callback_effects(::Phase9OrderedDeviceCallback) =
+CorePotts.device_callback_requirements(::OrderedDeviceCallbackFixture) = ()
+CorePotts.device_callback_effects(::OrderedDeviceCallbackFixture) =
     (DeviceObservationEffect(),)
-CorePotts.device_callback_priority(callback::Phase9OrderedDeviceCallback) = callback.priority
-CorePotts.device_callback_due(::Phase9OrderedDeviceCallback, mcs::Integer) = mcs == 1
-@kernel function phase9_ordered_callback_kernel!(output, identity)
+CorePotts.device_callback_priority(callback::OrderedDeviceCallbackFixture) = callback.priority
+CorePotts.device_callback_due(::OrderedDeviceCallbackFixture, mcs::Integer) = mcs == 1
+@kernel function ordered_callback_kernel!(output, identity)
     index = @index(Global, Linear)
     if index == 1
         ordinal = @inbounds(output[1] + UInt32(1))
@@ -60,48 +60,48 @@ CorePotts.device_callback_due(::Phase9OrderedDeviceCallback, mcs::Integer) = mcs
         end
     end
 end
-function CorePotts.execute_device_callback!(callback::Phase9OrderedDeviceCallback, integrator)
-    kernel = phase9_ordered_callback_kernel!(integrator.inner.plan.backend, 1)
+function CorePotts.execute_device_callback!(callback::OrderedDeviceCallbackFixture, integrator)
+    kernel = ordered_callback_kernel!(integrator.inner.plan.backend, 1)
     launch!(integrator.inner.plan, kernel, callback.output, callback.identity; ndrange = 1)
     return integrator
 end
 
-struct Phase9UnsupportedControl <: AbstractPottsDeviceCallbackEffect end
-struct Phase9UnsupportedDeviceCallback <: AbstractPottsDeviceCallback end
-CorePotts.device_callback_requirements(::Phase9UnsupportedDeviceCallback) = ()
-CorePotts.device_callback_effects(::Phase9UnsupportedDeviceCallback) =
-    (Phase9UnsupportedControl(),)
-CorePotts.device_callback_priority(::Phase9UnsupportedDeviceCallback) = 0
-CorePotts.device_callback_due(::Phase9UnsupportedDeviceCallback, mcs::Integer) = true
+struct UnsupportedControlFixture <: AbstractPottsDeviceCallbackEffect end
+struct UnsupportedDeviceCallbackFixture <: AbstractPottsDeviceCallback end
+CorePotts.device_callback_requirements(::UnsupportedDeviceCallbackFixture) = ()
+CorePotts.device_callback_effects(::UnsupportedDeviceCallbackFixture) =
+    (UnsupportedControlFixture(),)
+CorePotts.device_callback_priority(::UnsupportedDeviceCallbackFixture) = 0
+CorePotts.device_callback_due(::UnsupportedDeviceCallbackFixture, mcs::Integer) = true
 
-struct Phase9Parameterization end
-(::Phase9Parameterization)(p) = ScientificComponentSet(
+struct BackendParameterizationFixture end
+(::BackendParameterizationFixture)(p) = ScientificComponentSet(
     kinetic_modifiers = (PositiveYield(p.yield),))
-struct Phase9StructParameters
+struct BackendStructParametersFixture
     yield::Float32
 end
 
-struct Phase9ExtensionProposal <: AbstractProposalLaw end
-CorePotts.construct_proposal_attempt(::Phase9ExtensionProposal, args...) =
+struct ExtensionProposalFixture <: AbstractProposalLaw end
+CorePotts.construct_proposal_attempt(::ExtensionProposalFixture, args...) =
     construct_proposal_attempt(NeighborCopyProposal(), args...)
 
-struct Phase9ExtensionSequential{T <: AbstractFloat} <: AbstractSequentialCPMAlgorithm
+struct ExtensionSequentialFixture{T <: AbstractFloat} <: AbstractSequentialCPMAlgorithm
     temperature::T
 end
-CorePotts.component_identity(::Phase9ExtensionSequential) =
-    ComponentIdentity(:phase9_extension_sequential, v"1.0.0", :test)
-CorePotts.algorithm_guarantees(::Phase9ExtensionSequential) =
+CorePotts.component_identity(::ExtensionSequentialFixture) =
+    ComponentIdentity(:extension_sequential_fixture, v"1.0.0", :test)
+CorePotts.algorithm_guarantees(::ExtensionSequentialFixture) =
     algorithm_guarantees(SequentialCPM())
-CorePotts.acceptance_law(::Phase9ExtensionSequential) = ConventionalMetropolis()
-CorePotts.proposal_law(::Phase9ExtensionSequential) = Phase9ExtensionProposal()
+CorePotts.acceptance_law(::ExtensionSequentialFixture) = ConventionalMetropolis()
+CorePotts.proposal_law(::ExtensionSequentialFixture) = ExtensionProposalFixture()
 
-struct Phase9BackendFamily end
-struct Phase9CapabilityBackend <: KernelAbstractions.Backend end
-CorePotts.backend_capabilities(::Phase9CapabilityBackend) = BackendCapabilities(
-    Phase9BackendFamily(), QualifiedBackend, true, true, false, false, (v"1.0.0",))
+struct DeviceBackendFamily end
+struct CapabilityBackendFixture <: KernelAbstractions.Backend end
+CorePotts.backend_capabilities(::CapabilityBackendFixture) = BackendCapabilities(
+    DeviceBackendFamily(), QualifiedBackend, true, true, false, false, (v"1.0.0",))
 
-@testset "Phase 9 problem ownership, remake, and cache" begin
-    fixture = phase9_fixture()
+@testset "device interface problem ownership, remake, and cache" begin
+    fixture = device_interface_fixture()
     problem = fixture.problem
     @test problem_geometry(problem) === fixture.domain
     @test problem.seed == 17
@@ -152,8 +152,8 @@ CorePotts.backend_capabilities(::Phase9CapabilityBackend) = BackendCapabilities(
         for integrator in concurrent_integrators)) == 3
 end
 
-@testset "Phase 9 authoritative solve and saving" begin
-    fixture = phase9_fixture()
+@testset "device interface authoritative solve and saving" begin
+    fixture = device_interface_fixture()
     algorithm = SequentialCPM(temperature = 2.0f0)
     one_shot = solve(fixture.problem, algorithm)
     initialized = init(fixture.problem, algorithm)
@@ -191,8 +191,8 @@ end
     @test_throws UnsupportedSolverOptionError solve(fixture.problem, algorithm; mystery = true)
 end
 
-@testset "Phase 9 callbacks, resident hook, and structural overhead" begin
-    fixture = phase9_fixture(tspan = (0, 4))
+@testset "device interface callbacks, resident hook, and structural overhead" begin
+    fixture = device_interface_fixture(tspan = (0, 4))
     host_hits = Ref(0)
     callback = DiscreteCallback(
         (state, t, integrator) -> t == 2,
@@ -215,21 +215,21 @@ end
     @test requested.t == [1]
 
     counter = zeros(UInt32, 1)
-    device_callback = Phase9DeviceCounter(counter)
+    device_callback = DeviceCounterFixture(counter)
     resident = solve(fixture.problem, SequentialCPM(); callback = device_callback)
     @test counter[1] == 2
     @test resident.stats.device_callback_invocations == 2
     @test resident.stats.host_callback_boundaries == 0
 
     order = zeros(UInt32, 3)
-    later = Phase9OrderedDeviceCallback(order, UInt32(20), 20)
-    earlier = Phase9OrderedDeviceCallback(order, UInt32(10), 10)
-    ordered = solve(phase9_fixture(tspan = (0, 1)).problem, SequentialCPM();
+    later = OrderedDeviceCallbackFixture(order, UInt32(20), 20)
+    earlier = OrderedDeviceCallbackFixture(order, UInt32(10), 10)
+    ordered = solve(device_interface_fixture(tspan = (0, 1)).problem, SequentialCPM();
         callback = (later, earlier), save_start = false, save_end = false)
     @test order == UInt32[2, 10, 20]
     @test ordered.stats.device_callback_invocations == 2
     @test_throws UnsupportedSolverOptionError init(fixture.problem, SequentialCPM();
-        callback = Phase9UnsupportedDeviceCallback())
+        callback = UnsupportedDeviceCallbackFixture())
 
     direct_state = compile_scientific_state(deepcopy(fixture.problem.u0), fixture.domain,
         fixture.tracker)
@@ -246,8 +246,8 @@ end
     @test wrapped.inner.plan.metrics.device_to_host_transfers == 0
 end
 
-@testset "Phase 9 checkpoint path and symbolic parameters" begin
-    fixture = phase9_fixture(tspan = (0, 4))
+@testset "device interface checkpoint path and symbolic parameters" begin
+    fixture = device_interface_fixture(tspan = (0, 4))
     integrator = init(fixture.problem, LotteryCPM(); save_start = false)
     step!(integrator, 2)
     checkpoint = capture_checkpoint(integrator; retain = true)
@@ -260,8 +260,8 @@ end
     @test lattice_storage(logical_snapshot(restored_solution.u[end].state.potts)) ==
           lattice_storage(logical_snapshot(uninterrupted.u[end].state.potts))
 
-    parameterized = phase9_fixture(parameters = (yield = 1.5f0,),
-        parameterization = Phase9Parameterization())
+    parameterized = device_interface_fixture(parameters = (yield = 1.5f0,),
+        parameterization = BackendParameterizationFixture())
     handle = PottsParameterHandle(:yield)
     @test parameterized.problem[handle] == 1.5f0
     @test SciMLBase.is_parameter(parameterized.problem, :yield)
@@ -277,8 +277,8 @@ end
     @test_throws IntegratorTerminatedError set_parameter!(
         mutable_parameters, handle, 1.0f0)
 
-    structured = phase9_fixture(parameters = Phase9StructParameters(1.25f0),
-        parameterization = Phase9Parameterization())
+    structured = device_interface_fixture(parameters = BackendStructParametersFixture(1.25f0),
+        parameterization = BackendParameterizationFixture())
     @test SciMLBase.parameter_symbols(structured.problem) == [:yield]
     structured_integrator = init(structured.problem, SequentialCPM();
         save_start = false, save_end = false)
@@ -306,15 +306,15 @@ end
     @test solve!(after_failure).retcode == ReturnCode.Success
 end
 
-@testset "Phase 9 open algorithms, capabilities, reports, and observables" begin
-    fixture = phase9_fixture(tspan = (0, 2), observables = (:cell_count,))
-    algorithm = Phase9ExtensionSequential(2.0f0)
+@testset "device interface open algorithms, capabilities, reports, and observables" begin
+    fixture = device_interface_fixture(tspan = (0, 2), observables = (:cell_count,))
+    algorithm = ExtensionSequentialFixture(2.0f0)
     solution = solve(fixture.problem, algorithm; save_start = false,
         snapshot_policy = ObservableSnapshotPolicy(integrator ->
             (cell_count = n_cells(logical_state(integrator)),)))
     @test solution_problem(solution) === fixture.problem
     @test solution.retcode == ReturnCode.Success
-    @test proposal_law(algorithm) isa Phase9ExtensionProposal
+    @test proposal_law(algorithm) isa ExtensionProposalFixture
     @test acceptance_law(algorithm) isa ConventionalMetropolis
     handle = PottsObservableHandle(:cell_count)
     @test SciMLBase.is_observed(fixture.problem, :cell_count)
@@ -342,8 +342,8 @@ end
     @test_throws UnsafePottsSerializationError serialize(
         IOBuffer(), integrator.inner)
 
-    capabilities = backend_capabilities(Phase9CapabilityBackend())
-    @test capabilities.family isa Phase9BackendFamily
+    capabilities = backend_capabilities(CapabilityBackendFixture())
+    @test capabilities.family isa DeviceBackendFamily
     @test supports(capabilities, QualifiedBackendCapability())
     @test supports(capabilities, SemanticRNGCapability(v"1.0.0"))
 
@@ -357,8 +357,8 @@ end
         fixture.problem, algorithm; callback = continuous)
 end
 
-@testset "Phase 9 semantic ensembles" begin
-    fixture = phase9_fixture(tspan = (0, 2), seed = 0x1234)
+@testset "device interface semantic ensembles" begin
+    fixture = device_interface_fixture(tspan = (0, 2), seed = 0x1234)
     expected = [ensemble_seed(EnsembleSeedDerivationV1(), UInt64(0x1234), i)
                 for i in 1:4]
     ensemble = EnsembleProblem(fixture.problem; seed = 0x1234)

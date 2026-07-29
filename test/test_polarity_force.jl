@@ -63,7 +63,7 @@ function _polarity_force_fixture(::Type{T} = Float32) where {
         contact_relation, alignment, force)
 end
 
-@testset "Phase 14 polarity declarations realize backend workspaces" begin
+@testset "coupled dynamics polarity declarations realize backend workspaces" begin
     fixture = _polarity_force_fixture()
     state = CorePotts.CoupledState()
     alignment_law =
@@ -108,7 +108,7 @@ end
         Vector{Float32}
 end
 
-@testset "Phase 14 neighbor polarity alignment is synchronous and exact" begin
+@testset "coupled dynamics neighbor polarity alignment is synchronous and exact" begin
     fixture = _polarity_force_fixture()
     candidate = deepcopy(fixture.logical)
     @test CorePotts.apply_neighbor_polarity_alignment!(
@@ -166,7 +166,7 @@ end
         clamped_candidate, :alignment_fraction)[1] == 0.4f0
 end
 
-@testset "Phase 14 neighbor polarity portable path agrees and fails atomically" begin
+@testset "coupled dynamics neighbor polarity portable path agrees and fails atomically" begin
     fixture = _polarity_force_fixture()
     host_candidate = deepcopy(fixture.logical)
     CorePotts.apply_neighbor_polarity_alignment!(
@@ -266,7 +266,7 @@ end
         heterogeneous_key) == UInt32(1)
 end
 
-@testset "Phase 14 Hill vector force has exact limits and sign" begin
+@testset "coupled dynamics Hill vector force has exact limits and sign" begin
     fixture = _polarity_force_fixture()
     aligned = deepcopy(fixture.logical)
     CorePotts.apply_neighbor_polarity_alignment!(
@@ -310,7 +310,7 @@ end
     @test force_y[3] == 0.0f0
 end
 
-@testset "Phase 14 Hill vector force portable path agrees and fails atomically" begin
+@testset "coupled dynamics Hill vector force portable path agrees and fails atomically" begin
     fixture = _polarity_force_fixture()
     host_candidate = deepcopy(fixture.logical)
     CorePotts.apply_hill_vector_force!(
@@ -432,7 +432,7 @@ function _polarity_force_zero_alloc_probe(
     return nothing
 end
 
-@testset "Phase 14 polarity and force warm CPU reference allocates zero bytes" begin
+@testset "coupled dynamics polarity and force warm CPU reference allocates zero bytes" begin
     fixture = _polarity_force_fixture()
     alignment_candidate = deepcopy(fixture.logical)
     force_candidate = deepcopy(fixture.logical)
@@ -447,7 +447,7 @@ end
         fixture.force)) == 0
 end
 
-@testset "Phase 14 polarity and force coupled restart is exact" begin
+@testset "coupled dynamics polarity and force coupled restart is exact" begin
     fixture = _polarity_force_fixture()
     components = ScientificComponentSet()
     proposal_relation = first_shell_relation(
