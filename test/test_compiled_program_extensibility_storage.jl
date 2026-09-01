@@ -202,10 +202,6 @@ end
         )
     end
     @test allequal(typeof(runtime.relationships) for runtime in runtimes)
-    @test allequal(
-        typeof(runtime.stage_buffers.relationship_transactions)
-        for runtime in runtimes
-    )
     @test all(
         length(runtime.relationships.banks) == 1 for runtime in runtimes
     )

@@ -202,7 +202,7 @@ end
         CorePotts.LifecycleRelationStorage(Any[], Val(2)),
         CorePotts.StablePriorityLifecycleConflicts,
         1,
-        0,
+        1,
         1,
         0,
         lifecycle_forbid_extinction,
@@ -260,15 +260,9 @@ end
           reshape(Int8[1, 0], 2, 1)
     @test length(program.descriptor_plan.state_layout.entries) == 1
     @test length(program.stage_plan.accepted_copy[1].instances) == 1
-    @test program.lifecycle_plan.forbid_extinction == falses(2)
+    @test program.lifecycle_plan.forbid_extinction == (false, false)
     @test program.mechanism_authority.labels == Symbol[:reviewed]
     @test program.integrity_fingerprint == sealed_fingerprint
-
-    kernel_plan = CorePotts.adapt_descriptor_kernel_plan(
-        Array, program.descriptor_plan
-    )
-    empty!(kernel_plan.groups[1].launch.instances)
-    @test length(program.descriptor_plan.groups[1].launch.instances) == 1
 
     tampered = deepcopy(program)
     tampered.parameter_defaults[1] = 7.0
@@ -471,6 +465,19 @@ end
         memory_entry.handle,
     ).values
     @test restored_history == saved_history
+
+    checkerboard_program = test_program(
+        CorePotts.CheckerboardProgramEngine(); descriptor_plan, stage_plan
+    )
+    checkerboard = CorePotts.initialize_program(
+        checkerboard_program, state, Float64[], UInt64(4), UInt32(1)
+    )
+    CorePotts.advance_mcs!(checkerboard)
+    checkerboard_history = CorePotts.state_block(
+        CorePotts.program_snapshot(checkerboard).descriptor_state,
+        memory_entry.handle,
+    ).values
+    @test checkerboard_history == saved_history
 end
 
 @testset "model assignment is one buffered after-MCS transaction" begin
@@ -527,7 +534,7 @@ end
             CorePotts.ModelFootprint(),
             CorePotts.ExclusiveWriteAccess(),
         ),
-        CorePotts.DescriptorSupport(true, false, true, false),
+        CorePotts.DescriptorSupport(true, true, true, true),
         1,
         1,
     )
@@ -555,7 +562,6 @@ end
     ).values)
     snapshot_model_value(snapshot) = model_value(snapshot.descriptor_state)
 
-    @test length(runtime.stage_buffers.after_mcs_model) == 1
     transaction = CorePotts.stage_program_mcs!(runtime)
     @test model_value(runtime.descriptor_state) == 2.0
     @test_throws ArgumentError CorePotts.program_snapshot(runtime)
@@ -568,6 +574,15 @@ end
     committed = CorePotts.stage_program_mcs!(runtime)
     CorePotts.publish_program_step_transaction!(committed)
     @test snapshot_model_value(CorePotts.program_snapshot(runtime)) == 3.0
+
+    checkerboard_program = test_program(
+        CorePotts.CheckerboardProgramEngine(); descriptor_plan, stage_plan
+    )
+    checkerboard = CorePotts.initialize_program(
+        checkerboard_program, initial, Float64[], UInt64(0x51a1), UInt32(1)
+    )
+    CorePotts.advance_mcs!(checkerboard)
+    @test snapshot_model_value(CorePotts.program_snapshot(checkerboard)) == 3.0
     @test_throws ArgumentError CorePotts.StageExecutionPlan(
         (), (CorePotts.StageDescriptorGroup([
             CorePotts.CompiledStageDescriptor(
@@ -619,7 +634,10 @@ end
             )
             @test plan_report.site_count == prod(program.shape)
             @test plan_report.color_count >= 2
-            @test first.engine_workspace isa CorePotts.CheckerboardWorkspace
+            @test first.engine_workspace isa
+                  CorePotts._CheckerboardExecutionWorkspace
+            @test CorePotts._checkerboard_core(first.engine_workspace) isa
+                  CorePotts.CheckerboardWorkspace
             @test isconcretetype(typeof(first.engine_workspace))
             @test first.accepted + first.rejected + first.null_attempts ==
                   length(first.ownership) * Int(program.attempts_per_site)

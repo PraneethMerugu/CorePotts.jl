@@ -1,67 +1,3 @@
-@testset "checkerboard evaluates before owner arbitration" begin
-    backend = CorePotts.KernelAbstractions.CPU()
-    old_owners = Int32[1, 1]
-    new_owners = Int32[2, 3]
-    priorities = UInt32[typemax(UInt32), 1]
-    semantic_ids = Int32[1, 2]
-    dispositions = UInt8[
-        CorePotts._PROGRAM_CHECKERBOARD_CONSTRAINT,
-        CorePotts._PROGRAM_CHECKERBOARD_ACCEPTED,
-    ]
-    maximums = zeros(UInt32, 3)
-    identities = fill(typemax(UInt32), 3)
-    state = CorePotts.initialize_program(
-        test_program(CorePotts.CheckerboardProgramEngine()),
-        test_initial(),
-        Float64[],
-        UInt64(7),
-        UInt32(1),
-    ).engine_workspace.state
-    claim_priority = CorePotts._checkerboard_claim_priorities_kernel!(backend)
-    claim_identity = CorePotts._checkerboard_claim_identities_kernel!(backend)
-    select = CorePotts._checkerboard_select_kernel!(backend)
-    claim_priority(
-        old_owners,
-        new_owners,
-        priorities,
-        dispositions,
-        maximums,
-        state,
-        Int32(2);
-        ndrange = 2,
-    )
-    CorePotts.KernelAbstractions.synchronize(backend)
-    claim_identity(
-        old_owners,
-        new_owners,
-        priorities,
-        semantic_ids,
-        dispositions,
-        maximums,
-        identities,
-        state,
-        Int32(2);
-        ndrange = 2,
-    )
-    CorePotts.KernelAbstractions.synchronize(backend)
-    select(
-        old_owners,
-        new_owners,
-        priorities,
-        semantic_ids,
-        dispositions,
-        maximums,
-        identities,
-        state,
-        Int32(2);
-        ndrange = 2,
-    )
-    CorePotts.KernelAbstractions.synchronize(backend)
-    @test dispositions == UInt8[
-        CorePotts._PROGRAM_CHECKERBOARD_CONSTRAINT,
-        CorePotts._PROGRAM_CHECKERBOARD_ACCEPTED,
-    ]
-end
 @testset "owned runtime barriers remain inferred and bounded" begin
     program = test_program(CorePotts.SequentialProgramEngine())
     runtime = CorePotts.initialize_program(
@@ -174,7 +110,7 @@ end
         )
         report = CorePotts.program_capability_report(program)
         @test report.status === CorePotts.Supported
-        @test report.maturity === CorePotts.Functional
+        @test !report.exact_replay
         @test CorePotts.capability_authorizes_execution(report)
         @test !CorePotts.capability_authorizes_replay(report)
         replay_error = try

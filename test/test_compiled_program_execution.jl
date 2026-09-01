@@ -68,31 +68,22 @@
     @test CorePotts.program_checkpoint(restored).checksum == checkpoint.checksum
 end
 
-function test_initial()
-    ownership = zeros(Int32, 6, 6)
-    ownership[3:4, 3:4] .= 1
-    return CorePotts.ProgramInitialState(
-        ownership, Int16[2]; scalar_type = Float64
-    )
-end
-
-@testset "current algorithm identities reject nonunit attempt budgets" begin
+@testset "all engines admit positive repeated attempt budgets" begin
     for engine in (
             CorePotts.SequentialProgramEngine(),
             CorePotts.CheckerboardProgramEngine(),
         )
-        error = try
-            test_program(engine; attempts_per_site = 2)
-            nothing
-        catch caught
-            caught
-        end
-        @test error isa ArgumentError
-        @test occursin(
-            "separately named and qualified algorithm",
-            sprint(showerror, error),
+        program = test_program(engine; attempts_per_site = 2)
+        @test program.attempts_per_site == 2
+        runtime = CorePotts.initialize_program(
+            program, test_initial(), Float64[], UInt64(0xa77), UInt32(1)
         )
+        CorePotts.advance_mcs!(runtime)
+        @test runtime.mcs == 1
     end
+    @test_throws ArgumentError test_program(
+        CorePotts.CheckerboardProgramEngine(); attempts_per_site = 0
+    )
 end
 
 @testset "checkerboard colors use the versioned unbiased permutation" begin
@@ -109,9 +100,11 @@ end
         program, test_initial(), Float64[], UInt64(0xc010), UInt32(4);
         repeat = UInt32(2),
     )
-    first_workspace = runtime_a.engine_workspace
-    second_workspace = runtime_b.engine_workspace
-    foreign_workspace = foreign_replica.engine_workspace
+    first_workspace = CorePotts._checkerboard_core(runtime_a.engine_workspace)
+    second_workspace = CorePotts._checkerboard_core(runtime_b.engine_workspace)
+    foreign_workspace = CorePotts._checkerboard_core(
+        foreign_replica.engine_workspace
+    )
     color_count = Int(program.checkerboard_plan.color_count)
     canonical = collect(Int32, 1:color_count)
 
@@ -157,9 +150,9 @@ end
     @test @allocated(CorePotts._checkerboard_color_order!(
         first_workspace.color_order, state, 1
     )) == 0
-    @test CorePotts.RNG_CONTRACT_VERSION == v"1.2.0"
+    @test CorePotts.RNG_CONTRACT_VERSION == v"2.0.0"
     @test CorePotts.RNG_LOWERING_IDENTITY ===
-          :philox4x32x10_semantic_address_fisher_yates_v1
+          :philox4x32x10_semantic_address_fisher_yates_v2
 end
 
 @testset "sequential and checkerboard share units, not trajectories" begin
@@ -500,7 +493,7 @@ end
         program, test_initial(), [2.0], UInt64(0x5afe), UInt32(1)
     )
     # The injected test-only stage effect is intentionally an external
-    # mechanism and therefore has Functional, not replay-qualified,
+    # mechanism and therefore supports execution but not exact replay,
     # capability evidence.  Exercise rollback through settled public state
     # instead of manufacturing a checkpoint for an unqualified mechanism.
     before = CorePotts.program_snapshot(runtime)
