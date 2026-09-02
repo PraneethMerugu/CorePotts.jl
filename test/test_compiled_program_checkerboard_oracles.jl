@@ -586,8 +586,9 @@ end
     portable = CorePotts.initialize_program(
         program, initial, Float64[], UInt64(0xacce), UInt32(1)
     )
-    adapted = CorePotts.adapt_checkerboard_workspace(
-        Array, portable.engine_workspace.core
+    adapted = CorePotts._adapt_checkerboard_workspace(
+        Array, portable.engine_workspace.core;
+        capability_report = portable.capability_report,
     )
     declaration = portable.engine_workspace.color_laws.declaration
     relationship_group = only(declaration.relationship_groups)

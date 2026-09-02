@@ -9,6 +9,7 @@ Metal.allowscalar(false)
 const COREPOTTS_METAL_WITNESSES = (
     "corepotts_feasibility.jl",
     "corepotts_stage_boundaries.jl",
+    "corepotts_runtime_conformance.jl",
 )
 
 @testset "CorePotts Metal runner inventory" begin
@@ -20,4 +21,3 @@ const COREPOTTS_METAL_WITNESSES = (
 end
 
 foreach(include, COREPOTTS_METAL_WITNESSES)
-include(joinpath(@__DIR__, "..", "backend_conformance", "localmath_execution.jl"))

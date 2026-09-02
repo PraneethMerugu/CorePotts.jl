@@ -935,10 +935,15 @@ function adapt_program_runtime(to, runtime::ProgramRuntime{T, N}) where {T, N}
     ))
     queue_mcs_capacity = runtime.engine_workspace.identity.queue_policy.mcs_capacity
     core = _checkerboard_core(runtime.engine_workspace)
-    engine_workspace = adapt_checkerboard_workspace(
-        to, core
+    capability_report = _adapted_program_capability_report(
+        runtime.program, runtime.capability_report, to
     )
-    capability_report = engine_workspace.capability_report
+    _require_program_execution_capability(
+        capability_report; operation = :runtime_adaptation
+    )
+    engine_workspace = _adapt_checkerboard_workspace(
+        to, core; capability_report
+    )
     adapted = _rebuild_program_runtime(
         runtime, capability_report, engine_workspace
     )
