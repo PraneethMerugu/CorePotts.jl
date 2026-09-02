@@ -256,11 +256,22 @@ end
 function _require_auxiliary_copy_compatible(
         destination::AuxiliaryState, source::AuxiliaryState
     )
-    typeof(destination.banks) === typeof(source.banks) || throw(ArgumentError(
-        "auxiliary states have incompatible physical layouts or element types"
+    length(destination.banks) == length(source.banks) || throw(ArgumentError(
+        "auxiliary states have incompatible bank counts"
     ))
     for (destination_bank, source_bank) in zip(
             destination.banks, source.banks
+        )
+        destination_representation =
+            typeof(destination_bank).parameters[1]
+        source_representation = typeof(source_bank).parameters[1]
+        destination_representation === source_representation || throw(
+            ArgumentError(
+                "auxiliary states have incompatible physical representations"
+            )
+        )
+        eltype(destination_bank.values) === eltype(source_bank.values) || throw(
+            ArgumentError("auxiliary states have incompatible element types")
         )
         axes(destination_bank.values) == axes(source_bank.values) || throw(
             ArgumentError("auxiliary states have incompatible bank shapes")

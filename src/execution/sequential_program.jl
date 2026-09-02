@@ -971,9 +971,17 @@ function _restore_checkerboard_checkpoint(
     restored = _prepare_checkerboard_execution(
         runtime; queue_mcs_capacity
     )
-    _checkpoint_execution_block(restored) == block || throw(ArgumentError(
-        "checkerboard checkpoint execution identity does not match this environment"
-    ))
+    restored_block = _checkpoint_execution_block(restored)
+    if restored_block != block
+        mismatches = filter(propertynames(block.identity)) do name
+            getproperty(restored_block.identity, name) !=
+                getproperty(block.identity, name)
+        end
+        throw(ArgumentError(
+            "checkerboard checkpoint execution identity does not match this environment: " *
+                join(string.(mismatches), ", ")
+        ))
+    end
     return restored
 end
 
