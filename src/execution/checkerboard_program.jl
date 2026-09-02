@@ -1547,8 +1547,11 @@ function _validate_gpu_descriptor_plan(
 end
 
 
-"""Adapt every checkerboard runtime bank to one storage constructor."""
-function adapt_checkerboard_workspace(to, workspace::CheckerboardWorkspace)
+"""Adapt every checkerboard runtime bank after whole-program admission."""
+function _adapt_checkerboard_workspace(
+        to, workspace::CheckerboardWorkspace;
+        capability_report,
+    )
     state = workspace.state
     primary_science = (
         ownership = Adapt.adapt(to, state.ownership),
@@ -1568,9 +1571,6 @@ function adapt_checkerboard_workspace(to, workspace::CheckerboardWorkspace)
         workspace.execution.control_transfer_count,
         workspace.execution.snapshot_transfer_count,
         workspace.execution.lifecycle_transfer_count,
-    )
-    capability_report = _adapted_program_capability_report(
-        workspace.capability_report, to
     )
     if state.lifecycle_workspace isa NoLifecycleWorkspace
         alternate_source = workspace.alternate_state

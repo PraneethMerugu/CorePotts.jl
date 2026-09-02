@@ -684,8 +684,35 @@ function program_capability_report(program::CompiledPottsProgram)
     )
 end
 
+function _adapted_mechanism_profile(
+        program::CompiledPottsProgram,
+        source::CapabilityMechanismProfile,
+    )
+    engine = _capability_engine(program.engine)
+    admitted = _capability_mechanism_family_admitted(
+        program, engine, AdaptedBackend
+    )
+    support_family, identities, authority, exact_replay =
+        _capability_mechanism_support(program, admitted)
+    return CapabilityMechanismProfile(
+        source.proposal_fingerprint,
+        source.descriptor_fingerprint,
+        source.stage_fingerprint,
+        source.relationship_fingerprint,
+        source.tracker_fingerprint,
+        source.checkerboard_fingerprint,
+        source.rng_contract_version,
+        source.rng_lowering_identity,
+        identities,
+        authority,
+        support_family,
+        exact_replay,
+    )
+end
+
 function _adapted_program_capability_report(
-        report::ProgramCapabilityReport, to
+        report::ProgramCapabilityReport, to,
+        mechanisms::CapabilityMechanismProfile = report.key.mechanisms,
     )
     source = report.key
     device = nameof(to)
@@ -701,7 +728,7 @@ function _adapted_program_capability_report(
         source.math_policy,
         source.lifecycle,
         source.component_state,
-        source.mechanisms,
+        mechanisms,
         source.replay,
         ; environment,
     )
@@ -717,6 +744,18 @@ function _adapted_program_capability_report(
         report.trackers,
         report.checkerboard_plan,
     )
+end
+
+
+function _adapted_program_capability_report(
+        program::CompiledPottsProgram,
+        report::ProgramCapabilityReport,
+        to,
+    )
+    mechanisms = _adapted_mechanism_profile(
+        program, report.key.mechanisms
+    )
+    return _adapted_program_capability_report(report, to, mechanisms)
 end
 
 """Return whether a capability report admits functional execution."""
