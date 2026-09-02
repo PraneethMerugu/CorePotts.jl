@@ -84,7 +84,6 @@ import ..CorePotts:
     adapted_device_capability_disposition,
     adapted_device_environment,
     abort_program_step!,
-    adapt_checkerboard_workspace,
     adapt_program_runtime,
     apply_lifecycle_receipt!,
     apply_relationship_requests!,
@@ -143,7 +142,7 @@ import ..CorePotts:
 public AbstractProgramEngine, SequentialProgramEngine, CheckerboardProgramEngine
 public CPUProgramBackend, AdaptedProgramBackend
 public AbstractCheckerboardPlan, NoCheckerboardPlan, CheckerboardPlan
-public CheckerboardWorkspace, adapt_checkerboard_workspace
+public CheckerboardWorkspace
 public execute_checkerboard_mcs!, enqueue_checkerboard_mcs!
 public CapabilitySupportStatus, Unsupported, Supported
 public CapabilityEngine, SequentialEngine, CheckerboardEngine

@@ -148,6 +148,21 @@ end
     @test_throws ArgumentError CorePotts.BackendSPI.with_program_initial_descriptor_state(
         initial, wrong_type_state
     )
+    borrowed_values = reshape(collect(1.0:4.0), 2, 2)
+    borrowed_state = CorePotts.AuxiliaryState((
+        CorePotts.BlockBank{
+            representation, typeof(view(borrowed_values, :, :)),
+        }(view(borrowed_values, :, :)),
+    ))
+    copied_state = CorePotts.CompilerSPI.copy_auxiliary_state(
+        fresh_initial_copy
+    )
+    @test CorePotts.copyto_auxiliary_state!(
+        copied_state, borrowed_state
+    ) === copied_state
+    @test CorePotts.CompilerSPI.state_block(
+        copied_state, handle
+    ).values == borrowed_values
     nonfinite_state =
         CorePotts.BackendSPI.program_initial_descriptor_state(replaced)
     CorePotts.CompilerSPI.state_block(
