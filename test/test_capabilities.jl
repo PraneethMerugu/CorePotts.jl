@@ -74,11 +74,40 @@ end
 
 
 @testset "adapted device identity is namespace-independent" begin
-    report = CorePotts.program_capability_report(
-        test_program(CorePotts.CheckerboardProgramEngine()))
-    adapted = CorePotts._adapted_program_capability_report(
-        report, QualifiedAdapterNamespace.QualifiedArray)
-    @test adapted.key.device === :QualifiedArray
+    cpu_program = test_program(CorePotts.CheckerboardProgramEngine())
+    cpu_report = CorePotts.program_capability_report(cpu_program)
+    cpu_adapted = CorePotts._adapted_program_capability_report(
+        cpu_report, QualifiedAdapterNamespace.QualifiedArray)
+    @test cpu_adapted.key.device === :QualifiedArray
+    @test cpu_adapted.key.environment.adapted_backend.provider ===
+          :QualifiedArray
+
+    provider_program = capability_test_program(
+        cpu_program;
+        backend = CorePotts.AdaptedProgramBackend{:QualifiedProvider}(),
+    )
+    provider_report = CorePotts.program_capability_report(provider_program)
+    provider_adapted = CorePotts._adapted_program_capability_report(
+        provider_report, QualifiedAdapterNamespace.QualifiedArray)
+    @test provider_adapted.key.device === :QualifiedProvider
+    @test provider_adapted.key.environment.adapted_backend.provider ===
+          :QualifiedProvider
+    @test CorePotts._capability_key_fingerprint(provider_report.key) ==
+          CorePotts._capability_key_fingerprint(provider_adapted.key)
+    @test CorePotts._capability_key_fingerprint(provider_adapted.key) ==
+          CorePotts._capability_key_fingerprint(
+              CorePotts._adapted_program_capability_report(
+                  provider_report,
+                  QualifiedAdapterNamespace.QualifiedArray,
+              ).key,
+          )
+    foreign_program = capability_test_program(
+        cpu_program;
+        backend = CorePotts.AdaptedProgramBackend{:ForeignProvider}(),
+    )
+    foreign_report = CorePotts.program_capability_report(foreign_program)
+    @test CorePotts._capability_key_fingerprint(foreign_report.key) !=
+          CorePotts._capability_key_fingerprint(provider_report.key)
 end
 
 @testset "exact checkpoints compare explicit execution contracts" begin

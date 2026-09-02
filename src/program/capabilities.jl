@@ -577,7 +577,7 @@ end
 end
 
 function _capability_key(program::CompiledPottsProgram)
-    return ProgramCapabilityKey(
+    key = ProgramCapabilityKey(
         _capability_engine(program.engine),
         _capability_backend(program.backend),
         _capability_device(program.backend),
@@ -588,6 +588,25 @@ function _capability_key(program::CompiledPottsProgram)
         _capability_component_state_profile(program),
         _capability_mechanism_profile(program),
         ExactConfigurationReplay,
+    )
+    key.backend === AdaptedBackend || return key
+    environment = merge(key.environment, (
+        adapted_backend = adapted_device_environment(
+            Val(key.device), key
+        ),
+    ))
+    return ProgramCapabilityKey(
+        key.engine,
+        key.backend,
+        key.device,
+        key.topology,
+        key.scalar_type,
+        key.math_policy,
+        key.lifecycle,
+        key.component_state,
+        key.mechanisms,
+        key.replay;
+        environment,
     )
 end
 
@@ -715,7 +734,12 @@ function _adapted_program_capability_report(
         mechanisms::CapabilityMechanismProfile = report.key.mechanisms,
     )
     source = report.key
-    device = nameof(to)
+    # A compiled program may already name its logical provider contract (for
+    # example `MetalBackend`) while `to` is merely that provider's concrete
+    # storage converter (`MtlArray`).  Preserve the declared provider across
+    # storage adaptation.  CPU-origin programs have no such provider contract,
+    # so their adapter identity is necessarily derived from the converter.
+    device = source.backend === AdaptedBackend ? source.device : nameof(to)
     environment = merge(source.environment, (
         adapted_backend = adapted_device_environment(Val(device), source),
     ))
