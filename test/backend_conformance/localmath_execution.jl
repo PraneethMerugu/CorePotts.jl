@@ -57,13 +57,8 @@ function _boundary_descriptor_plan(branch::Symbol)
         ),
         (), (), role, 1,
     )
-    expression = descriptor.evaluator.expression
-    strategy = CorePotts.DescriptorKernelStrategy{
-        typeof(descriptor), typeof(expression), typeof(access),
-        typeof(role), Val{:proposal},
-    }()
-    group = CorePotts.DescriptorGroup(
-        CorePotts.DescriptorLaunch(strategy, [descriptor], (), ()),
+    group = CorePotts.ProposalDescriptorGroup(
+        [descriptor], (), (),
         (family = :boundary_failure,),
     )
     return CorePotts.DescriptorExecutionPlan(

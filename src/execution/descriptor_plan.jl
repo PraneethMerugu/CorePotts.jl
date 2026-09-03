@@ -1,29 +1,18 @@
-# Descriptor launch grouping, adaptation, validation, and inspection.
+# Proposal descriptor grouping, adaptation, validation, and inspection.
 
-"""Compile-time grouping key for compatible descriptor evaluator kernels."""
-struct DescriptorKernelStrategy{D, E, F, R, K} end
-
-"""One homogeneous descriptor launch and its state/workspace handles."""
-struct DescriptorLaunch{
-        S,
+"""One homogeneous proposal descriptor group and its compiler requirements."""
+struct ProposalDescriptorGroup{
         D,
         I <: AbstractVector{D},
         H <: Tuple,
         W <: Tuple,
+        M,
     }
-    strategy::S
     instances::I
     state_handles::H
     workspace_handles::W
-end
-
-"""One descriptor launch plus its deterministic source-table split."""
-struct DescriptorGroup{L, M}
-    launch::L
     split::M
 end
-
-descriptor_launch(group::DescriptorGroup) = group.launch
 
 """Cold-compiled predicate restricting one submission parameter domain."""
 struct ParameterDomainConstraint{E <: StaticEvaluator}
@@ -69,7 +58,7 @@ struct DescriptorExecutionPlan{
         }
         all(groups) do group
             all(descriptor -> descriptor isa ProposalDescriptor,
-                group.launch.instances)
+                group.instances)
         end || throw(ArgumentError(
             "descriptor execution plans admit only compiler-owned ProposalDescriptor values"
         ))
@@ -136,12 +125,11 @@ function Adapt.adapt_structure(
 end
 Adapt.@adapt_structure AuxiliaryState
 Adapt.@adapt_structure RuntimeWorkspaces
-Adapt.@adapt_structure DescriptorLaunch
+Adapt.@adapt_structure ProposalDescriptorGroup
 Adapt.@adapt_structure ParameterDomainConstraint
 Adapt.@adapt_structure ConstraintGroup
 
-function adapt_descriptor_launch(to, group::DescriptorGroup)
-    launch = descriptor_launch(group)
+function adapt_proposal_descriptor_group(to, group::ProposalDescriptorGroup)
     adapted_descriptors = map(
         descriptor -> begin
             descriptor isa ProposalDescriptor || throw(ArgumentError(
@@ -149,36 +137,19 @@ function adapt_descriptor_launch(to, group::DescriptorGroup)
             ))
             _compiled_descriptor_adapt(to, descriptor)
         end,
-        launch.instances,
+        group.instances,
     )
     adapted_instances = Adapt.adapt(to, adapted_descriptors)
-    return DescriptorLaunch(
-        launch.strategy,
+    return ProposalDescriptorGroup(
         adapted_instances,
-        launch.state_handles,
-        launch.workspace_handles,
+        group.state_handles,
+        group.workspace_handles,
+        group.split,
     )
 end
 
 _descriptor_source_count(plan::DescriptorExecutionPlan) =
     length(plan.source_table)
-
-@kernel function descriptor_group_probe_kernel!(
-        output,
-        launch,
-        context,
-    )
-    index = @index(Global, Linear)
-    if index <= length(launch.instances)
-        descriptor = @inbounds launch.instances[index]
-        descriptor isa ProposalDescriptor || error(
-            "production descriptor launches require compiler-owned ProposalDescriptor values"
-        )
-        @inbounds output[index] = _compiled_evaluate_static(
-            getfield(descriptor, :evaluator), context
-        )
-    end
-end
 
 @inline function _constraint_passes(value, predicate::UInt8)
     predicate == 0x01 && return value > zero(value)
@@ -242,7 +213,7 @@ end
     )
     group = first(groups)
     _evaluate_hamiltonian_instances!(
-        contributions, group.launch.instances, context, resources
+        contributions, group.instances, context, resources
     )
     return _evaluate_hamiltonian_groups!(
         contributions, Base.tail(groups), context, resources
@@ -409,7 +380,7 @@ end
     )
     group = first(groups)
     _evaluate_proposal_instances!(
-        contributions, group.launch.instances, context, resources
+        contributions, group.instances, context, resources
     )
     return _evaluate_proposal_groups!(
         contributions, Base.tail(groups), context, resources
@@ -468,11 +439,11 @@ function descriptor_plan_report(plan::DescriptorExecutionPlan)
         occurrences = Int(plan.occurrence_count),
         groups = length(plan.groups),
         instances = Tuple(
-            length(group.launch.instances) for group in plan.groups
+            length(group.instances) for group in plan.groups
         ),
         evaluator_nodes = Tuple(
             evaluator_node_count(
-                getfield(first(group.launch.instances), :evaluator)
+                getfield(first(group.instances), :evaluator)
             )
             for group in plan.groups
         ),
@@ -486,7 +457,7 @@ function descriptor_plan_report(plan::DescriptorExecutionPlan)
                     ),
                     _compiled_descriptor_inspection(descriptor),
                 )
-                for descriptor in group.launch.instances
+                for descriptor in group.instances
             ]
             for group in plan.groups
         ),
@@ -498,9 +469,6 @@ function descriptor_plan_report(plan::DescriptorExecutionPlan)
         relationship_domain_resources =
             count(>(0), plan.domain_resources.relationship_slots),
         group_splits = Tuple(group.split for group in plan.groups),
-        kernel_families = Tuple(
-            nameof(typeof(group.launch.strategy)) for group in plan.groups
-        ),
         fingerprint = plan.fingerprint,
     )
 end

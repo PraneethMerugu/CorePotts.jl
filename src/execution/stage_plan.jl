@@ -291,26 +291,27 @@ struct StageDescriptorGroup{D, V <: AbstractVector{D}}
     instances::V
 end
 
-"""Ordered accepted-copy and before/after-lifecycle stage groups."""
-struct StageExecutionPlan{A <: Tuple, B <: Tuple, L <: Tuple, M <: Tuple}
+"""Ordered accepted-copy and lifecycle-boundary stage groups."""
+struct StageExecutionPlan{A <: Tuple, B <: Tuple, L <: Tuple}
     accepted_copy::A
     before_lifecycle::B
     after_lifecycle::L
-    after_mcs::M
     accepted_count::Int32
     after_mcs_scratch_count::Int32
     fingerprint::String
 end
 
+@inline _after_mcs_groups(plan::StageExecutionPlan) =
+    (plan.before_lifecycle..., plan.after_lifecycle...)
+
 function StageExecutionPlan(
         accepted_copy::A,
         before_lifecycle::B,
         after_lifecycle::L,
-        after_mcs::M,
         accepted_count::Integer,
         after_mcs_scratch_count::Integer,
         fingerprint,
-    ) where {A <: Tuple, B <: Tuple, L <: Tuple, M <: Tuple}
+    ) where {A <: Tuple, B <: Tuple, L <: Tuple}
     all(
         group -> group isa StageDescriptorGroup && all(
             descriptor -> descriptor isa CompiledStageDescriptor,
@@ -338,9 +339,7 @@ function StageExecutionPlan(
     ) && throw(ArgumentError(
         "model assignments are admitted only at the after-MCS boundary"
     ))
-    after_mcs == (before_lifecycle..., after_lifecycle...) || throw(
-        ArgumentError("after-MCS groups must preserve lifecycle-boundary order")
-    )
+    after_mcs = (before_lifecycle..., after_lifecycle...)
     model_slots = sort!(Int[
         descriptor.buffer_slot
         for group in after_mcs
@@ -350,11 +349,10 @@ function StageExecutionPlan(
     model_slots == collect(eachindex(model_slots)) || throw(ArgumentError(
         "after-MCS model-assignment buffer slots must be dense and unique"
     ))
-    return StageExecutionPlan{A, B, L, M}(
+    return StageExecutionPlan{A, B, L}(
         accepted_copy,
         before_lifecycle,
         after_lifecycle,
-        after_mcs,
         Int32(accepted_count),
         Int32(after_mcs_scratch_count),
         String(fingerprint),
@@ -362,26 +360,8 @@ function StageExecutionPlan(
 end
 
 
-function StageExecutionPlan(
-        accepted_copy::A,
-        after_mcs::M,
-        accepted_count::Integer,
-        after_mcs_scratch_count::Integer,
-        fingerprint,
-    ) where {A <: Tuple, M <: Tuple}
-    return StageExecutionPlan(
-        accepted_copy,
-        after_mcs,
-        (),
-        after_mcs,
-        accepted_count,
-        after_mcs_scratch_count,
-        fingerprint,
-    )
-end
-
 StageExecutionPlan() = StageExecutionPlan(
-    (), (), (), (), 0, 0, "empty-stage-plan-v1"
+    (), (), (), 0, 0, "empty-stage-plan-v1"
 )
 
 struct StageEvaluation{T <: AbstractFloat}
@@ -416,7 +396,7 @@ function allocate_stage_runtime_buffers(
     ]
     model_count = sum((
         1
-        for group in plan.after_mcs
+        for group in _after_mcs_groups(plan)
         for descriptor in group.instances
         if descriptor.effect isa ModelAssignmentEffect
     ); init = 0)
@@ -432,7 +412,7 @@ function allocate_stage_runtime_buffers(
         ); init = 0) : 0
         after_bound = sum((
             length(relationships[store_slot].active)
-            for group in plan.after_mcs
+            for group in _after_mcs_groups(plan)
             for descriptor in group.instances
             if descriptor.effect isa Union{
                 RelationshipRemoveEffect, RelationshipRetuneEffect,

@@ -575,7 +575,7 @@ end
 
 function _run_host_lifecycle_selection!(runtime, workspace)
     prepared = _active_lifecycle_operations(runtime).selection
-    wait(LocalMath.execute!(
+    wait(_execute_lifecycle_selection!(
         prepared; parameters = (current_mcs = Int64(runtime.mcs),)
     ))
     return _lifecycle_succeeded(workspace)

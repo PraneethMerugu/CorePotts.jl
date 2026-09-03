@@ -125,7 +125,7 @@ end
 
 @inline function _acceptance_plan_has_nonconservative_terms(plan)
     for group in plan.groups
-        for descriptor in group.launch.instances
+        for descriptor in group.instances
             role = getfield(descriptor, :role)
             (role isa ProposalDriveRole || role isa ProposalModifierRole) &&
                 return true

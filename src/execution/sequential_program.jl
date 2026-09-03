@@ -1019,7 +1019,9 @@ function _inspect_checkerboard_execution(
                         executor = :KernelAbstractions,
                         lowering = :corepotts_lifecycle_emission_ka_v1,
                     ),
-                    selection = LocalMath.inspect(reductions.selection),
+                    selection = _inspect_lifecycle_selection(
+                        reductions.selection
+                    ),
                 )
             end,
         completion_receipts = (

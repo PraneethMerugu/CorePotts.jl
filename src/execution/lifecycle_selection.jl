@@ -744,15 +744,7 @@ struct _PreparedLifecycleSelection{Stable,Banks,B,R,P,W}
     publication::P
     plan::W
 end
-LocalMath.execution_contract(prepared::_PreparedLifecycleSelection) =
-    LocalMath.execution_contract(prepared.publication)
-LocalMath.inspect(prepared::_PreparedLifecycleSelection) =
-    LocalMath.inspect(prepared.publication)
-LocalMath.success_gate(prepared::_PreparedLifecycleSelection, parent) =
-    LocalMath.success_gate(prepared.publication, parent)
-LocalMath.submission_capacity(prepared::_PreparedLifecycleSelection) =
-    LocalMath.submission_capacity(prepared.publication)
-function LocalMath.execute!(
+function _execute_lifecycle_selection!(
         prepared::_PreparedLifecycleSelection{Stable,Banks};
         parameters::NamedTuple = (;), dependencies::Tuple = (),
     ) where {Stable,Banks}
@@ -760,6 +752,17 @@ function LocalMath.execute!(
     _lifecycle_selection_transaction_kernel!(prepared.backend)(
         prepared.reads, current_mcs, Val(Stable), Val(Banks); ndrange = 1)
     return LocalMath.execute!(prepared.publication; dependencies)
+end
+
+function _inspect_lifecycle_selection(prepared::_PreparedLifecycleSelection)
+    return (
+        selection = (
+            owner = :CorePotts,
+            executor = :KernelAbstractions,
+            lowering = :corepotts_lifecycle_selection_ka_v1,
+        ),
+        publication = LocalMath.inspect(prepared.publication),
+    )
 end
 
 function _lifecycle_selected_publication(plan, selection, reads, backend;

@@ -74,9 +74,7 @@ import ..CorePotts:
     DenseScalarTrackerGroup,
     DestinationLifecycleStateRole,
     DescriptorExecutionPlan,
-    DescriptorGroup,
-    DescriptorKernelStrategy,
-    DescriptorLaunch,
+    ProposalDescriptorGroup,
     DescriptorSupport,
     DimensionSquaredTrackerCost,
     DivideCellLifecycleEffect,
@@ -319,8 +317,7 @@ public FiniteSpatialFootprint
 public FootprintUnion, IncidentRelationshipFootprint, OwnerFootprint
 public ProposalSourceFootprintAnchor, ProposalTargetFootprintAnchor
 public IterationSiteFootprintAnchor, BoundSiteFootprintAnchor
-public DescriptorSupport, DescriptorLaunch, DescriptorGroup
-public DescriptorKernelStrategy, DescriptorExecutionPlan
+public DescriptorSupport, ProposalDescriptorGroup, DescriptorExecutionPlan
 public ProposalDescriptor, ConstraintGroup, ParameterDomainConstraint
 public HamiltonianDomainResources, HamiltonianRole
 public ProposalDriveRole, ProposalEnergyDriveRole, ProposalConstraintRole

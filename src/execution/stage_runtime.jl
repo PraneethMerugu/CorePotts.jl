@@ -721,6 +721,6 @@ function _execute_after_mcs_stage!(runtime, groups)
 end
 
 _execute_after_mcs_stage!(runtime) =
-    _execute_after_mcs_stage!(runtime, runtime.program.stage_plan.after_mcs)
+    _execute_after_mcs_stage!(runtime, _after_mcs_groups(runtime.program.stage_plan))
 
 """Log acceptance ratio for the conventional descriptor-driven law."""

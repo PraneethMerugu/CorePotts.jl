@@ -112,18 +112,9 @@ end
         1,
     )
     descriptor_instances = typeof(descriptor)[descriptor]
-    descriptor_strategy = CorePotts.DescriptorKernelStrategy{
-        typeof(descriptor),
-        typeof(descriptor.evaluator.expression),
-        typeof(descriptor.access),
-        typeof(descriptor.role),
-        Val{:proposal},
-    }()
     descriptor_groups = (
-        CorePotts.DescriptorGroup(
-            CorePotts.DescriptorLaunch(
-                descriptor_strategy, descriptor_instances, (), ()
-            ),
+        CorePotts.ProposalDescriptorGroup(
+            descriptor_instances, (), (),
             (family = :owned_test,),
         ),
     )
@@ -175,6 +166,7 @@ end
     stage_instances = typeof(stage_descriptor)[stage_descriptor]
     stage_plan = CorePotts.StageExecutionPlan(
         (CorePotts.StageDescriptorGroup(stage_instances),),
+        (),
         (),
         1,
         0,
@@ -253,7 +245,7 @@ end
     @test program.parameter_defaults == [2.0]
     @test length(program.relationships) == 1
     @test length(program.tracker_plan.descriptors[2].descriptors) == 1
-    @test length(program.descriptor_plan.groups[1].launch.instances) == 1
+    @test length(program.descriptor_plan.groups[1].instances) == 1
     @test length(program.descriptor_plan.constraints[1].instances) == 1
     @test program.descriptor_plan.source_table == Any[:owned_source]
     @test program.descriptor_plan.domain_resources.contact_offsets ==
@@ -423,6 +415,7 @@ end
     stage_plan = CorePotts.StageExecutionPlan(
         (),
         (CorePotts.StageDescriptorGroup([shift]),),
+        (),
         0,
         0,
         "history-stage-plan-v1",
@@ -540,7 +533,7 @@ end
     )
     group = CorePotts.StageDescriptorGroup([descriptor])
     stage_plan = CorePotts.StageExecutionPlan(
-        (), (group,), 0, 0, "model-assignment-stage-plan-v1"
+        (), (group,), (), 0, 0, "model-assignment-stage-plan-v1"
     )
     program = test_program(
         CorePotts.SequentialProgramEngine(); descriptor_plan, stage_plan
@@ -595,7 +588,7 @@ end
                 descriptor.source_handle,
                 2,
             ),
-        ]),), 0, 0, "sparse-model-buffer-slots"
+        ]),), (), 0, 0, "sparse-model-buffer-slots"
     )
 end
 
@@ -758,7 +751,7 @@ end
     end
 
     @test_throws ArgumentError CorePotts.StageExecutionPlan(
-        (), (), 1, 0, "inconsistent-stage-plan"
+        (), (), (), 1, 0, "inconsistent-stage-plan"
     )
 
     cleared_schema = CorePotts.StateBlockSchema(
