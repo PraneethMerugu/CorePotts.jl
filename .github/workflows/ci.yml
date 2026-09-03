@@ -4,7 +4,7 @@ on: [push, pull_request, workflow_dispatch]
 
 env:
   JULIA_VERSION: '1.12.6'
-  LOCALMATH_REF: '4df26f61cc802f255c6bf7b863b5a5e452ac5690'
+  LOCALMATH_REF: 'ba65753b95578ab43993963a0c5c0130ed727a06'
 
 jobs:
   cpu:
