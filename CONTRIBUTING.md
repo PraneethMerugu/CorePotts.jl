@@ -82,7 +82,7 @@ the changed behavior. For example, a focused root check can load the shared
 setup explicitly:
 
 ```sh
-julia --project=. --startup-file=no -e 'include("test/setup.jl"); include("test/test_public_api.jl")'
+julia --project=. --startup-file=no -e 'using Test; import CorePotts, LocalMath; include("test/test_compiled_program_support.jl"); include("test/test_acceptance.jl")'
 ```
 
 Focused commands shorten the edit loop; they are not a second test inventory
@@ -150,13 +150,14 @@ changes.
 Run real-Metal semantic tests independently from performance measurements:
 
 ```sh
-julia --project=benchmark/backends/metal --startup-file=no benchmark/backends/metal/runtests.jl
+julia --project=test/metal --startup-file=no test/metal/runtests.jl
 ```
 
 The runner includes the active semantic, parity, lifecycle, native-component,
-and extension-load witnesses; performance campaigns remain separate. Use the repository Julia version for these commands. The root `.julia-version`,
-root manifest, and Metal manifest all select Julia 1.12.6; do not invoke the
-Metal environment through a separate Julia release channel.
+and extension-load witnesses; performance campaigns remain separate. Use the
+repository Julia version for these commands. The root `.julia-version` and
+Metal manifest select Julia 1.12.6; do not invoke the Metal environment through
+a separate Julia release channel.
 
 Current specifications and decisions live under `spec/`. Historical interviews and evidence under
 `design/audits/`, and retired qualification scripts under `scripts/archive/`, document earlier
