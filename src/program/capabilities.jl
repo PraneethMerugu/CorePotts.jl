@@ -467,7 +467,7 @@ function _capability_descriptor_family_admitted(
             descriptor_support(descriptor), engine, backend
         )
         for group in plan.groups
-        for descriptor in group.launch.instances
+        for descriptor in group.instances
     )
 end
 _capability_descriptor_family_admitted(
@@ -483,7 +483,7 @@ function _capability_stage_family_admitted(
         _capability_supports_engine_backend(
             descriptor_support(descriptor), engine, backend
         )
-        for groups in (plan.accepted_copy, plan.after_mcs)
+        for groups in (plan.accepted_copy, _after_mcs_groups(plan))
         for group in groups
         for descriptor in group.instances
     )
@@ -685,7 +685,7 @@ function program_capability_report(program::CompiledPottsProgram)
         nameof(typeof(descriptor.effect))
         for groups in (
             program.stage_plan.accepted_copy,
-            program.stage_plan.after_mcs,
+            _after_mcs_groups(program.stage_plan),
         )
         for group in groups
         for descriptor in group.instances

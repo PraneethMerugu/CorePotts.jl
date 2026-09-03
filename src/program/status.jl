@@ -1,4 +1,4 @@
-# Fixed-size lifecycle status values and host-side failure translations.
+# Fixed-size program status values and host-side failure translations.
 
 """Device-reportable success or terminal scientific failure category."""
 @enum ProgramStatusCode::UInt8 begin

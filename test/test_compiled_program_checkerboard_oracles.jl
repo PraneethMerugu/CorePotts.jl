@@ -154,17 +154,9 @@ function _order_sensitive_descriptor_plan()
             source,
         ) for (source, value) in enumerate(values)
     ]
-    descriptor = first(descriptors)
-    strategy = CorePotts.DescriptorKernelStrategy{
-        typeof(descriptor),
-        typeof(descriptor.evaluator.expression),
-        typeof(descriptor.access),
-        typeof(descriptor.role),
-        Val{:proposal},
-    }()
     groups = (
-        CorePotts.DescriptorGroup(
-            CorePotts.DescriptorLaunch(strategy, descriptors, (), ()),
+        CorePotts.ProposalDescriptorGroup(
+            descriptors, (), (),
             (family = :order_sensitive_float64,),
         ),
     )
@@ -402,6 +394,7 @@ end
     stage_plan = CorePotts.StageExecutionPlan(
         (CorePotts.StageDescriptorGroup([descriptor]),),
         (),
+        (),
         1,
         0,
         "accepted-marker-stage-plan-v1",
@@ -460,6 +453,7 @@ end
     stage_plan = CorePotts.StageExecutionPlan(
         (CorePotts.StageDescriptorGroup([descriptor]),),
         (),
+        (),
         1,
         0,
         "accepted-relationship-stage-plan-v1",
@@ -513,6 +507,7 @@ end
             ordered_descriptor(22.0, 2, 1),
         ]),),
         (),
+        (),
         2,
         0,
         "accepted-relationship-permuted-buffer-order-v1",
@@ -554,6 +549,7 @@ end
     )
     second_slot_stage_plan = CorePotts.StageExecutionPlan(
         (CorePotts.StageDescriptorGroup([second_slot_descriptor]),),
+        (),
         (),
         1,
         0,
@@ -635,6 +631,7 @@ end
     nonfinite_stage_plan = CorePotts.StageExecutionPlan(
         (CorePotts.StageDescriptorGroup([nonfinite_descriptor]),),
         (),
+        (),
         1,
         0,
         "accepted-relationship-nonfinite-stage-plan-v1",
@@ -697,6 +694,7 @@ end
             descriptor,
             later_nonfinite_descriptor,
         ]),),
+        (),
         (),
         2,
         0,

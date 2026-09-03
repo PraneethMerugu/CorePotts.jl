@@ -11,8 +11,9 @@ function acceptance_descriptor_plan(value; role = CorePotts.ProposalDriveRole())
         role,
         1,
     )
-    launch = CorePotts.DescriptorLaunch(nothing, [descriptor], (), ())
-    group = CorePotts.DescriptorGroup(launch, :unsplit)
+    group = CorePotts.ProposalDescriptorGroup(
+        [descriptor], (), (), :unsplit
+    )
     return CorePotts.DescriptorExecutionPlan(
         (group,),
         CorePotts.StateLayout(CorePotts.StateBlockSchema[]),

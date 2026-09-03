@@ -139,7 +139,7 @@ function enqueue_lifecycle_backend_index!(
         reductions.planning, length(control.candidate_status))
     _enqueue_lifecycle_failure_stamp!(state, ProgramStagePlanning)
     @debug "enqueue lifecycle backend stage" stage = :select_requests
-    selection_event = LocalMath.execute!(
+    selection_event = _execute_lifecycle_selection!(
         reductions.selection; parameters = (current_mcs = Int64(state.mcs),)
     )
     policy_workspace_length = length(workspace.policy_workspace)

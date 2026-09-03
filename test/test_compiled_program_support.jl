@@ -117,8 +117,9 @@ function cpu_only_descriptor_plan()
         CorePotts.DescriptorSupport(true, true, true, false),
         (), (), CorePotts.ProposalDriveRole(), 1,
     )
-    launch = CorePotts.DescriptorLaunch(nothing, [descriptor], (), ())
-    group = CorePotts.DescriptorGroup(launch, :unsplit)
+    group = CorePotts.ProposalDescriptorGroup(
+        [descriptor], (), (), :unsplit
+    )
     return CorePotts.DescriptorExecutionPlan(
         (group,),
         CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
@@ -143,7 +144,7 @@ function cpu_only_stage_plan()
         1, 1,
     )
     return CorePotts.StageExecutionPlan(
-        (CorePotts.StageDescriptorGroup([descriptor]),), (),
+        (CorePotts.StageDescriptorGroup([descriptor]),), (), (),
         1, 0, "cpu-only-stage-plan-v1",
     )
 end
@@ -180,7 +181,7 @@ function contradictory_relationship_test_program()
         (CorePotts.StageDescriptorGroup([
             descriptor(11.0f0, 1, 2), descriptor(22.0f0, 2, 1),
         ]),),
-        (), 2, 0, "contradictory-relationship-payload-plan-v1",
+        (), (), 2, 0, "contradictory-relationship-payload-plan-v1",
     )
     program = test_program(
         CorePotts.CheckerboardProgramEngine();
@@ -278,7 +279,7 @@ function unsupported_host_callback_stage_plan(count::Base.RefValue{Int})
         0,
     )
     return CorePotts.StageExecutionPlan(
-        (), (CorePotts.StageDescriptorGroup([descriptor]),),
+        (), (CorePotts.StageDescriptorGroup([descriptor]),), (),
         0, 0, "unsupported-host-callback-stage-plan-v1",
     )
 end
@@ -322,6 +323,6 @@ function injected_failure_stage_plan()
     )
     group = CorePotts.StageDescriptorGroup([descriptor])
     return CorePotts.StageExecutionPlan(
-        (), (group,), 0, 0, "injected-failure-stage-plan-v1"
+        (), (group,), (), 0, 0, "injected-failure-stage-plan-v1"
     )
 end

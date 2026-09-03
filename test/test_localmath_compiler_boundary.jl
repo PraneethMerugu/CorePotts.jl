@@ -43,12 +43,8 @@ function _compiler_inventory_plan(
         evaluator, access,
         CorePotts.DescriptorSupport(true, true, true, true),
         (), (), role, 1)
-    strategy = CorePotts.DescriptorKernelStrategy{
-        typeof(descriptor), typeof(expression), typeof(access),
-        typeof(descriptor.role), Val{:proposal}}()
-    group = CorePotts.DescriptorGroup(
-        CorePotts.DescriptorLaunch(
-            strategy, [descriptor], (), ()),
+    group = CorePotts.ProposalDescriptorGroup(
+        [descriptor], (), (),
         (family = :compiler_inventory,))
     return CorePotts.DescriptorExecutionPlan(
         (group,), CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
@@ -70,12 +66,8 @@ function _literal_proposal_plan(values)
             CorePotts.DescriptorSupport(true, true, true, true),
             (), (), CorePotts.ProposalEnergyDriveRole(), index)
     end
-    exemplar = first(descriptors)
-    strategy = CorePotts.DescriptorKernelStrategy{
-        typeof(exemplar), typeof(exemplar.evaluator.expression),
-        typeof(exemplar.access), typeof(exemplar.role), Val{:proposal}}()
-    group = CorePotts.DescriptorGroup(
-        CorePotts.DescriptorLaunch(strategy, descriptors, (), ()),
+    group = CorePotts.ProposalDescriptorGroup(
+        descriptors, (), (),
         (family = :literal_proposal,))
     return CorePotts.DescriptorExecutionPlan(
         (group,), CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
@@ -101,11 +93,8 @@ function _context_proposal_plan()
         evaluator, access,
         CorePotts.DescriptorSupport(true, true, true, true),
         (), (), CorePotts.ProposalEnergyDriveRole(), 1)
-    strategy = CorePotts.DescriptorKernelStrategy{
-        typeof(descriptor), typeof(expression), typeof(access),
-        typeof(descriptor.role), Val{:proposal}}()
-    group = CorePotts.DescriptorGroup(
-        CorePotts.DescriptorLaunch(strategy, [descriptor], (), ()),
+    group = CorePotts.ProposalDescriptorGroup(
+        [descriptor], (), (),
         (family = :context_proposal,))
     return CorePotts.DescriptorExecutionPlan(
         (group,), CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
@@ -132,11 +121,8 @@ function _cell_volume_hamiltonian_plan()
         evaluator, access,
         CorePotts.DescriptorSupport(true, true, true, true),
         (), (), role, 1)
-    strategy = CorePotts.DescriptorKernelStrategy{
-        typeof(descriptor), typeof(expression), typeof(access),
-        typeof(role), Val{:proposal}}()
-    group = CorePotts.DescriptorGroup(
-        CorePotts.DescriptorLaunch(strategy, [descriptor], (), ()),
+    group = CorePotts.ProposalDescriptorGroup(
+        [descriptor], (), (),
         (family = :cell_volume_hamiltonian,))
     return CorePotts.DescriptorExecutionPlan(
         (group,), CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
@@ -167,11 +153,8 @@ function _contact_hamiltonian_plan()
         evaluator, access,
         CorePotts.DescriptorSupport(true, true, true, true),
         (), (), role, 1)
-    strategy = CorePotts.DescriptorKernelStrategy{
-        typeof(descriptor), typeof(expression), typeof(access),
-        typeof(role), Val{:proposal}}()
-    group = CorePotts.DescriptorGroup(
-        CorePotts.DescriptorLaunch(strategy, [descriptor], (), ()),
+    group = CorePotts.ProposalDescriptorGroup(
+        [descriptor], (), (),
         (family = :contact_hamiltonian,))
     resources = CorePotts.HamiltonianDomainResources(
         reshape(Int8[-1, 1], 1, 2), Int32[1], Int32[2], Int32[0])
