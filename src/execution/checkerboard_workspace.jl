@@ -98,15 +98,34 @@ _checkerboard_compiled_extinction_policies(program) =
 _checkerboard_compiled_relationship_layout(
     program::CheckerboardKernelProgram) = program.relationship_layout
 
+_checkerboard_relationship_endpoint_count(
+    plan::LifecycleExecutionPlan) = plan.cell_capacity
+_checkerboard_relationship_endpoint_count(
+    ::NoLifecycleExecutionPlan) = Int32(0)
+
 function _checkerboard_compiled_relationship_layout(program)
     storage = program.relationships
+    endpoint_count = Int32(
+        _checkerboard_relationship_endpoint_count(program.lifecycle_plan)
+    )
     banks = map(storage.banks) do schemas
         counts = Tuple(Int32(schema.capacity) for schema in schemas)
         offsets = Vector{Int32}(undef, length(counts))
+        endpoint_offsets = Vector{Int32}(undef, length(counts))
+        incident_offsets = Vector{Int32}(undef, length(counts))
+        maximum_degrees = Tuple(
+            Int32(schema.maximum_degree) for schema in schemas
+        )
         next_offset = Int32(1)
+        next_endpoint = Int32(1)
+        next_incident = Int32(1)
         for index in eachindex(counts)
             offsets[index] = next_offset
+            endpoint_offsets[index] = next_endpoint
+            incident_offsets[index] = next_incident
             next_offset += counts[index]
+            next_endpoint += endpoint_count
+            next_incident += endpoint_count * maximum_degrees[index]
         end
         payload_count = isempty(schemas) ? Int32(0) :
             Int32(length(first(schemas).payload_defaults))
@@ -114,7 +133,14 @@ function _checkerboard_compiled_relationship_layout(program)
             schemas) || throw(ArgumentError(
             "packed relationship bank payload schemas disagree"))
         _CheckerboardRelationshipBankLayout(
-            Tuple(offsets), counts, payload_count)
+            Tuple(offsets),
+            counts,
+            Tuple(endpoint_offsets),
+            Tuple(incident_offsets),
+            maximum_degrees,
+            endpoint_count,
+            payload_count,
+        )
     end
     return _CheckerboardRelationshipLayout(Tuple(storage.slots), banks)
 end

@@ -493,6 +493,20 @@ function _relationship_rule_admissible(
     return true
 end
 
+@inline function _lifecycle_relationship_rule_admissible(
+        storage,
+        cell_kinds,
+        relationship_slot,
+        anchor,
+        destination_kind,
+        rule,
+    )
+    state = storage[Int(relationship_slot)]
+    return _relationship_rule_admissible(
+        state, cell_kinds, Int(anchor), destination_kind, rule
+    )
+end
+
 function _lifecycle_relationships_admissible(
         runtime, plan, descriptor, anchor
     )
@@ -504,9 +518,13 @@ function _lifecycle_relationships_admissible(
         rule = @inbounds plan.relationship_rules[
             Int(descriptor.relationship_rule_offset) + offset
         ]
-        state = runtime.relationships[Int(rule.relationship_slot)]
-        _relationship_rule_admissible(
-            state, runtime.cell_kinds, Int(anchor), destination_kind, rule
+        _lifecycle_relationship_rule_admissible(
+            runtime.relationships,
+            runtime.cell_kinds,
+            rule.relationship_slot,
+            anchor,
+            destination_kind,
+            rule,
         ) || return false
     end
     return true

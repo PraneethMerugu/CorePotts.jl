@@ -192,20 +192,7 @@ end
                     control.candidate_status, Int32(request)
                 ),
             )
-            reason = if descriptor.effect === RetireCellLifecycleEffect &&
-                    !_lifecycle_request_generation_current(
-                        runtime, workspace, request
-                    )
-                _set_lifecycle_status!(
-                    request_workspace,
-                    ProgramStatusStaleGeneration;
-                    anchor,
-                )
-                :status_failure
-            elseif descriptor.effect === RetireCellLifecycleEffect &&
-                    @inbounds(runtime.cell_volumes[anchor]) != 0
-                :retire_nonempty
-            elseif !_lifecycle_relationships_admissible(
+            reason = if !_lifecycle_relationships_admissible(
                     runtime, plan, descriptor, anchor
                 )
                 :relationship_policy_rejected

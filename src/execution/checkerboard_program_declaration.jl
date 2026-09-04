@@ -51,9 +51,13 @@ ProgramExecutionPosition(initial_mcs::Integer = 0) = ProgramExecutionPosition(
     0, 0, 0, 0, 0,
 )
 
-struct _CheckerboardRelationshipBankLayout{O,C}
+struct _CheckerboardRelationshipBankLayout{O,C,E,I,D}
     edge_offsets::O
     edge_counts::C
+    endpoint_offsets::E
+    incident_offsets::I
+    maximum_degrees::D
+    endpoint_count::Int32
     payload_count::Int32
 end
 
