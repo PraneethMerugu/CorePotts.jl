@@ -66,6 +66,45 @@ end
     )
 end
 
+
+@inline function _lifecycle_effect_workspace(
+        workspace, ::_CreateLifecyclePlan
+    )
+    return (
+        request_index = workspace.request_index,
+        descriptor = workspace.descriptor,
+        anchor = workspace.anchor,
+        generation = workspace.generation,
+        active = workspace.active,
+        filtered = workspace.filtered,
+        filtered_detail = workspace.filtered_detail,
+        planned_site_count = workspace.planned_site_count,
+        planned_sites = workspace.planned_sites,
+        site_index = workspace.site_index,
+        status = workspace.status,
+    )
+end
+
+@inline function _lifecycle_effect_workspace(
+        workspace,
+        ::Union{
+            _RetireLifecyclePlan,
+            _RemoveLifecyclePlan,
+            _TransitionLifecyclePlan,
+        },
+    )
+    return (
+        request_index = workspace.request_index,
+        descriptor = workspace.descriptor,
+        anchor = workspace.anchor,
+        generation = workspace.generation,
+        active = workspace.active,
+        filtered = workspace.filtered,
+        filtered_detail = workspace.filtered_detail,
+        status = workspace.status,
+    )
+end
+
 function enqueue_lifecycle_backend_index!(
         state,
         reductions;
@@ -151,10 +190,11 @@ function enqueue_lifecycle_backend_index!(
         effect_plan = _lifecycle_effect_plan(
             state.program.lifecycle_plan, plan_class
         )
+        effect_workspace = _lifecycle_effect_workspace(workspace, plan_class)
         plan_effect(
             effect_runtime,
             effect_plan,
-            workspace,
+            effect_workspace,
             control,
             plan_class;
             ndrange = 1,
