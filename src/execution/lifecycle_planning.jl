@@ -5,6 +5,15 @@ struct _CreateLifecyclePlan <: _AbstractLifecyclePlanClass end
 struct _RetireLifecyclePlan <: _AbstractLifecyclePlanClass end
 struct _RemoveLifecyclePlan <: _AbstractLifecyclePlanClass end
 struct _TransitionLifecyclePlan <: _AbstractLifecyclePlanClass end
+
+struct _RetireLifecycleRuntime{K, G, V, R}
+    cell_kinds::K
+    cell_generations::G
+    cell_volumes::V
+    relationships::R
+end
+
+Adapt.@adapt_structure _RetireLifecycleRuntime
 struct _DivideLifecyclePlan <: _AbstractLifecyclePlanClass end
 
 abstract type _AbstractLifecyclePartitionPlan end
@@ -535,9 +544,15 @@ end
         ::_RetireLifecyclePlan,
     )
     anchor = @inbounds workspace.anchor[request]
-    return program_tracker_value(runtime, Val(:cell_volume), anchor) == 0 ?
+    return _lifecycle_retire_volume(runtime, anchor) == 0 ?
         :ok : :retire_nonempty
 end
+
+@inline _lifecycle_retire_volume(runtime, anchor) =
+    program_tracker_value(runtime, Val(:cell_volume), anchor)
+
+@inline _lifecycle_retire_volume(runtime::_RetireLifecycleRuntime, anchor) =
+    @inbounds runtime.cell_volumes[anchor]
 
 @inline _plan_lifecycle_effect!(
     mode, runtime, plan, workspace, request, descriptor, ::_RemoveLifecyclePlan

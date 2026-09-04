@@ -97,12 +97,13 @@ end
 @inline function _lifecycle_effect_runtime(
         state, ::_RetireLifecyclePlan
     )
-    return (
-        program = (tracker_plan = state.program.tracker_plan,),
-        cell_kinds = state.cell_kinds,
-        cell_generations = state.cell_generations,
-        trackers = state.trackers,
-        relationships = _lifecycle_relationship_topology(state.relationships),
+    return _RetireLifecycleRuntime(
+        state.cell_kinds,
+        state.cell_generations,
+        tracker_values(
+            state.program.tracker_plan, state.trackers, Val(:cell_volume)
+        ),
+        _lifecycle_relationship_topology(state.relationships),
     )
 end
 
