@@ -50,6 +50,22 @@ end
     )
 end
 
+@inline _lifecycle_effect_plan(plan, ::_CreateLifecyclePlan) = plan
+
+@inline function _lifecycle_effect_plan(
+        plan,
+        ::Union{
+            _RetireLifecyclePlan,
+            _RemoveLifecyclePlan,
+            _TransitionLifecyclePlan,
+        },
+    )
+    return (
+        descriptors = plan.descriptors,
+        relationship_rules = plan.relationship_rules,
+    )
+end
+
 function enqueue_lifecycle_backend_index!(
         state,
         reductions;
@@ -132,9 +148,12 @@ function enqueue_lifecycle_backend_index!(
         ) && continue
         @debug "enqueue lifecycle effect planner" plan_class
         effect_runtime = _lifecycle_effect_runtime(state, plan_class)
+        effect_plan = _lifecycle_effect_plan(
+            state.program.lifecycle_plan, plan_class
+        )
         plan_effect(
             effect_runtime,
-            state.program.lifecycle_plan,
+            effect_plan,
             workspace,
             control,
             plan_class;
