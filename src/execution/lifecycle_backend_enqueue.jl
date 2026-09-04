@@ -13,6 +13,8 @@ struct _LifecycleRelationshipTopologyBank{E, D, I, M}
     maximum_degrees::M
 end
 
+Adapt.@adapt_structure _LifecycleRelationshipTopologyBank
+
 @inline function Base.getindex(
         bank::_LifecycleRelationshipTopologyBank, slot::Int
     )
