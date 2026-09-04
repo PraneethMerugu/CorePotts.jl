@@ -1,30 +1,34 @@
 # Reachability-specialized orchestration of the ordered backend lifecycle transaction.
 
-struct _LifecycleRelationshipTopologyBank{E, D, I, M}
+struct _LifecycleRelationshipTopologyBank{E, D, I, O, C, P, X, M}
     endpoint_a::E
     endpoint_b::E
     degree::D
     incident_edges::I
-    edge_offsets::M
-    edge_counts::M
-    endpoint_offsets::M
-    endpoint_counts::M
-    incident_offsets::M
+    edge_offsets::O
+    edge_counts::C
+    endpoint_offsets::P
+    incident_offsets::X
     maximum_degrees::M
+    endpoint_count::Int32
+end
+
+struct _LifecycleRelationshipTopologyStorage{B, S}
+    banks::B
+    slots::S
 end
 
 Adapt.@adapt_structure _LifecycleRelationshipTopologyBank
+Adapt.@adapt_structure _LifecycleRelationshipTopologyStorage
 
-@inline function Base.getindex(
-        bank::_LifecycleRelationshipTopologyBank, slot::Int
-    )
-    @boundscheck checkbounds(bank.edge_offsets, slot)
-    edge_offset = @inbounds bank.edge_offsets[slot]
-    edge_count = @inbounds bank.edge_counts[slot]
-    endpoint_offset = @inbounds bank.endpoint_offsets[slot]
-    endpoint_count = @inbounds bank.endpoint_counts[slot]
-    incident_offset = @inbounds bank.incident_offsets[slot]
-    maximum_degree = @inbounds bank.maximum_degrees[slot]
+@inline function _lifecycle_relationship_topology_state(
+        bank::_LifecycleRelationshipTopologyBank, ::Val{Slot}
+    ) where {Slot}
+    edge_offset = getfield(bank.edge_offsets, Slot)
+    edge_count = getfield(bank.edge_counts, Slot)
+    endpoint_offset = getfield(bank.endpoint_offsets, Slot)
+    incident_offset = getfield(bank.incident_offsets, Slot)
+    maximum_degree = getfield(bank.maximum_degrees, Slot)
     return (
         endpoint_a = PackedRelationshipVector(
             bank.endpoint_a, edge_offset, edge_count
@@ -33,38 +37,129 @@ Adapt.@adapt_structure _LifecycleRelationshipTopologyBank
             bank.endpoint_b, edge_offset, edge_count
         ),
         degree = PackedRelationshipVector(
-            bank.degree, endpoint_offset, endpoint_count
+            bank.degree, endpoint_offset, bank.endpoint_count
         ),
         incident_edges = PackedRelationshipMatrix(
             bank.incident_edges,
             incident_offset,
             maximum_degree,
-            endpoint_count,
+            bank.endpoint_count,
         ),
     )
 end
 
-@inline function _lifecycle_relationship_topology(bank::PackedRelationshipBank)
+@generated function _lifecycle_relationship_bank_rule_admissible(
+        banks::Banks,
+        bank::Int32,
+        slot::Int32,
+        cell_kinds,
+        anchor,
+        destination_kind,
+        rule,
+    ) where {Banks <: Tuple}
+    branches = Expr(:block)
+    for bank_index in 1:fieldcount(Banks)
+        bank_type = fieldtype(Banks, bank_index)
+        offset_type = fieldtype(bank_type, 5)
+        for slot_index in 1:fieldcount(offset_type)
+            push!(branches.args, quote
+                if bank == $(Int32(bank_index)) &&
+                        slot == $(Int32(slot_index))
+                    state = _lifecycle_relationship_topology_state(
+                        getfield(banks, $bank_index), Val($slot_index)
+                    )
+                    return _relationship_rule_admissible(
+                        state,
+                        cell_kinds,
+                        Int(anchor),
+                        destination_kind,
+                        rule,
+                    )
+                end
+            end)
+        end
+    end
+    push!(branches.args, :(return false))
+    return branches
+end
+
+@generated function _lifecycle_relationship_rule_admissible(
+        storage::_LifecycleRelationshipTopologyStorage{Banks, Slots},
+        cell_kinds,
+        relationship_slot,
+        anchor,
+        destination_kind,
+        rule,
+    ) where {Banks <: Tuple, Slots <: Tuple}
+    branches = Expr(:block)
+    for index in 1:fieldcount(Slots)
+        push!(branches.args, quote
+            if relationship_slot == $(Int32(index))
+                location = getfield(storage.slots, $index)
+                return _lifecycle_relationship_bank_rule_admissible(
+                    storage.banks,
+                    location.bank,
+                    location.slot,
+                    cell_kinds,
+                    anchor,
+                    destination_kind,
+                    rule,
+                )
+            end
+        end)
+    end
+    push!(branches.args, :(return false))
+    return branches
+end
+
+@inline function _lifecycle_relationship_topology(
+        bank::PackedRelationshipBank, layout
+    )
     return _LifecycleRelationshipTopologyBank(
         bank.endpoint_a,
         bank.endpoint_b,
         bank.degree,
         bank.incident_edges,
-        bank.edge_offsets,
-        bank.edge_counts,
-        bank.endpoint_offsets,
-        bank.endpoint_counts,
-        bank.incident_offsets,
-        bank.maximum_degrees,
+        layout.edge_offsets,
+        layout.edge_counts,
+        layout.endpoint_offsets,
+        layout.incident_offsets,
+        layout.maximum_degrees,
+        layout.endpoint_count,
     )
 end
 
-@inline function _lifecycle_relationship_topology(storage::RelationshipStorage)
-    return RelationshipStorage(
-        map(_lifecycle_relationship_topology, storage.banks),
-        storage.slots,
+@inline function _lifecycle_relationship_topology(
+        storage::RelationshipStorage, layout
+    )
+    return _LifecycleRelationshipTopologyStorage(
+        map(_lifecycle_relationship_topology, storage.banks, layout.banks),
+        layout.slots,
     )
 end
+
+struct _LifecycleRetireRuntime{K, G, V}
+    cell_kinds::K
+    cell_generations::G
+    cell_volumes::V
+end
+
+Adapt.@adapt_structure _LifecycleRetireRuntime
+
+@inline function _lifecycle_effect_runtime(
+        state, ::_RetireLifecyclePlan
+    )
+    return _LifecycleRetireRuntime(
+        state.cell_kinds,
+        state.cell_generations,
+        tracker_values(
+            state.program.tracker_plan, state.trackers, Val(:cell_volume)
+        ),
+    )
+end
+
+@inline _lifecycle_retire_volume(runtime::_LifecycleRetireRuntime, anchor) =
+    @inbounds runtime.cell_volumes[anchor]
 
 @inline function _lifecycle_effect_runtime(
         state, ::_CreateLifecyclePlan
@@ -105,11 +200,9 @@ end
 
 @inline _lifecycle_relationship_validation_runtime(state) = (
     cell_kinds = state.cell_kinds,
-    cell_generations = state.cell_generations,
-    cell_volumes = tracker_values(
-        state.program.tracker_plan, state.trackers, Val(:cell_volume)
+    relationships = _lifecycle_relationship_topology(
+        state.relationships, state.program.relationship_layout
     ),
-    relationships = _lifecycle_relationship_topology(state.relationships),
 )
 
 @inline _lifecycle_relationship_validation_plan(plan) = (
@@ -120,16 +213,14 @@ end
 @inline _lifecycle_effect_plan(plan, ::_CreateLifecyclePlan) = plan
 
 @inline function _lifecycle_effect_plan(
-        plan,
-        ::Union{
+    plan,
+    ::Union{
+            _RetireLifecyclePlan,
             _RemoveLifecyclePlan,
             _TransitionLifecyclePlan,
         },
     )
-    return (
-        descriptors = plan.descriptors,
-        relationship_rules = plan.relationship_rules,
-    )
+    return (; descriptors = plan.descriptors)
 end
 
 
@@ -155,6 +246,7 @@ end
 @inline function _lifecycle_effect_workspace(
         workspace,
         ::Union{
+            _RetireLifecyclePlan,
             _RemoveLifecyclePlan,
             _TransitionLifecyclePlan,
         },
@@ -258,6 +350,7 @@ function enqueue_lifecycle_backend_index!(
     effect_mask = state.program.lifecycle_plan.effect_mask
     for plan_class in (
             _CreateLifecyclePlan(),
+            _RetireLifecyclePlan(),
             _RemoveLifecyclePlan(),
             _TransitionLifecyclePlan(),
         )
