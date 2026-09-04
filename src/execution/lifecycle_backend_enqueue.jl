@@ -1,5 +1,69 @@
 # Reachability-specialized orchestration of the ordered backend lifecycle transaction.
 
+struct _LifecycleRelationshipTopologyBank{E, D, I, M}
+    endpoint_a::E
+    endpoint_b::E
+    degree::D
+    incident_edges::I
+    edge_offsets::M
+    edge_counts::M
+    endpoint_offsets::M
+    endpoint_counts::M
+    incident_offsets::M
+    maximum_degrees::M
+end
+
+@inline function Base.getindex(
+        bank::_LifecycleRelationshipTopologyBank, slot::Int
+    )
+    @boundscheck checkbounds(bank.edge_offsets, slot)
+    edge_offset = @inbounds bank.edge_offsets[slot]
+    edge_count = @inbounds bank.edge_counts[slot]
+    endpoint_offset = @inbounds bank.endpoint_offsets[slot]
+    endpoint_count = @inbounds bank.endpoint_counts[slot]
+    incident_offset = @inbounds bank.incident_offsets[slot]
+    maximum_degree = @inbounds bank.maximum_degrees[slot]
+    return (
+        endpoint_a = PackedRelationshipVector(
+            bank.endpoint_a, edge_offset, edge_count
+        ),
+        endpoint_b = PackedRelationshipVector(
+            bank.endpoint_b, edge_offset, edge_count
+        ),
+        degree = PackedRelationshipVector(
+            bank.degree, endpoint_offset, endpoint_count
+        ),
+        incident_edges = PackedRelationshipMatrix(
+            bank.incident_edges,
+            incident_offset,
+            maximum_degree,
+            endpoint_count,
+        ),
+    )
+end
+
+@inline function _lifecycle_relationship_topology(bank::PackedRelationshipBank)
+    return _LifecycleRelationshipTopologyBank(
+        bank.endpoint_a,
+        bank.endpoint_b,
+        bank.degree,
+        bank.incident_edges,
+        bank.edge_offsets,
+        bank.edge_counts,
+        bank.endpoint_offsets,
+        bank.endpoint_counts,
+        bank.incident_offsets,
+        bank.maximum_degrees,
+    )
+end
+
+@inline function _lifecycle_relationship_topology(storage::RelationshipStorage)
+    return RelationshipStorage(
+        map(_lifecycle_relationship_topology, storage.banks),
+        storage.slots,
+    )
+end
+
 @inline function _lifecycle_effect_runtime(
         state, ::_CreateLifecyclePlan
     )
@@ -36,7 +100,7 @@ end
         cell_kinds = state.cell_kinds,
         cell_generations = state.cell_generations,
         trackers = state.trackers,
-        relationships = state.relationships,
+        relationships = _lifecycle_relationship_topology(state.relationships),
     )
 end
 
@@ -46,7 +110,7 @@ end
     return (
         cell_kinds = state.cell_kinds,
         cell_generations = state.cell_generations,
-        relationships = state.relationships,
+        relationships = _lifecycle_relationship_topology(state.relationships),
     )
 end
 
