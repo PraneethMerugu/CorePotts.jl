@@ -107,10 +107,18 @@ end
     )
 end
 
-@inline _lifecycle_effect_control(control) = (
-    counters = control.counters,
-    candidate_status = control.candidate_status,
-)
+@inline function _lifecycle_effect_control(control)
+    status = control.candidate_status
+    return (
+        counters = control.counters,
+        candidate_status = _LifecyclePlanningStatus(
+            status.code,
+            status.source,
+            status.anchor,
+            status.detail,
+        ),
+    )
+end
 
 function enqueue_lifecycle_backend_index!(
         state,

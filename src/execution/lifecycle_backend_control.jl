@@ -117,6 +117,46 @@ struct _ProgramStatusSlot{S} <: AbstractVector{ProgramStatus}
     slot::Int32
 end
 
+struct _LifecyclePlanningStatus{C, S, A, D} <: AbstractVector{ProgramStatus}
+    code::C
+    source::S
+    anchor::A
+    detail::D
+end
+
+Base.IndexStyle(::Type{<:_LifecyclePlanningStatus}) = IndexLinear()
+Base.size(status::_LifecyclePlanningStatus) = (length(status.code),)
+@inline function Base.getindex(
+        status::_LifecyclePlanningStatus, index::Integer
+    )
+    @inbounds return ProgramStatus(
+        status.code[index],
+        Int32(0),
+        ProgramStageNone,
+        status.source[index],
+        UInt64(0),
+        Int32(0),
+        status.anchor[index],
+        status.detail[index],
+        Int32(0),
+        Int32(0),
+        Int32(0),
+    )
+end
+@inline function Base.setindex!(
+        status::_LifecyclePlanningStatus,
+        value::ProgramStatus,
+        index::Integer,
+    )
+    @inbounds begin
+        status.code[index] = value.code
+        status.source[index] = value.source
+        status.anchor[index] = value.anchor
+        status.detail[index] = value.detail
+    end
+    return value
+end
+
 struct _LifecycleRankedStatusSlot{S, R} <: AbstractVector{ProgramStatus}
     values::S
     ranks::R
