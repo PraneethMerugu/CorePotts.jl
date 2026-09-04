@@ -194,6 +194,9 @@ end
     )
 end
 
+@inline _lifecycle_workspace_with_status(workspace::NamedTuple, status) =
+    merge(workspace, (; status))
+
 @inline function _lifecycle_workspace_with_staged_state(
         workspace::LifecycleWorkspace, state
     )
@@ -341,6 +344,8 @@ end
 
 @inline _lifecycle_backend_open(workspace::LifecycleWorkspace) =
     (@inbounds workspace.status[1]).code === ProgramStatusSuccess
+@inline _lifecycle_backend_open(workspace::NamedTuple) =
+    @inbounds(workspace.status_code[1]) === ProgramStatusSuccess
 @inline _lifecycle_backend_open(::NoLifecycleWorkspace) = true
 
 @inline function _lifecycle_copy_enabled(workspace, control, mode)

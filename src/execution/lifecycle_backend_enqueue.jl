@@ -66,6 +66,52 @@ end
     )
 end
 
+
+@inline function _lifecycle_effect_workspace(
+        workspace, ::_CreateLifecyclePlan
+    )
+    return (
+        request_count = workspace.request_index.count,
+        request_slots = workspace.request_index.records.slot,
+        descriptor = workspace.descriptor,
+        anchor = workspace.anchor,
+        generation = workspace.generation,
+        active = workspace.active,
+        filtered = workspace.filtered,
+        filtered_detail = workspace.filtered_detail,
+        planned_site_count = workspace.planned_site_count,
+        planned_sites = workspace.planned_sites,
+        site_index = workspace.site_index,
+        status_code = workspace.status.code,
+    )
+end
+
+@inline function _lifecycle_effect_workspace(
+        workspace,
+        ::Union{
+            _RetireLifecyclePlan,
+            _RemoveLifecyclePlan,
+            _TransitionLifecyclePlan,
+        },
+    )
+    return (
+        request_count = workspace.request_index.count,
+        request_slots = workspace.request_index.records.slot,
+        descriptor = workspace.descriptor,
+        anchor = workspace.anchor,
+        generation = workspace.generation,
+        active = workspace.active,
+        filtered = workspace.filtered,
+        filtered_detail = workspace.filtered_detail,
+        status_code = workspace.status.code,
+    )
+end
+
+@inline _lifecycle_effect_control(control) = (
+    counters = control.counters,
+    candidate_status = control.candidate_status,
+)
+
 function enqueue_lifecycle_backend_index!(
         state,
         reductions;
@@ -151,11 +197,13 @@ function enqueue_lifecycle_backend_index!(
         effect_plan = _lifecycle_effect_plan(
             state.program.lifecycle_plan, plan_class
         )
+        effect_workspace = _lifecycle_effect_workspace(workspace, plan_class)
+        effect_control = _lifecycle_effect_control(control)
         plan_effect(
             effect_runtime,
             effect_plan,
-            workspace,
-            control,
+            effect_workspace,
+            effect_control,
             plan_class;
             ndrange = 1,
         )
