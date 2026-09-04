@@ -176,11 +176,9 @@ end
     index = @index(Global, Linear)
     if index == 1 && _lifecycle_backend_open(workspace) &&
             _lifecycle_backend_due(control)
-        count = Int(_lifecycle_canonical_request_count(workspace))
+        count = Int(@inbounds workspace.request_count[1])
         for position in 1:count
-            request = Int(_lifecycle_canonical_request_slot(
-                workspace, position
-            ))
+            request = Int(@inbounds workspace.request_slots[position])
             @inbounds workspace.active[request] || continue
             descriptor = @inbounds plan.descriptors[
                 Int(workspace.descriptor[request])

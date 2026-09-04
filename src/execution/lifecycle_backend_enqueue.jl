@@ -159,6 +159,10 @@ end
             _TransitionLifecyclePlan,
         },
     )
+    return _lifecycle_request_planning_workspace(workspace)
+end
+
+@inline function _lifecycle_request_planning_workspace(workspace)
     return (
         request_count = workspace.request_index.count,
         request_slots = workspace.request_index.records.slot,
@@ -171,6 +175,10 @@ end
         status_code = workspace.status.code,
     )
 end
+
+
+@inline _lifecycle_relationship_validation_workspace(workspace) =
+    _lifecycle_request_planning_workspace(workspace)
 
 @inline function _lifecycle_effect_control(control)
     status = control.candidate_status
@@ -329,8 +337,8 @@ function enqueue_lifecycle_backend_index!(
     validate_relationships(
         _lifecycle_relationship_validation_runtime(state),
         _lifecycle_relationship_validation_plan(state.program.lifecycle_plan),
-        workspace,
-        control;
+        _lifecycle_relationship_validation_workspace(workspace),
+        _lifecycle_effect_control(control);
         ndrange = 1,
     )
     @debug "enqueue lifecycle backend stage" stage = :reduce_planning_status
