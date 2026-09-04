@@ -124,6 +124,8 @@ struct _LifecyclePlanningStatus{C, S, A, D} <: AbstractVector{ProgramStatus}
     detail::D
 end
 
+Adapt.@adapt_structure _LifecyclePlanningStatus
+
 Base.IndexStyle(::Type{<:_LifecyclePlanningStatus}) = IndexLinear()
 Base.size(status::_LifecyclePlanningStatus) = (length(status.code),)
 @inline function Base.getindex(
