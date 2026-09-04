@@ -41,12 +41,11 @@ end
 
 
 @kernel function _plan_lifecycle_effect_backend_kernel!(
-        state, workspace, control, plan_class
+        runtime, plan, workspace, control, plan_class
     )
     index = @index(Global, Linear)
     if index == 1 && _lifecycle_backend_open(workspace) &&
             _lifecycle_backend_due(control)
-        plan = state.program.lifecycle_plan
         count = Int(_lifecycle_canonical_request_count(workspace))
         for position in 1:count
             request = Int(_lifecycle_canonical_request_slot(
@@ -65,7 +64,7 @@ end
             )
             reason = _plan_lifecycle_request_effect!(
                 BackendLifecycleExecution(),
-                state,
+                runtime,
                 plan,
                 request_workspace,
                 request,
