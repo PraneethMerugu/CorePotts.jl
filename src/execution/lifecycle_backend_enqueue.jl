@@ -103,7 +103,6 @@ end
         tracker_values(
             state.program.tracker_plan, state.trackers, Val(:cell_volume)
         ),
-        _lifecycle_relationship_topology(state.relationships),
     )
 end
 
@@ -113,9 +112,18 @@ end
     return (
         cell_kinds = state.cell_kinds,
         cell_generations = state.cell_generations,
-        relationships = _lifecycle_relationship_topology(state.relationships),
     )
 end
+
+@inline _lifecycle_relationship_validation_runtime(state) = (
+    cell_kinds = state.cell_kinds,
+    relationships = _lifecycle_relationship_topology(state.relationships),
+)
+
+@inline _lifecycle_relationship_validation_plan(plan) = (
+    descriptors = plan.descriptors,
+    relationship_rules = plan.relationship_rules,
+)
 
 @inline _lifecycle_effect_plan(plan, ::_CreateLifecyclePlan) = plan
 
@@ -211,8 +219,8 @@ function enqueue_lifecycle_backend_index!(
     validate_ownership = launch(_validate_lifecycle_ownership_kernel!)
     plan_effect = _plan_lifecycle_effect_backend_kernel!(backend, 1)
     plan_division = _plan_lifecycle_division_backend_kernel!(backend, 1)
-    validate_division_relationships =
-        _validate_lifecycle_division_relationships_backend_kernel!(backend, 1)
+    validate_relationships =
+        _validate_lifecycle_relationships_backend_kernel!(backend, 1)
     replan_selected_division =
         _replan_selected_lifecycle_division_backend_kernel!(backend, 1)
     clear_selected_division_workspace =
@@ -328,9 +336,13 @@ function enqueue_lifecycle_backend_index!(
             state, workspace, control, plan_class; ndrange = 1
         )
     end
-    @debug "enqueue lifecycle backend stage" stage = :validate_division_relationships
-    validate_division_relationships(
-        state, workspace, control; ndrange = 1
+    @debug "enqueue lifecycle backend stage" stage = :validate_relationships
+    validate_relationships(
+        _lifecycle_relationship_validation_runtime(state),
+        _lifecycle_relationship_validation_plan(state.program.lifecycle_plan),
+        workspace,
+        control;
+        ndrange = 1,
     )
     @debug "enqueue lifecycle backend stage" stage = :reduce_planning_status
     last_planning_event = _run_lifecycle_status!(

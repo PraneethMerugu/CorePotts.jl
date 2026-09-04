@@ -60,7 +60,7 @@ end
                     control.candidate_status, Int32(request)
                 ),
             )
-            reason = _plan_lifecycle_request_effect!(
+            reason = _plan_lifecycle_request_effect_only!(
                 BackendLifecycleExecution(),
                 runtime,
                 plan,
@@ -170,13 +170,12 @@ end
     end
 end
 
-@kernel function _validate_lifecycle_division_relationships_backend_kernel!(
-        state, workspace, control
+@kernel function _validate_lifecycle_relationships_backend_kernel!(
+        runtime, plan, workspace, control
     )
     index = @index(Global, Linear)
     if index == 1 && _lifecycle_backend_open(workspace) &&
             _lifecycle_backend_due(control)
-        plan = state.program.lifecycle_plan
         count = Int(_lifecycle_canonical_request_count(workspace))
         for position in 1:count
             request = Int(_lifecycle_canonical_request_slot(
@@ -186,12 +185,11 @@ end
             descriptor = @inbounds plan.descriptors[
                 Int(workspace.descriptor[request])
             ]
-            descriptor.effect === DivideCellLifecycleEffect || continue
             @inbounds(control.candidate_status[request].code) ===
                 ProgramStatusSuccess || continue
             anchor = @inbounds workspace.anchor[request]
             _lifecycle_relationships_admissible(
-                state, plan, descriptor, anchor
+                runtime, plan, descriptor, anchor
             ) && continue
             request_workspace = _lifecycle_workspace_with_status(
                 workspace,

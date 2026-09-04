@@ -6,11 +6,10 @@ struct _RetireLifecyclePlan <: _AbstractLifecyclePlanClass end
 struct _RemoveLifecyclePlan <: _AbstractLifecyclePlanClass end
 struct _TransitionLifecyclePlan <: _AbstractLifecyclePlanClass end
 
-struct _RetireLifecycleRuntime{K, G, V, R}
+struct _RetireLifecycleRuntime{K, G, V}
     cell_kinds::K
     cell_generations::G
     cell_volumes::V
-    relationships::R
 end
 
 Adapt.@adapt_structure _RetireLifecycleRuntime
@@ -603,7 +602,7 @@ end
     )
 end
 
-function _plan_lifecycle_request_effect!(
+function _plan_lifecycle_request_effect_only!(
         mode::AbstractLifecycleExecutionMode,
         runtime,
         plan,
@@ -628,6 +627,24 @@ function _plan_lifecycle_request_effect!(
     end
     reason = _plan_lifecycle_effect!(
         mode, runtime, plan, workspace, request, descriptor, plan_class
+    )
+    return reason
+end
+
+function _plan_lifecycle_request_effect!(
+        mode::AbstractLifecycleExecutionMode,
+        runtime,
+        plan,
+        workspace,
+        request,
+        plan_class::_AbstractLifecyclePlanClass,
+    )
+    descriptor = @inbounds plan.descriptors[
+        Int(workspace.descriptor[request])
+    ]
+    anchor = @inbounds workspace.anchor[request]
+    reason = _plan_lifecycle_request_effect_only!(
+        mode, runtime, plan, workspace, request, plan_class
     )
     reason === :ok && !_lifecycle_relationships_admissible(
         runtime, plan, descriptor, anchor
