@@ -302,6 +302,7 @@ function enqueue_lifecycle_backend_index!(
     reset = launch(_reset_lifecycle_backend_kernel!)
     validate_ownership = launch(_validate_lifecycle_ownership_kernel!)
     plan_effect = _plan_lifecycle_effect_backend_kernel!(backend, 1)
+    plan_retire = _plan_lifecycle_retire_backend_kernel!(backend, 1)
     plan_division = _plan_lifecycle_division_backend_kernel!(backend, 1)
     validate_relationships =
         _validate_lifecycle_relationships_backend_kernel!(backend, 1)
@@ -348,9 +349,23 @@ function enqueue_lifecycle_backend_index!(
     @debug "enqueue lifecycle backend stage" stage = :materialize_requests
     request_index_event = LocalMath.execute!(reductions.request_index)
     effect_mask = state.program.lifecycle_plan.effect_mask
+    retire_plan = _RetireLifecyclePlan()
+    if !iszero(
+            effect_mask & _lifecycle_effect_bit(
+                _lifecycle_plan_effect(retire_plan)
+            )
+        )
+        @debug "enqueue lifecycle effect planner" plan_class = retire_plan
+        plan_retire(
+            _lifecycle_effect_runtime(state, retire_plan),
+            state.program.lifecycle_plan.descriptors,
+            _lifecycle_effect_workspace(workspace, retire_plan),
+            _lifecycle_effect_control(control);
+            ndrange = 1,
+        )
+    end
     for plan_class in (
             _CreateLifecyclePlan(),
-            _RetireLifecyclePlan(),
             _RemoveLifecyclePlan(),
             _TransitionLifecyclePlan(),
         )
