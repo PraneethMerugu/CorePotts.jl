@@ -1,5 +1,55 @@
 # Reachability-specialized orchestration of the ordered backend lifecycle transaction.
 
+@inline function _lifecycle_effect_runtime(
+        state, ::_CreateLifecyclePlan
+    )
+    program = state.program
+    lifecycle_program = (
+        shape = program.shape,
+        periodic = program.periodic,
+        medium_kind = program.medium_kind,
+        tracker_plan = program.tracker_plan,
+        domain_resources = program.domain_resources,
+        lifecycle_plan = program.lifecycle_plan,
+    )
+    return (
+        program = lifecycle_program,
+        ownership = state.ownership,
+        cell_kinds = state.cell_kinds,
+        cell_generations = state.cell_generations,
+        trackers = state.trackers,
+        relationships = state.relationships,
+        descriptor_state = state.descriptor_state,
+        parameters = state.parameters,
+        seed = state.seed,
+        replica = state.replica,
+        repeat = state.repeat,
+        mcs = state.mcs,
+    )
+end
+
+@inline function _lifecycle_effect_runtime(
+        state, ::_RetireLifecyclePlan
+    )
+    return (
+        program = (tracker_plan = state.program.tracker_plan,),
+        cell_kinds = state.cell_kinds,
+        cell_generations = state.cell_generations,
+        trackers = state.trackers,
+        relationships = state.relationships,
+    )
+end
+
+@inline function _lifecycle_effect_runtime(
+        state, ::Union{_RemoveLifecyclePlan, _TransitionLifecyclePlan}
+    )
+    return (
+        cell_kinds = state.cell_kinds,
+        cell_generations = state.cell_generations,
+        relationships = state.relationships,
+    )
+end
+
 function enqueue_lifecycle_backend_index!(
         state,
         reductions;
@@ -81,8 +131,14 @@ function enqueue_lifecycle_backend_index!(
             )
         ) && continue
         @debug "enqueue lifecycle effect planner" plan_class
+        effect_runtime = _lifecycle_effect_runtime(state, plan_class)
         plan_effect(
-            state, workspace, control, plan_class; ndrange = 1
+            effect_runtime,
+            state.program.lifecycle_plan,
+            workspace,
+            control,
+            plan_class;
+            ndrange = 1,
         )
     end
     division_variant_mask = state.program.lifecycle_plan.division_variant_mask
