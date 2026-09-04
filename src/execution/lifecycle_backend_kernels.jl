@@ -188,21 +188,38 @@ end
             @inbounds(control.candidate_status[request].code) ===
                 ProgramStatusSuccess || continue
             anchor = @inbounds workspace.anchor[request]
-            _lifecycle_relationships_admissible(
-                runtime, plan, descriptor, anchor
-            ) && continue
             request_workspace = _lifecycle_workspace_with_status(
                 workspace,
                 _ProgramStatusSlot(
                     control.candidate_status, Int32(request)
                 ),
             )
+            reason = if descriptor.effect === RetireCellLifecycleEffect &&
+                    !_lifecycle_request_generation_current(
+                        runtime, workspace, request
+                    )
+                _set_lifecycle_status!(
+                    request_workspace,
+                    ProgramStatusStaleGeneration;
+                    anchor,
+                )
+                :status_failure
+            elseif descriptor.effect === RetireCellLifecycleEffect &&
+                    @inbounds(runtime.cell_volumes[anchor]) != 0
+                :retire_nonempty
+            elseif !_lifecycle_relationships_admissible(
+                    runtime, plan, descriptor, anchor
+                )
+                :relationship_policy_rejected
+            else
+                :ok
+            end
             _record_lifecycle_planning_reason!(
                 workspace,
                 request_workspace,
                 request,
                 descriptor,
-                :relationship_policy_rejected,
+                reason,
             )
         end
     end

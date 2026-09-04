@@ -95,18 +95,6 @@ end
 end
 
 @inline function _lifecycle_effect_runtime(
-        state, ::_RetireLifecyclePlan
-    )
-    return _RetireLifecycleRuntime(
-        state.cell_kinds,
-        state.cell_generations,
-        tracker_values(
-            state.program.tracker_plan, state.trackers, Val(:cell_volume)
-        ),
-    )
-end
-
-@inline function _lifecycle_effect_runtime(
         state, ::Union{_RemoveLifecyclePlan, _TransitionLifecyclePlan}
     )
     return (
@@ -117,6 +105,10 @@ end
 
 @inline _lifecycle_relationship_validation_runtime(state) = (
     cell_kinds = state.cell_kinds,
+    cell_generations = state.cell_generations,
+    cell_volumes = tracker_values(
+        state.program.tracker_plan, state.trackers, Val(:cell_volume)
+    ),
     relationships = _lifecycle_relationship_topology(state.relationships),
 )
 
@@ -130,7 +122,6 @@ end
 @inline function _lifecycle_effect_plan(
         plan,
         ::Union{
-            _RetireLifecyclePlan,
             _RemoveLifecyclePlan,
             _TransitionLifecyclePlan,
         },
@@ -164,7 +155,6 @@ end
 @inline function _lifecycle_effect_workspace(
         workspace,
         ::Union{
-            _RetireLifecyclePlan,
             _RemoveLifecyclePlan,
             _TransitionLifecyclePlan,
         },
@@ -266,7 +256,6 @@ function enqueue_lifecycle_backend_index!(
     effect_mask = state.program.lifecycle_plan.effect_mask
     for plan_class in (
             _CreateLifecyclePlan(),
-            _RetireLifecyclePlan(),
             _RemoveLifecyclePlan(),
             _TransitionLifecyclePlan(),
         )
