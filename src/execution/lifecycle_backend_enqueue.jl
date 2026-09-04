@@ -13,6 +13,8 @@ struct _LifecycleRelationshipTopologyBank{E, D, I, M}
     maximum_degrees::M
 end
 
+Adapt.@adapt_structure _LifecycleRelationshipTopologyBank
+
 @inline function Base.getindex(
         bank::_LifecycleRelationshipTopologyBank, slot::Int
     )
@@ -93,33 +95,33 @@ end
 end
 
 @inline function _lifecycle_effect_runtime(
-        state, ::_RetireLifecyclePlan
-    )
-    return (
-        program = (tracker_plan = state.program.tracker_plan,),
-        cell_kinds = state.cell_kinds,
-        cell_generations = state.cell_generations,
-        trackers = state.trackers,
-        relationships = _lifecycle_relationship_topology(state.relationships),
-    )
-end
-
-@inline function _lifecycle_effect_runtime(
         state, ::Union{_RemoveLifecyclePlan, _TransitionLifecyclePlan}
     )
     return (
         cell_kinds = state.cell_kinds,
         cell_generations = state.cell_generations,
-        relationships = _lifecycle_relationship_topology(state.relationships),
     )
 end
+
+@inline _lifecycle_relationship_validation_runtime(state) = (
+    cell_kinds = state.cell_kinds,
+    cell_generations = state.cell_generations,
+    cell_volumes = tracker_values(
+        state.program.tracker_plan, state.trackers, Val(:cell_volume)
+    ),
+    relationships = _lifecycle_relationship_topology(state.relationships),
+)
+
+@inline _lifecycle_relationship_validation_plan(plan) = (
+    descriptors = plan.descriptors,
+    relationship_rules = plan.relationship_rules,
+)
 
 @inline _lifecycle_effect_plan(plan, ::_CreateLifecyclePlan) = plan
 
 @inline function _lifecycle_effect_plan(
         plan,
         ::Union{
-            _RetireLifecyclePlan,
             _RemoveLifecyclePlan,
             _TransitionLifecyclePlan,
         },
@@ -153,11 +155,14 @@ end
 @inline function _lifecycle_effect_workspace(
         workspace,
         ::Union{
-            _RetireLifecyclePlan,
             _RemoveLifecyclePlan,
             _TransitionLifecyclePlan,
         },
     )
+    return _lifecycle_request_planning_workspace(workspace)
+end
+
+@inline function _lifecycle_request_planning_workspace(workspace)
     return (
         request_count = workspace.request_index.count,
         request_slots = workspace.request_index.records.slot,
@@ -171,16 +176,14 @@ end
     )
 end
 
+
+@inline _lifecycle_relationship_validation_workspace(workspace) =
+    _lifecycle_request_planning_workspace(workspace)
+
 @inline function _lifecycle_effect_control(control)
-    status = control.candidate_status
     return (
         counters = control.counters,
-        candidate_status = _LifecyclePlanningStatus(
-            status.code,
-            status.source,
-            status.anchor,
-            status.detail,
-        ),
+        candidate_status = control.candidate_status,
     )
 end
 
@@ -208,8 +211,8 @@ function enqueue_lifecycle_backend_index!(
     validate_ownership = launch(_validate_lifecycle_ownership_kernel!)
     plan_effect = _plan_lifecycle_effect_backend_kernel!(backend, 1)
     plan_division = _plan_lifecycle_division_backend_kernel!(backend, 1)
-    validate_division_relationships =
-        _validate_lifecycle_division_relationships_backend_kernel!(backend, 1)
+    validate_relationships =
+        _validate_lifecycle_relationships_backend_kernel!(backend, 1)
     replan_selected_division =
         _replan_selected_lifecycle_division_backend_kernel!(backend, 1)
     clear_selected_division_workspace =
@@ -255,7 +258,6 @@ function enqueue_lifecycle_backend_index!(
     effect_mask = state.program.lifecycle_plan.effect_mask
     for plan_class in (
             _CreateLifecyclePlan(),
-            _RetireLifecyclePlan(),
             _RemoveLifecyclePlan(),
             _TransitionLifecyclePlan(),
         )
@@ -325,9 +327,13 @@ function enqueue_lifecycle_backend_index!(
             state, workspace, control, plan_class; ndrange = 1
         )
     end
-    @debug "enqueue lifecycle backend stage" stage = :validate_division_relationships
-    validate_division_relationships(
-        state, workspace, control; ndrange = 1
+    @debug "enqueue lifecycle backend stage" stage = :validate_relationships
+    validate_relationships(
+        _lifecycle_relationship_validation_runtime(state),
+        _lifecycle_relationship_validation_plan(state.program.lifecycle_plan),
+        _lifecycle_relationship_validation_workspace(workspace),
+        _lifecycle_effect_control(control);
+        ndrange = 1,
     )
     @debug "enqueue lifecycle backend stage" stage = :reduce_planning_status
     last_planning_event = _run_lifecycle_status!(

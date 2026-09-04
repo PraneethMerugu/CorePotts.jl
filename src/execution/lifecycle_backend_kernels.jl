@@ -60,7 +60,7 @@ end
                     control.candidate_status, Int32(request)
                 ),
             )
-            reason = _plan_lifecycle_request_effect!(
+            reason = _plan_lifecycle_request_effect_only!(
                 BackendLifecycleExecution(),
                 runtime,
                 plan,
@@ -170,41 +170,54 @@ end
     end
 end
 
-@kernel function _validate_lifecycle_division_relationships_backend_kernel!(
-        state, workspace, control
+@kernel function _validate_lifecycle_relationships_backend_kernel!(
+        runtime, plan, workspace, control
     )
     index = @index(Global, Linear)
     if index == 1 && _lifecycle_backend_open(workspace) &&
             _lifecycle_backend_due(control)
-        plan = state.program.lifecycle_plan
-        count = Int(_lifecycle_canonical_request_count(workspace))
+        count = Int(@inbounds workspace.request_count[1])
         for position in 1:count
-            request = Int(_lifecycle_canonical_request_slot(
-                workspace, position
-            ))
+            request = Int(@inbounds workspace.request_slots[position])
             @inbounds workspace.active[request] || continue
             descriptor = @inbounds plan.descriptors[
                 Int(workspace.descriptor[request])
             ]
-            descriptor.effect === DivideCellLifecycleEffect || continue
             @inbounds(control.candidate_status[request].code) ===
                 ProgramStatusSuccess || continue
             anchor = @inbounds workspace.anchor[request]
-            _lifecycle_relationships_admissible(
-                state, plan, descriptor, anchor
-            ) && continue
             request_workspace = _lifecycle_workspace_with_status(
                 workspace,
                 _ProgramStatusSlot(
                     control.candidate_status, Int32(request)
                 ),
             )
+            reason = if descriptor.effect === RetireCellLifecycleEffect &&
+                    !_lifecycle_request_generation_current(
+                        runtime, workspace, request
+                    )
+                _set_lifecycle_status!(
+                    request_workspace,
+                    ProgramStatusStaleGeneration;
+                    anchor,
+                )
+                :status_failure
+            elseif descriptor.effect === RetireCellLifecycleEffect &&
+                    @inbounds(runtime.cell_volumes[anchor]) != 0
+                :retire_nonempty
+            elseif !_lifecycle_relationships_admissible(
+                    runtime, plan, descriptor, anchor
+                )
+                :relationship_policy_rejected
+            else
+                :ok
+            end
             _record_lifecycle_planning_reason!(
                 workspace,
                 request_workspace,
                 request,
                 descriptor,
-                :relationship_policy_rejected,
+                reason,
             )
         end
     end

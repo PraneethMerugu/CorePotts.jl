@@ -309,6 +309,11 @@ function _lifecycle_backend_filled(
     return Adapt.adapt(KernelAbstractions.get_backend(prototype), host)
 end
 
+function _lifecycle_backend_status_records(prototype, value, dimensions...)
+    host = fill(convert(ProgramStatus, value), dimensions...)
+    return Adapt.adapt(KernelAbstractions.get_backend(prototype), host)
+end
+
 function _lifecycle_request_offsets(plan::LifecycleExecutionPlan)
     offsets = Vector{Int32}(undef, length(plan.descriptors))
     next_offset = 1
@@ -351,11 +356,8 @@ function allocate_lifecycle_backend_control(
     return LifecycleBackendControl(
         _lifecycle_request_offsets(plan),
         counters,
-        _lifecycle_backend_filled(
-            prototype,
-            ProgramStatus,
-            ProgramStatus(),
-            status_slots,
+        _lifecycle_backend_status_records(
+            prototype, ProgramStatus(), status_slots
         ),
         _lifecycle_backend_filled(
             prototype, Int32, typemax(Int32), status_slots

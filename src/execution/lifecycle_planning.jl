@@ -5,6 +5,7 @@ struct _CreateLifecyclePlan <: _AbstractLifecyclePlanClass end
 struct _RetireLifecyclePlan <: _AbstractLifecyclePlanClass end
 struct _RemoveLifecyclePlan <: _AbstractLifecyclePlanClass end
 struct _TransitionLifecyclePlan <: _AbstractLifecyclePlanClass end
+
 struct _DivideLifecyclePlan <: _AbstractLifecyclePlanClass end
 
 abstract type _AbstractLifecyclePartitionPlan end
@@ -535,9 +536,12 @@ end
         ::_RetireLifecyclePlan,
     )
     anchor = @inbounds workspace.anchor[request]
-    return program_tracker_value(runtime, Val(:cell_volume), anchor) == 0 ?
+    return _lifecycle_retire_volume(runtime, anchor) == 0 ?
         :ok : :retire_nonempty
 end
+
+@inline _lifecycle_retire_volume(runtime, anchor) =
+    program_tracker_value(runtime, Val(:cell_volume), anchor)
 
 @inline _plan_lifecycle_effect!(
     mode, runtime, plan, workspace, request, descriptor, ::_RemoveLifecyclePlan
@@ -588,7 +592,7 @@ end
     )
 end
 
-function _plan_lifecycle_request_effect!(
+function _plan_lifecycle_request_effect_only!(
         mode::AbstractLifecycleExecutionMode,
         runtime,
         plan,
@@ -613,6 +617,24 @@ function _plan_lifecycle_request_effect!(
     end
     reason = _plan_lifecycle_effect!(
         mode, runtime, plan, workspace, request, descriptor, plan_class
+    )
+    return reason
+end
+
+function _plan_lifecycle_request_effect!(
+        mode::AbstractLifecycleExecutionMode,
+        runtime,
+        plan,
+        workspace,
+        request,
+        plan_class::_AbstractLifecyclePlanClass,
+    )
+    descriptor = @inbounds plan.descriptors[
+        Int(workspace.descriptor[request])
+    ]
+    anchor = @inbounds workspace.anchor[request]
+    reason = _plan_lifecycle_request_effect_only!(
+        mode, runtime, plan, workspace, request, plan_class
     )
     reason === :ok && !_lifecycle_relationships_admissible(
         runtime, plan, descriptor, anchor
