@@ -181,15 +181,9 @@ end
     _lifecycle_request_planning_workspace(workspace)
 
 @inline function _lifecycle_effect_control(control)
-    status = control.candidate_status
     return (
         counters = control.counters,
-        candidate_status = _LifecyclePlanningStatus(
-            status.code,
-            status.source,
-            status.anchor,
-            status.detail,
-        ),
+        candidate_status = control.candidate_status,
     )
 end
 
