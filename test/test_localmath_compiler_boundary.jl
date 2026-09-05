@@ -77,7 +77,7 @@ function _literal_proposal_plan(values)
         CorePotts.HamiltonianDomainResources(1, 1))
 end
 
-function _context_proposal_plan()
+function _context_proposal_plan(constraint = nothing)
     expression = CorePotts.OperationExpression(
         CorePotts.OrderedFold(+),
         CorePotts.ContextExpression(
@@ -93,13 +93,28 @@ function _context_proposal_plan()
         evaluator, access,
         CorePotts.DescriptorSupport(true, true, true, true),
         (), (), CorePotts.ProposalEnergyDriveRole(), 1)
+    descriptors = if constraint === nothing
+        [descriptor]
+    else
+        constraint_descriptor = CorePotts.ProposalDescriptor(
+            CorePotts.StaticEvaluator(
+                CorePotts.LiteralExpression(constraint)),
+            CorePotts.ResourceAccess(
+                (), (), CorePotts.EmptyFootprint(),
+                CorePotts.EmptyFootprint(), CorePotts.NoWriteAccess()),
+            CorePotts.DescriptorSupport(true, true, true, true),
+            (), (), CorePotts.ProposalConstraintRole(), 2)
+        [descriptor, constraint_descriptor]
+    end
     group = CorePotts.ProposalDescriptorGroup(
-        [descriptor], (), (),
+        descriptors, (), (),
         (family = :context_proposal,))
     return CorePotts.DescriptorExecutionPlan(
         (group,), CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
         CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]), (),
-        Any[:context_proposal], 1, "context-proposal-plan-v1",
+        Any[Symbol(:context_proposal_, index)
+            for index in eachindex(descriptors)],
+        length(descriptors), "context-proposal-plan-v1",
         CorePotts.HamiltonianDomainResources(1, 1))
 end
 
@@ -412,7 +427,7 @@ end
     declaration = CorePotts._checkerboard_scientific_declaration(
         checkerboard, reshape(Int8[-1], 1, 1),
         UInt64(0x55), UInt32(0), UInt32(0),
-        _context_proposal_plan(), CorePotts.StageExecutionPlan(),
+        _context_proposal_plan(false), CorePotts.StageExecutionPlan(),
         _compiler_test_tracker_plan(), (),
         CorePotts.RelationshipStorage(()),
         CorePotts.RelationshipStorage(()), 0, 3, Float64)
@@ -461,6 +476,7 @@ end
         mcs = Int64(1), color = Int32(1), attempt_round = Int32(1),
         batch_size)))
     @test isbitstype(typeof(declaration.scientific_evaluator))
+    @test isbitstype(typeof(declaration.constraint_evaluator))
     for item in Int32(1):batch_size
         old_owner, new_owner = storage.owners[item]
         expected = storage.actionable[item] ? old_owner + new_owner : 0
@@ -468,7 +484,7 @@ end
         @test storage.delta_h[item] == 0
         @test storage.drive_log_bias[item] == 0
         @test storage.kinetic_modifier[item] == 0
-        @test storage.constraints_allowed[item]
+        @test storage.constraints_allowed[item] == !storage.actionable[item]
         @test storage.kinds[item] == (
             old_owner > 0 ? cell_kinds[old_owner] : Int16(0),
             new_owner > 0 ? cell_kinds[new_owner] : Int16(0),
