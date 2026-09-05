@@ -1750,15 +1750,6 @@ end
 end
 
 @inline function _proposal_term_evaluation(
-        term::_ExecutableProposalTerm{E,<:ProposalConstraintRole}, context,
-        ::Type{T}) where {E,T<:AbstractFloat}
-    value = _execute_proposal_scalar(term.evaluator, context)
-    value isa Bool || throw(ArgumentError(
-        "proposal constraint source $(term.source_handle) does not return Bool"))
-    return ProposalEvaluation(zero(T), zero(T), zero(T), zero(T), value)
-end
-
-@inline function _proposal_term_evaluation(
         term::_ExecutableProposalTerm{E,<:HamiltonianRole{
             <:SiteEnergyDomainPlan,<:TargetSiteAffectedPlan}}, context,
         ::Type{T}) where {E,T<:AbstractFloat}
@@ -1961,14 +1952,51 @@ end
     ))
 end
 
-@inline _fold_executable_proposal_terms(
+@inline _proposal_constraint_allowed(
+    term::_ExecutableProposalTerm{E,<:ProposalConstraintRole}, context,
+) where {E} = begin
+    value = _execute_proposal_scalar(term.evaluator, context)
+    value isa Bool || throw(ArgumentError(
+        "proposal constraint source $(term.source_handle) does not return Bool"))
+    value
+end
+
+@inline _proposal_constraint_allowed(term::_ExecutableProposalTerm, context) = true
+
+# Constraints are an admission predicate, not a numerical contribution.  Fold
+# them independently so the device compiler never has to carry the dynamic
+# admission result through the substantially larger Hamiltonian accumulator.
+@inline _fold_executable_proposal_constraints(
+    ::Tuple{}, context, result::Bool,
+) = result
+
+@inline function _fold_executable_proposal_constraints(
+        terms::Tuple, context, result::Bool)
+    allowed = result & _proposal_constraint_allowed(first(terms), context)
+    return _fold_executable_proposal_constraints(
+        Base.tail(terms), context, allowed)
+end
+
+@inline _fold_executable_proposal_constraints(terms::Tuple, context) =
+    _fold_executable_proposal_constraints(terms, context, true)
+
+@inline _proposal_numeric_evaluation(
+    term::_ExecutableProposalTerm{E,<:ProposalConstraintRole}, context,
+    ::Type{T},
+) where {E,T<:AbstractFloat} = _neutral_proposal_evaluation(T)
+
+@inline _proposal_numeric_evaluation(
+    term::_ExecutableProposalTerm, context, ::Type{T},
+) where {T<:AbstractFloat} = _proposal_term_evaluation(term, context, T)
+
+@inline _fold_executable_proposal_numeric_terms(
     ::Tuple{}, context, ::Type{T}, result::ProposalEvaluation{T},
 ) where {T<:AbstractFloat} = result
 
-@inline function _fold_executable_proposal_terms(
+@inline function _fold_executable_proposal_numeric_terms(
         terms::Tuple, context, ::Type{T}, result::ProposalEvaluation{T},
     ) where {T<:AbstractFloat}
-    contribution = _proposal_term_evaluation(
+    contribution = _proposal_numeric_evaluation(
         first(terms), context, T)::ProposalEvaluation{T}
     combined = ProposalEvaluation(
         getfield(result, :delta_h) + getfield(contribution, :delta_h),
@@ -1978,15 +2006,21 @@ end
             getfield(contribution, :drive_log_bias),
         getfield(result, :kinetic_modifier) +
             getfield(contribution, :kinetic_modifier),
-        getfield(result, :constraints_allowed) &
-            getfield(contribution, :constraints_allowed),
+        true,
     )
-    return _fold_executable_proposal_terms(
+    return _fold_executable_proposal_numeric_terms(
         Base.tail(terms), context, T, combined)
 end
 
 @inline function _fold_executable_proposal_terms(
         terms::Tuple, context, ::Type{T}) where {T<:AbstractFloat}
-    return _fold_executable_proposal_terms(
+    numeric = _fold_executable_proposal_numeric_terms(
         terms, context, T, _neutral_proposal_evaluation(T))
+    return ProposalEvaluation(
+        getfield(numeric, :delta_h),
+        getfield(numeric, :drive_energy),
+        getfield(numeric, :drive_log_bias),
+        getfield(numeric, :kinetic_modifier),
+        _fold_executable_proposal_constraints(terms, context),
+    )
 end
