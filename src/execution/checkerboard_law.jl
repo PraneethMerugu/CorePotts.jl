@@ -109,7 +109,8 @@ function _checkerboard_color_declaration(
         (
             owners = LocalMath.Access(
                 accepted.owners, accepted.identity; required = true),
-            winners = LocalMath.Access(winners, owner_relation),
+            winners = LocalMath.Access(
+                winners, owner_relation; required = false),
             semantics = LocalMath.Access(
                 accepted.semantic, accepted.identity; required = true),
             dispositions = LocalMath.Access(
@@ -278,7 +279,8 @@ function _checkerboard_color_declaration(
         relationship_groups, terminal_gate)
     tracker_laws = (
         (law for group in tracker_groups
-            for law in (group.initialization_laws..., group.laws...))...,)
+            for law in (group.initialization_laws..., group.laws...,
+                group.validation_laws...))...,)
     tracker_commit_laws = (
         (law for group in tracker_groups for law in group.commit_laws)...,)
     selection_laws = (
@@ -505,6 +507,7 @@ function _checkerboard_tracker_group_bindings(groups::Tuple, state)
     return (
         source_bindings...,
         scratch_bindings...,
+        group.validation_bindings...,
         _checkerboard_tracker_group_bindings(Base.tail(groups), state)...,
     )
 end
@@ -566,8 +569,10 @@ function _checkerboard_color_bindings(
     state_bindings = _checkerboard_state_field_bindings(
         declaration.state_fields, declaration.state_handles, state)
     contact_bindings = _checkerboard_contact_bindings(declaration.contact)
-    tracker_source_bindings = _checkerboard_tracker_source_bindings(
-        declaration.tracker_source_fields, declaration.tracker_keys, state)
+    tracker_source_bindings = Tuple(pair for pair in
+        _checkerboard_tracker_source_bindings(
+            declaration.tracker_source_fields, declaration.tracker_keys, state)
+        if first(pair) != declaration.cell_volumes)
     moment_source_bindings = _checkerboard_moment_source_bindings(
         declaration.moment_source_fields,
         declaration.moment_descriptor, state)

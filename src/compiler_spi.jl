@@ -186,8 +186,8 @@ import ..CorePotts:
     SiteAssignmentEffect,
     SiteEnergyDomainPlan,
     SourceLifecycleStateRole,
-    SourceTargetOwnerUpdateBound,
-    SourceTargetScalarDelta,
+    OldNewOwnerUpdateBound,
+    OldNewOwnerScalarDelta,
     SourceTargetCellsAffectedPlan,
     SpecifiedNormalLifecyclePartition,
     SplitConservativelyLifecycleState,
@@ -282,7 +282,7 @@ import ..CorePotts:
     tracker_inspection,
     tracker_instances,
     tracker_operation_value,
-    tracker_proposal_delta,
+    tracker_ownership_delta,
     tracker_quantity,
     tracker_quantities,
     tracker_rebuild,
@@ -337,11 +337,11 @@ public OwnershipCountTracker, CellSurfaceTracker, CellMomentsTracker
 public DenseOwnerScalarStorage, DenseOwnerMomentsStorage, DenseScalarTrackerGroup
 public OwnershipTrackerSource, OwnershipRelationTrackerSource
 public AcceptedCommitTrackerVisibility
-public ClaimedOwnerExclusiveTrackerConcurrency, SourceTargetOwnerUpdateBound
+public ClaimedOwnerExclusiveTrackerConcurrency, OldNewOwnerUpdateBound
 public PersistTrackerCheckpoint, ReconstructTrackerCheckpoint
 public ConstantTrackerCost, DimensionSquaredTrackerCost
 public BoundedNeighborhoodTrackerCost, LatticeLinearTrackerCost
-public OwnerScalarDelta, SourceTargetScalarDelta, OwnerMomentsDelta
+public OwnerScalarDelta, OldNewOwnerScalarDelta, OwnerMomentsDelta
 public TrackerSourceView, TrackerSupport, QualifiedTrackerKey
 public QualifiedTrackerOperation, TrackerContract, TrackerExecutionPlan
 public LifecycleDomainCode, ModelLifecycleDomain, CellKindLifecycleDomain
@@ -410,7 +410,7 @@ public relationship_degree, rng_operation_limit, site_owner, stage_site
 public state_block, state_schema_metadata, state_value
 public tracker_contract, tracker_adapt, tracker_checkpoint_policy
 public tracker_concurrency, tracker_inspection, tracker_instances
-public tracker_operation_value, tracker_proposal_delta, tracker_quantity
+public tracker_operation_value, tracker_ownership_delta, tracker_quantity
 public tracker_quantities, tracker_rebuild, tracker_recompute
 public tracker_source_view, tracker_storage, tracker_support
 public update_program_descriptor_state!, validate_parameters

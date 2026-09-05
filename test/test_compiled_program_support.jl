@@ -100,7 +100,7 @@ CorePotts.CompilerSPI.tracker_contract(::CPUOnlyCapabilityTracker) =
         CorePotts.CompilerSPI.DenseOwnerScalarStorage{Int32}(),
         CorePotts.CompilerSPI.AcceptedCommitTrackerVisibility(),
         CorePotts.CompilerSPI.ClaimedOwnerExclusiveTrackerConcurrency(),
-        CorePotts.CompilerSPI.SourceTargetOwnerUpdateBound(),
+        CorePotts.CompilerSPI.OldNewOwnerUpdateBound(),
         CorePotts.CompilerSPI.PersistTrackerCheckpoint(),
         CorePotts.CompilerSPI.TrackerSupport(true, true, true, false, 0x5a02),
         CorePotts.CompilerSPI.ConstantTrackerCost(),
@@ -208,7 +208,7 @@ CorePotts.CompilerSPI.tracker_contract(::ExternalDoubleOccupancyTracker) =
     CorePotts.CompilerSPI.DenseOwnerScalarStorage{Int32}(),
     CorePotts.CompilerSPI.AcceptedCommitTrackerVisibility(),
     CorePotts.CompilerSPI.ClaimedOwnerExclusiveTrackerConcurrency(),
-    CorePotts.CompilerSPI.SourceTargetOwnerUpdateBound(),
+    CorePotts.CompilerSPI.OldNewOwnerUpdateBound(),
     CorePotts.CompilerSPI.PersistTrackerCheckpoint(),
     CorePotts.CompilerSPI.TrackerSupport(true, true, true, true),
     CorePotts.CompilerSPI.ConstantTrackerCost(),
@@ -233,9 +233,8 @@ function CorePotts.CompilerSPI.tracker_recompute(
     end
     return values
 end
-@inline CorePotts.CompilerSPI.tracker_proposal_delta(
+@inline CorePotts.CompilerSPI.tracker_ownership_delta(
         ::ExternalDoubleOccupancyTracker,
-        source,
         target,
         old_owner::Int32,
         new_owner::Int32,

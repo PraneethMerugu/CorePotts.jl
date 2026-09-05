@@ -26,6 +26,20 @@ struct ConstraintGroup{C, V <: AbstractVector{C}}
     instances::V
 end
 
+_tracker_fold_source(::Any) = false
+_tracker_fold_source(::Val) = true
+_contains_tracker_fold(::AbstractStaticExpression) = false
+function _contains_tracker_fold(expression::OperationExpression)
+    operation = expression.operation
+    if operation isa ResourceOperation{:bounded_fold} &&
+            length(expression.arguments) == 4
+        source = getfield(expression.arguments, 2)
+        source isa LiteralExpression && _tracker_fold_source(source.value) &&
+            return true
+    end
+    return any(_contains_tracker_fold, expression.arguments)
+end
+
 """Validated ordered proposal descriptor plan and its storage requirements."""
 struct DescriptorExecutionPlan{
         G <: Tuple,
@@ -62,6 +76,14 @@ struct DescriptorExecutionPlan{
         end || throw(ArgumentError(
             "descriptor execution plans admit only compiler-owned ProposalDescriptor values"
         ))
+        for group in groups, descriptor in group.instances
+            descriptor.role isa HamiltonianRole || continue
+            _contains_tracker_fold(descriptor.evaluator.expression) || continue
+            throw(ArgumentError(
+                "tracker gathers are proposal-snapshot inputs and cannot be " *
+                "used by Hamiltonian descriptors"
+            ))
+        end
         occurrence_count >= 0 || throw(ArgumentError(
             "descriptor occurrence count cannot be negative"
         ))

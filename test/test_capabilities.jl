@@ -11,7 +11,7 @@ CorePotts.tracker_contract(::UnqualifiedCapabilityTracker) =
         CorePotts.DenseOwnerScalarStorage{Int32}(),
         CorePotts.AcceptedCommitTrackerVisibility(),
         CorePotts.ClaimedOwnerExclusiveTrackerConcurrency(),
-        CorePotts.SourceTargetOwnerUpdateBound(),
+        CorePotts.OldNewOwnerUpdateBound(),
         CorePotts.PersistTrackerCheckpoint(),
         CorePotts.TrackerSupport(true, true, false, false, 0x5a01),
         CorePotts.ConstantTrackerCost(),

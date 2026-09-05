@@ -196,6 +196,10 @@ function _compiler_test_gathered_context(;
     reverse_contact_owners = (),
     reverse_contact_kinds = (),
     contact_ranges = ((), ()),
+    tracker_values = (),
+    bounded_tracker_samples = (),
+    tracker_descriptors = (),
+    bounded_tracker_descriptors = (),
 )
     return CorePotts._gathered_proposal_context(
         source, target, target_linear,
@@ -205,7 +209,9 @@ function _compiler_test_gathered_context(;
         contact_sites, contact_owners, contact_kinds,
         reverse_contact_sites, reverse_contact_owners, reverse_contact_kinds,
         contact_ranges,
-        (), (), (), (), nothing, (),
+        tracker_values, bounded_tracker_samples,
+        tracker_descriptors, bounded_tracker_descriptors,
+        (), (), nothing, (),
     )
 end
 
@@ -213,6 +219,63 @@ _compiler_test_tracker_plan() = CorePotts.TrackerExecutionPlan(
     (CorePotts.OwnershipCountTracker(),),
     "localmath-compiler-boundary-tracker",
 )
+
+_compiler_bounded_sum_finish(sum, count) = sum
+
+@testset "bounded tracker gathers preserve relation-lane semantics" begin
+    fold = LocalMath.bounded_fold(
+        identity, +, Int32(0), _compiler_bounded_sum_finish;
+        domain = LocalMath.Where(>=(Int32(0))),
+        oninvalid = LocalMath.RejectInvalid(),
+        onempty = LocalMath.FillEmpty(Int32(0)),
+        order = LocalMath.CanonicalLeftFold(),
+    )
+    descriptor = CorePotts.OwnershipCountTracker()
+    samples = ((
+        (present = true, value = Int32(2)),
+        (present = false, value = Int32(99)),
+        (present = true, value = Int32(2)),
+    ),)
+    context = _compiler_test_gathered_context(
+        contact_sites = (Int32(2), Int32(0), Int32(3)),
+        contact_owners = (Int32(1), Int32(0), Int32(1)),
+        contact_kinds = (Int16(1), Int16(0), Int16(1)),
+        contact_ranges = ((Int32(1),), (Int32(3),)),
+        bounded_tracker_samples = samples,
+        bounded_tracker_descriptors = (descriptor,),
+    )
+    reference = CorePotts._ExecutableTrackerKey{:cell_volume,0}()
+    @test CorePotts._gathered_bounded_fold(
+        fold, reference, Int32(1), context) == Int32(4)
+    @test_throws ArgumentError CorePotts._gathered_bounded_tracker_samples(
+        Val(:cell_surface), (descriptor,), samples)
+
+    expression = CorePotts.OperationExpression(
+        CorePotts.ResourceOperation{:bounded_fold}(),
+        CorePotts.LiteralExpression(fold),
+        CorePotts.LiteralExpression(Val(:cell_volume)),
+        CorePotts.LiteralExpression(Int32(1)),
+        CorePotts.ContextExpression(
+            CorePotts.ContextOperation{:target_site}()),
+    )
+    hamiltonian = CorePotts.ProposalDescriptor(
+        CorePotts.StaticEvaluator(expression),
+        CorePotts.ResourceAccess(
+            (), (), CorePotts.OwnerFootprint(), CorePotts.EmptyFootprint(),
+            CorePotts.NoWriteAccess()),
+        CorePotts.DescriptorSupport(true, true, true, true),
+        (), (), CorePotts.HamiltonianRole(), 1,
+    )
+    group = CorePotts.ProposalDescriptorGroup(
+        [hamiltonian], (), (), (family = :invalid_tracker_hamiltonian,))
+    @test_throws ArgumentError CorePotts.DescriptorExecutionPlan(
+        (group,), CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
+        CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]), (),
+        Any[:invalid_tracker_hamiltonian], 1,
+        "invalid-tracker-hamiltonian-v1",
+        CorePotts.HamiltonianDomainResources(1, 1),
+    )
+end
 
 @testset "ordered scalar execution specializes the binary case" begin
     binary = (
@@ -559,10 +622,12 @@ end
         declaration.failure_identity => storage.failure_identity;
         backend = KernelAbstractions.CPU())
     inspected = LocalMath.inspect(prepared).stages[1:5]
-    @test all(read.mode === :required for stage in inspected
+    @test all(read.mode in (:required, :samples) for stage in inspected
         for read in stage.reads)
     @test inspected[2].reads[1].role === :ownership
+    @test inspected[2].reads[1].mode === :samples
     @test inspected[3].reads[1].role === :cell_kinds
+    @test all(read.mode === :samples for read in inspected[3].reads)
     wait(LocalMath.execute!(prepared; parameters = (
         mcs = Int64(1), color = Int32(1), attempt_round = Int32(1),
         batch_size)))
@@ -675,6 +740,69 @@ end
         CorePotts._PROGRAM_CHECKERBOARD_ENERGY,
         CorePotts._PROGRAM_CHECKERBOARD_ACCEPTED,
     ), @view(storage.disposition[1:Int(batch_size)]))
+end
+
+@testset "checkerboard tracker validation suppresses invalid publication" begin
+    space = LocalMath.Space(1)
+    scratch = LocalMath.Field(space, Float32)
+    live = LocalMath.Field(space, Float32)
+    validation = CorePotts._checkerboard_tracker_validation(
+        scratch, Float32, 1, 1)
+    law = LocalMath.sequence(
+        validation.law,
+        CorePotts._checkerboard_field_copy_law(
+            scratch, live, nothing, :nonfinite_tracker_commit_test),
+    )
+    live_values = Float32[7]
+    prepared = LocalMath.prepare(
+        law,
+        scratch => Float32[Inf],
+        live => live_values,
+        validation.bindings...;
+        backend = KernelAbstractions.CPU(),
+    )
+    failure = try
+        wait(LocalMath.execute!(prepared))
+        nothing
+    catch error
+        error
+    end
+    @test failure isa LocalMath.LocalMathValidationError
+    @test live_values == Float32[7]
+
+    integer_scratch = LocalMath.Field(
+        space, CorePotts._TrackerWideInteger)
+    integer_live = LocalMath.Field(space, Int32)
+    integer_validation = CorePotts._checkerboard_tracker_validation(
+        integer_scratch, Int32, 2, 1)
+    integer_law = LocalMath.sequence(
+        integer_validation.law,
+        CorePotts._checkerboard_field_copy_law(
+            integer_scratch, integer_live, nothing,
+            :overflow_tracker_commit_test),
+    )
+    maximum = convert(CorePotts._TrackerWideInteger, typemax(Int32))
+    overflow = maximum + convert(CorePotts._TrackerWideInteger, Int32(1))
+    minimum_negated = -convert(
+        CorePotts._TrackerWideInteger, typemin(Int32))
+    @test !CorePotts._tracker_wide_in_storage_range(
+        minimum_negated, Int32)
+    integer_live_values = Int32[9]
+    integer_prepared = LocalMath.prepare(
+        integer_law,
+        integer_scratch => [overflow],
+        integer_live => integer_live_values,
+        integer_validation.bindings...;
+        backend = KernelAbstractions.CPU(),
+    )
+    integer_failure = try
+        wait(LocalMath.execute!(integer_prepared))
+        nothing
+    catch error
+        error
+    end
+    @test integer_failure isa LocalMath.LocalMathValidationError
+    @test integer_live_values == Int32[9]
 end
 
 struct CoreLocalMathSite end

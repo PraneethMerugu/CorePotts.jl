@@ -45,6 +45,7 @@ struct QualifiedTrackerKey{Q <: Val}
         return new{Q}(quantity, Int32(source_handle))
     end
 end
+_tracker_fold_source(::QualifiedTrackerKey) = true
 """Store one scalar of type `T` per finite owner."""
 struct DenseOwnerScalarStorage{T} <: AbstractTrackerStorage end
 struct DenseOwnerScalarGroupStorage{T} <: AbstractTrackerStorage end
@@ -54,7 +55,7 @@ struct DenseOwnerMomentsStorage{N, T <: AbstractFloat} <:
 """Publish tracker changes with the accepted-state commit."""
 struct AcceptedCommitTrackerVisibility <: AbstractTrackerVisibility end
 """Bound a proposal update to its old and new finite owners."""
-struct SourceTargetOwnerUpdateBound <: AbstractTrackerUpdateBound end
+struct OldNewOwnerUpdateBound <: AbstractTrackerUpdateBound end
 """Declare constant work per proposal."""
 struct ConstantTrackerCost <: AbstractTrackerCost end
 """Declare proposal work proportional to squared spatial dimension."""
@@ -115,7 +116,7 @@ struct OwnerScalarDelta{T} <: AbstractTrackerDelta
 end
 
 """Independent signed changes for the proposal's old and new finite owners."""
-struct SourceTargetScalarDelta{T} <: AbstractTrackerDelta
+struct OldNewOwnerScalarDelta{T} <: AbstractTrackerDelta
     old_amount::T
     new_amount::T
 end
@@ -202,8 +203,17 @@ function tracker_contract end
 function tracker_rebuild end
 """Independently recompute complete tracker storage from authoritative state."""
 function tracker_recompute end
-"""Return the bounded tracker change produced by one proposal."""
-function tracker_proposal_delta end
+"""
+Return the bounded tracker change produced by one ownership change.
+
+The method receives `(descriptor, target, old_owner, new_owner)`. Neighborhood-
+dependent built-in trackers are handled by CorePotts' private bounded context;
+extension callbacks use this single source-independent contract on every engine.
+This protocol is pure: repeated calls with identical arguments must return the
+same delta and must not mutate or otherwise depend on hidden state. CorePotts
+may evaluate it during validation before applying the accepted update.
+"""
+function tracker_ownership_delta end
 """Adapt an isbits tracker descriptor to an execution backend."""
 function tracker_adapt end
 
@@ -303,7 +313,7 @@ function _validate_tracker_descriptor(descriptor::AbstractTrackerDescriptor)
     contract.visibility isa AcceptedCommitTrackerVisibility || throw(
         ArgumentError("tracker visibility must be accepted-commit")
     )
-    contract.update_bound isa SourceTargetOwnerUpdateBound || throw(
+    contract.update_bound isa OldNewOwnerUpdateBound || throw(
         ArgumentError("tracker updates must be source/target-owner bounded")
     )
     contract.proposal_cost isa Union{
@@ -451,7 +461,7 @@ tracker_contract(::OwnershipCountTracker) = TrackerContract(
     DenseOwnerScalarStorage{Int32}(),
     AcceptedCommitTrackerVisibility(),
     ClaimedOwnerExclusiveTrackerConcurrency(),
-    SourceTargetOwnerUpdateBound(),
+    OldNewOwnerUpdateBound(),
     PersistTrackerCheckpoint(),
     TrackerSupport(true, true, true, true),
     ConstantTrackerCost(),
@@ -464,7 +474,7 @@ tracker_contract(descriptor::CellSurfaceTracker) = TrackerContract(
     DenseOwnerScalarStorage{Int32}(),
     AcceptedCommitTrackerVisibility(),
     ClaimedOwnerExclusiveTrackerConcurrency(),
-    SourceTargetOwnerUpdateBound(),
+    OldNewOwnerUpdateBound(),
     ReconstructTrackerCheckpoint(),
     TrackerSupport(true, true, true, true),
     BoundedNeighborhoodTrackerCost(descriptor.maximum_neighbors),
@@ -477,7 +487,7 @@ tracker_contract(::CellMomentsTracker{N, T}) where {N, T} = TrackerContract(
     DenseOwnerMomentsStorage{N, T}(),
     AcceptedCommitTrackerVisibility(),
     ClaimedOwnerExclusiveTrackerConcurrency(),
-    SourceTargetOwnerUpdateBound(),
+    OldNewOwnerUpdateBound(),
     ReconstructTrackerCheckpoint(),
     TrackerSupport(true, true, true, true),
     DimensionSquaredTrackerCost(),

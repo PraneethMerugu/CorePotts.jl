@@ -238,6 +238,15 @@ end
 @inline _executable_state_slot(::_ExecutableStateReference{Index}) where {Index} =
     Index
 
+struct _ExecutableTrackerKey{Quantity,SourceHandle} end
+@inline _executable_tracker_key(
+    ::_ExecutableTrackerKey{Quantity,0}
+) where {Quantity} = Val(Quantity)
+@inline _executable_tracker_key(
+    ::_ExecutableTrackerKey{Quantity,SourceHandle}
+) where {Quantity,SourceHandle} =
+    QualifiedTrackerKey(Val(Quantity), SourceHandle)
+
 struct _ExecutableProposalContext{Identity} end
 
 struct _ExecutableScalarCall{F,A<:Tuple}
@@ -363,17 +372,29 @@ function _record_expression_requirements!(
         string(typeof(expression))))
 end
 
-_record_tracker_requirements!(keys, ::AbstractStaticExpression) = nothing
+_record_tracker_requirements!(
+    keys, ::AbstractStaticExpression, bounded_keys = nothing
+) = nothing
 function _record_tracker_requirements!(
-        keys, expression::OperationExpression)
+        keys, expression::OperationExpression, bounded_keys = nothing)
     operation = expression.operation
     if operation isa QualifiedTrackerOperation
         key = QualifiedTrackerKey(
             operation.quantity, operation.source_handle)
         any(isequal(key), keys) || push!(keys, key)
+    elseif operation isa ResourceOperation{:bounded_fold} &&
+            length(expression.arguments) == 4
+        source = expression.arguments[2]
+        if source isa LiteralExpression &&
+                source.value isa Union{Val,QualifiedTrackerKey}
+            key = source.value
+            any(isequal(key), keys) || push!(keys, key)
+            bounded_keys === nothing ||
+                any(isequal(key), bounded_keys) || push!(bounded_keys, key)
+        end
     end
     foreach(expression.arguments) do argument
-        _record_tracker_requirements!(keys, argument)
+        _record_tracker_requirements!(keys, argument, bounded_keys)
     end
     return nothing
 end
@@ -449,7 +470,8 @@ function _checkerboard_scientific_requirements(
     handles = StateHandle[_proposal_state_handles(inventory)...]
     parameter_count = Ref(_proposal_parameter_count(inventory))
     affected_handles = StateHandle[]
-    tracker_keys = QualifiedTrackerKey[]
+    tracker_keys = Any[]
+    bounded_tracker_keys = Any[]
     relationship_handles = Int32[]
     moment_required = Ref(false)
     for descriptor in inventory.descriptors
@@ -462,7 +484,8 @@ function _checkerboard_scientific_requirements(
                 push!(relationship_handles, handle)
         end
         _record_tracker_requirements!(
-            tracker_keys, descriptor.evaluator.expression)
+            tracker_keys, descriptor.evaluator.expression,
+            bounded_tracker_keys)
         _record_moment_requirement!(
             moment_required, descriptor.evaluator.expression)
         _record_relationship_requirements!(
@@ -474,10 +497,10 @@ function _checkerboard_scientific_requirements(
             handles, parameter_count, descriptor.condition.expression)
         _record_expression_requirements!(
             handles, parameter_count, descriptor.value.expression)
-        _record_tracker_requirements!(
-            tracker_keys, descriptor.condition.expression)
-        _record_tracker_requirements!(
-            tracker_keys, descriptor.value.expression)
+        _record_tracker_requirements!(tracker_keys,
+            descriptor.condition.expression, bounded_tracker_keys)
+        _record_tracker_requirements!(tracker_keys,
+            descriptor.value.expression, bounded_tracker_keys)
         _record_moment_requirement!(
             moment_required, descriptor.condition.expression)
         _record_moment_requirement!(
@@ -500,12 +523,12 @@ function _checkerboard_scientific_requirements(
             handles, parameter_count, effect.endpoint_a.expression)
         _record_expression_requirements!(
             handles, parameter_count, effect.endpoint_b.expression)
-        _record_tracker_requirements!(
-            tracker_keys, descriptor.condition.expression)
-        _record_tracker_requirements!(
-            tracker_keys, effect.endpoint_a.expression)
-        _record_tracker_requirements!(
-            tracker_keys, effect.endpoint_b.expression)
+        _record_tracker_requirements!(tracker_keys,
+            descriptor.condition.expression, bounded_tracker_keys)
+        _record_tracker_requirements!(tracker_keys,
+            effect.endpoint_a.expression, bounded_tracker_keys)
+        _record_tracker_requirements!(tracker_keys,
+            effect.endpoint_b.expression, bounded_tracker_keys)
         _record_moment_requirement!(
             moment_required, descriptor.condition.expression)
         _record_moment_requirement!(
@@ -521,7 +544,8 @@ function _checkerboard_scientific_requirements(
         for evaluator in effect.payload
             _record_expression_requirements!(
                 handles, parameter_count, evaluator.expression)
-            _record_tracker_requirements!(tracker_keys, evaluator.expression)
+            _record_tracker_requirements!(tracker_keys, evaluator.expression,
+                bounded_tracker_keys)
             _record_moment_requirement!(moment_required, evaluator.expression)
             _record_relationship_requirements!(
                 relationship_handles, evaluator.expression)
@@ -537,6 +561,8 @@ function _checkerboard_scientific_requirements(
         tracker_keys = Tuple(tracker_keys),
         tracker_descriptors = _tracker_requirement_descriptors(
             tracker_keys, tracker_plan),
+        bounded_tracker_descriptors = _tracker_requirement_descriptors(
+            bounded_tracker_keys, tracker_plan),
         moment_descriptor = _moment_requirement_descriptor(
             moment_required[], tracker_plan),
         relationship_handles = Tuple(relationship_handles))
@@ -756,12 +782,24 @@ function _validate_gathered_operation_arguments(
     length(arguments) == 4 &&
     arguments[1] isa LiteralExpression &&
     arguments[1].value isa LocalMath.BoundedFold &&
-    arguments[2] isa StateExpression &&
+    (arguments[2] isa StateExpression ||
+        (arguments[2] isa LiteralExpression &&
+         arguments[2].value isa Union{Val,QualifiedTrackerKey})) &&
     arguments[3] isa LiteralExpression &&
     arguments[3].value isa Integer || throw(ArgumentError(
         "proposal source $(repr(source)) requires bounded_fold with a " *
-        "literal LocalMath.BoundedFold, a bound state, and a declared " *
+        "literal LocalMath.BoundedFold, a bound state or tracker, and a declared " *
         "bounded relation handle"))
+    fold_source = arguments[2]
+    if fold_source isa LiteralExpression &&
+            fold_source.value isa Union{Val,QualifiedTrackerKey}
+        anchor = arguments[4]
+        anchor isa ContextExpression &&
+            anchor.operation isa ContextOperation{:target_site} || throw(
+                ArgumentError(
+                    "proposal source $(repr(source)) requires bounded tracker " *
+                    "gathers to use the proposal target anchor"))
+    end
     return nothing
 end
 
@@ -772,6 +810,18 @@ function _validate_gathered_operation_arguments(
         ::QualifiedTrackerOperation, arguments, source)
     length(arguments) == 1 || throw(ArgumentError(
         "proposal source $(repr(source)) requires a unary qualified tracker operation"))
+    owner = only(arguments)
+    supported = owner isa LiteralExpression && owner.value isa Integer &&
+        owner.value <= 0
+    supported |= owner isa ContextExpression && owner.operation isa Union{
+        ContextOperation{:source_cell},
+        ContextOperation{:target_cell},
+        ContextOperation{:energy_anchor_cell},
+    }
+    supported || throw(ArgumentError(
+        "proposal source $(repr(source)) requests a tracker value for an owner " *
+        "that is not one of the bounded source, target, or cell-anchor owners"
+    ))
     return nothing
 end
 
@@ -814,7 +864,18 @@ end
 function _compile_proposal_expression(
         expression::OperationExpression, source, state_handles)
     operation = expression.operation
-    arguments = map(expression.arguments) do argument
+    arguments = ntuple(length(expression.arguments)) do index
+        argument = getfield(expression.arguments, index)
+        if operation isa ResourceOperation{:bounded_fold} && index == 2 &&
+                argument isa LiteralExpression
+            key = argument.value
+            if key isa Val
+                return _ExecutableTrackerKey{typeof(key).parameters[1],0}()
+            elseif key isa QualifiedTrackerKey
+                return _ExecutableTrackerKey{
+                    typeof(key.quantity).parameters[1],Int(key.source_handle)}()
+            end
+        end
         _compile_proposal_expression(argument, source, state_handles)
     end
     if operation isa AbstractContextualOperation
@@ -904,6 +965,8 @@ end
     getfield(_proposal_parameters(context), Index)
 @inline _execute_proposal_scalar(
     value::_ExecutableStateReference, context) = value
+@inline _execute_proposal_scalar(
+    value::_ExecutableTrackerKey, context) = value
 @inline _gathered_proposal(context) = context
 @inline _execute_proposal_scalar(
     ::_ExecutableProposalContext{:source_site}, context) =
@@ -1026,7 +1089,7 @@ end
 end
 
 struct _GatheredProposalContext{
-        I,T,P,V,S,O,K,RS,RO,RK,R,TV,TD,MF,MS,MD,RR,
+        I,T,P,V,S,O,K,RS,RO,RK,R,TV,TC,TD,TCD,MF,MS,MD,RR,
     }
     source::I
     target::I
@@ -1051,7 +1114,9 @@ struct _GatheredProposalContext{
     reverse_contact_kinds::RK
     contact_ranges::R
     tracker_values::TV
+    bounded_tracker_samples::TC
     tracker_descriptors::TD
+    bounded_tracker_descriptors::TCD
     moment_first::MF
     moment_second::MS
     moment_descriptor::MD
@@ -1059,11 +1124,11 @@ struct _GatheredProposalContext{
 end
 
 @generated function _gathered_proposal_context(arguments...)
-    length(arguments) == 28 || error(
+    length(arguments) == 30 || error(
         "gathered proposal context construction schema changed")
     context_type = _GatheredProposalContext{
-        arguments[1],arguments[13:28]...}
-    values = (:(getfield(arguments, $index)) for index in 1:28)
+        arguments[1],arguments[13:30]...}
+    values = (:(getfield(arguments, $index)) for index in 1:30)
     return :($context_type($(values...)))
 end
 
@@ -1201,14 +1266,23 @@ end
     proposal = _gathered_proposal(context)
     start, count = _gathered_contact_range(
         relation_handle, proposal.contact_ranges...)
-    values = getfield(proposal.state_values, _executable_state_slot(reference))
     anchor = _gathered_fold_anchor(context)
     center_lane = anchor == proposal.target_linear ? Int32(0) :
         _gathered_tuple_position(anchor, proposal.reverse_contact_sites)
     first_lane = iszero(center_lane) ? start :
         (center_lane - Int32(1)) * Int32(length(proposal.contact_sites)) + start
-    samples = iszero(center_lane) ? values.contacts : values.affected_contacts
-    outcome = LocalMath.evaluate_bounded(fold, samples, first_lane, count)
+    outcome = if reference isa _ExecutableStateReference
+        values = getfield(
+            proposal.state_values, _executable_state_slot(reference))
+        samples = iszero(center_lane) ? values.contacts : values.affected_contacts
+        LocalMath.evaluate_bounded(fold, samples, first_lane, count)
+    else
+        key = _executable_tracker_key(reference)
+        samples = _gathered_bounded_tracker_samples(
+            key, proposal.bounded_tracker_descriptors,
+            proposal.bounded_tracker_samples)
+        LocalMath.evaluate_bounded(fold, samples, start, count)
+    end
     outcome.valid && return outcome.value
     value = outcome.value
     return value isa AbstractFloat ? oftype(value, NaN) : value
@@ -1681,16 +1755,36 @@ end
 ) =
     throw(ArgumentError("compiled gathered tracker key is unavailable"))
 
+@inline function _gathered_bounded_tracker_samples(
+        key,
+        descriptors::Tuple{Any,Vararg{Any}},
+        values::Tuple{Any,Vararg{Any}},
+    )
+    isequal(tracker_quantity(first(descriptors)), key) && return first(values)
+    return _gathered_bounded_tracker_samples(
+        key, Base.tail(descriptors), Base.tail(values))
+end
+@inline _gathered_bounded_tracker_samples(
+    key, descriptors::Tuple{Any}, values::Tuple{Any},
+) = isequal(tracker_quantity(first(descriptors)), key) ? first(values) :
+    _gathered_bounded_tracker_samples(key, (), ())
+@inline _gathered_bounded_tracker_samples(key, ::Tuple{}, ::Tuple{}) =
+    throw(ArgumentError("compiled bounded tracker source is unavailable"))
+
 @inline function _gathered_tracker_value(
         context::_GatheredAnchorEnergyContext,
         quantity::Val, source_handle::Int32, owner::Int32)
-    owner <= 0 && return Int32(0)
     proposal = context.proposal
     descriptor, pair = _gathered_tracker_slot(
         quantity, source_handle, proposal.tracker_descriptors,
         proposal.tracker_values)
-    value = owner == proposal.old_owner ? pair[1] :
-        owner == proposal.new_owner ? pair[2] : zero(first(pair))
+    owner <= 0 && return zero(first(pair))
+    lane = owner == proposal.old_owner ? 1 : owner == proposal.new_owner ? 2 : 0
+    # Cold compiler validation admits only the source, target, or energy-anchor
+    # owner here. Keep the device body total; an unrelated owner is therefore
+    # an unreachable zero lane, not a second runtime validation authority.
+    iszero(lane) && return zero(first(pair))
+    value = pair[lane]
     context.after || return value
     delta = _checkerboard_scalar_tracker_delta(
         descriptor, proposal.contact_sites, proposal.contact_owners,

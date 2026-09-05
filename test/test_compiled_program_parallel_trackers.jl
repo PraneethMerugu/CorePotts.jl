@@ -38,14 +38,13 @@ end
     @test external_contract.storage isa
           CorePotts.DenseOwnerScalarStorage{Int32}
     @test external_contract.update_bound isa
-          CorePotts.SourceTargetOwnerUpdateBound
+          CorePotts.OldNewOwnerUpdateBound
     probe_program = test_program(CorePotts.SequentialProgramEngine())
     probe_source = CorePotts.tracker_source_view(
         probe_program, test_initial().ownership
     )
-    @test CorePotts.tracker_proposal_delta(
+    @test CorePotts.tracker_ownership_delta(
         external_descriptor,
-        probe_source,
         CartesianIndex(1, 1),
         Int32(1),
         Int32(2),
