@@ -441,7 +441,7 @@ function enqueue_lifecycle_backend_index!(
         _lifecycle_relationship_validation_plan(state.program.lifecycle_plan),
         _lifecycle_relationship_validation_workspace(workspace),
         _lifecycle_effect_control(control);
-        ndrange = 1,
+        ndrange = length(workspace.request_index.records.slot),
     )
     @debug "enqueue lifecycle backend stage" stage = :reduce_planning_status
     last_planning_event = _run_lifecycle_status!(

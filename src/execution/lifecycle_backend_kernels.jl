@@ -228,39 +228,44 @@ end
 @kernel function _validate_lifecycle_relationships_backend_kernel!(
         runtime, plan, workspace, control
     )
-    index = @index(Global, Linear)
-    if index == 1 && _lifecycle_backend_open(workspace) &&
-            _lifecycle_backend_due(control)
-        count = Int(@inbounds workspace.request_count[1])
-        for position in 1:count
-            request = Int(@inbounds workspace.request_slots[position])
-            @inbounds workspace.active[request] || continue
+    position = @index(Global, Linear)
+    if _lifecycle_backend_open(workspace) &&
+            _lifecycle_backend_due(control) &&
+            position <= Int(@inbounds workspace.request_count[1])
+        request = Int(@inbounds workspace.request_slots[position])
+        if @inbounds workspace.active[request]
             descriptor = @inbounds plan.descriptors[
                 Int(workspace.descriptor[request])
             ]
-            @inbounds(control.candidate_status[request].code) ===
-                ProgramStatusSuccess || continue
-            anchor = @inbounds workspace.anchor[request]
-            request_workspace = _lifecycle_workspace_with_status(
-                workspace,
-                _ProgramStatusSlot(
-                    control.candidate_status, Int32(request)
-                ),
-            )
-            reason = if !_lifecycle_relationships_admissible(
-                    runtime, plan, descriptor, anchor
-                )
-                :relationship_policy_rejected
-            else
-                :ok
+            if @inbounds(control.candidate_status[request].code) ===
+                    ProgramStatusSuccess
+                anchor = @inbounds workspace.anchor[request]
+                if !_lifecycle_relationships_admissible(
+                        runtime, plan, descriptor, anchor
+                    )
+                    if descriptor.on_inadmissible ===
+                            FilterLifecycleInadmissible
+                        @inbounds begin
+                            workspace.active[request] = false
+                            workspace.filtered[request] = true
+                            workspace.filtered_detail[request] =
+                                LifecycleDetailRelationshipPolicyRejected
+                        end
+                    else
+                        @inbounds control.candidate_status[request] =
+                            ProgramStatus(
+                                ProgramStatusInadmissible,
+                                descriptor.source_handle,
+                                Int32(0),
+                                Int32(anchor),
+                                LifecycleDetailRelationshipPolicyRejected,
+                                Int32(0),
+                                Int32(0),
+                                Int32(0),
+                            )
+                    end
+                end
             end
-            _record_lifecycle_planning_reason!(
-                workspace,
-                request_workspace,
-                request,
-                descriptor,
-                reason,
-            )
         end
     end
 end
