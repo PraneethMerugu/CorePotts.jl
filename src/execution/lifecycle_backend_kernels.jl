@@ -92,34 +92,43 @@ end
                 Int(workspace.descriptor[request])
             ]
             if descriptor.effect === RetireCellLifecycleEffect
-                request_workspace = _lifecycle_workspace_with_status(
-                    workspace,
-                    _ProgramStatusSlot(
-                        control.candidate_status, Int32(request)
-                    ),
-                )
                 anchor = @inbounds workspace.anchor[request]
-                reason = if !_lifecycle_request_generation_current(
+                if !_lifecycle_request_generation_current(
                         runtime, workspace, request
                     )
-                    _set_lifecycle_status!(
-                        request_workspace,
-                        ProgramStatusStaleGeneration;
-                        anchor,
+                    @inbounds control.candidate_status[request] = ProgramStatus(
+                        ProgramStatusStaleGeneration,
+                        Int32(0),
+                        Int32(0),
+                        Int32(anchor),
+                        LifecycleDetailNone,
+                        Int32(0),
+                        Int32(0),
+                        Int32(0),
                     )
-                    :status_failure
                 elseif _lifecycle_retire_volume(runtime, anchor) != 0
-                    :retire_nonempty
-                else
-                    :ok
+                    if descriptor.on_inadmissible ===
+                            FilterLifecycleInadmissible
+                        @inbounds begin
+                            workspace.active[request] = false
+                            workspace.filtered[request] = true
+                            workspace.filtered_detail[request] =
+                                LifecycleDetailRetireNonempty
+                        end
+                    else
+                        @inbounds control.candidate_status[request] =
+                            ProgramStatus(
+                                ProgramStatusInadmissible,
+                                descriptor.source_handle,
+                                Int32(0),
+                                Int32(anchor),
+                                LifecycleDetailRetireNonempty,
+                                Int32(0),
+                                Int32(0),
+                                Int32(0),
+                            )
+                    end
                 end
-                _record_lifecycle_planning_reason!(
-                    workspace,
-                    request_workspace,
-                    request,
-                    descriptor,
-                    reason,
-                )
             end
         end
     end
