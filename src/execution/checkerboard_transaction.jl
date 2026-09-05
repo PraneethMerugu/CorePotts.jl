@@ -14,7 +14,7 @@ _acceptance_temperature(scalar::CompiledScalar{T}) where {T} =
     ::_AcceptanceTemperature{Index}, parameters,
 ) where {Index} = getfield(parameters, Index)
 
-struct _CompiledProposalAcceptanceEvaluator{HasParameters,T,F,R}
+struct _CompiledProposalAcceptanceEvaluator{HasParameters,Constraint,T,F,R}
     trajectory_seed::UInt64
     temperature::T
     forbid_extinction::F
@@ -23,14 +23,20 @@ end
 
 
 _compiled_proposal_acceptance_evaluator(
-    ::Val{HasParameters}, trajectory_seed, temperature, forbid, retire,
-) where {HasParameters} = _CompiledProposalAcceptanceEvaluator{
-    HasParameters,typeof(temperature),typeof(forbid),typeof(retire)}(
+    ::Val{HasParameters}, ::Val{Constraint}, trajectory_seed,
+    temperature, forbid, retire,
+) where {HasParameters,Constraint} = _CompiledProposalAcceptanceEvaluator{
+    HasParameters,Constraint,typeof(temperature),typeof(forbid),typeof(retire)}(
         trajectory_seed, temperature, forbid, retire)
 
 @inline _compiled_acceptance_parameters(reads, ::Val{false}) = ()
 @inline _compiled_acceptance_parameters(reads, ::Val{true}) =
     something(@inbounds getfield(reads, 11)[1].value)
+
+@inline _compiled_constraint_value(reads, ::Val{nothing}) = something(
+    @inbounds getfield(reads, 10)[1].value)
+@inline _compiled_constraint_value(reads, ::Val{Constraint}) where {Constraint} =
+    Constraint
 
 @inline function _compiled_extinction_admitted(
         evaluator::_CompiledProposalAcceptanceEvaluator,
@@ -49,9 +55,9 @@ _compiled_proposal_acceptance_evaluator(
 end
 
 @inline function (evaluator::_CompiledProposalAcceptanceEvaluator{
-        HasParameters})(
+        HasParameters,Constraint})(
         item::Int32, reads, parameters,
-    ) where {HasParameters}
+    ) where {HasParameters,Constraint}
     actionable = something(@inbounds getfield(reads, 1)[1].value)
     owners = something(@inbounds getfield(reads, 2)[1].value)
     kinds = something(@inbounds getfield(reads, 3)[1].value)
@@ -61,8 +67,8 @@ end
     drive_energy = something(@inbounds getfield(reads, 7)[1].value)
     drive_log_bias = something(@inbounds getfield(reads, 8)[1].value)
     kinetic_modifier = something(@inbounds getfield(reads, 9)[1].value)
-    constraints_allowed = something(
-        @inbounds getfield(reads, 10)[1].value)
+    constraints_allowed = _compiled_constraint_value(
+        reads, Val(Constraint))
     science_parameters = _compiled_acceptance_parameters(
         reads, Val(HasParameters))
     disposition = _PROGRAM_CHECKERBOARD_NULL
@@ -135,6 +141,8 @@ function _checkerboard_acceptance_declaration(
     failure_identity = LocalMath.Field(scientific.source_space, Int32)
     evaluator = _compiled_proposal_acceptance_evaluator(
         Val(!iszero(scientific.parameter_count)),
+        Val(scientific.literal_constraint === nothing ? nothing :
+            something(scientific.literal_constraint)),
         _trajectory_seed(seed, replica, repeat),
         _acceptance_temperature(temperature),
         forbid_extinction,

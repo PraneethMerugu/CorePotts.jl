@@ -1469,7 +1469,7 @@ function _checkerboard_scientific_declaration(
         evaluation, accepted_site_terms, accepted_site_fields,
         accepted_relationship_terms, accepted_relationship_fields,
         accepted_count = stage_plan.accepted_count,
-        scientific_evaluator, constraint_evaluator,
+        scientific_evaluator, constraint_evaluator, literal_constraint,
         state_handles, state_fields,
         accepted_state_handles, accepted_state_fields,
         ownership_change_handles,

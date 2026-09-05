@@ -503,7 +503,7 @@ end
     scientific = CorePotts._checkerboard_scientific_declaration(
         checkerboard, reshape(Int8[-1], 1, 1),
         UInt64(0x55), UInt32(0), UInt32(0),
-        _context_proposal_plan(), CorePotts.StageExecutionPlan(),
+        _context_proposal_plan(false), CorePotts.StageExecutionPlan(),
         _compiler_test_tracker_plan(), (),
         CorePotts.RelationshipStorage(()),
         CorePotts.RelationshipStorage(()), 0, 3, Float32)
@@ -569,7 +569,7 @@ end
     @test isbitstype(typeof(declaration.acceptance_evaluator))
     for item in Int32(1):batch_size
         expected = storage.actionable[item] ?
-            CorePotts._PROGRAM_CHECKERBOARD_ENERGY :
+            CorePotts._PROGRAM_CHECKERBOARD_CONSTRAINT :
             CorePotts._PROGRAM_CHECKERBOARD_NULL
         @test storage.disposition[item] == expected
         @test storage.failure_code[item] ==
