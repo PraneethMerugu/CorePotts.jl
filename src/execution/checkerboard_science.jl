@@ -314,21 +314,34 @@ end
     )
 end
 
-struct _CheckerboardScientificEvaluator{
-        T,N,Degree,HasParameters,Terms,Accepted,Relationships,
-        SiteNames,RelationshipNames,Handles,Ranges,TrackerDescriptors,
-        MomentDescriptor,RelationshipSchemas,
+struct _CheckerboardProposalContextPlan{
+        N,Handles,Ranges,TrackerDescriptors,MomentDescriptor,
+        RelationshipSchemas,
     }
     shape::NTuple{N,Int}
     trajectory_seed::UInt64
-    terms::Terms
-    accepted_site_terms::Accepted
-    accepted_relationship_terms::Relationships
     state_handles::Handles
     contact_ranges::Ranges
     tracker_descriptors::TrackerDescriptors
     moment_descriptor::MomentDescriptor
     relationship_schemas::RelationshipSchemas
+end
+
+struct _CheckerboardScientificEvaluator{
+        T,Degree,HasParameters,Terms,Accepted,Relationships,
+        SiteNames,RelationshipNames,Context,
+    }
+    context::Context
+    terms::Terms
+    accepted_site_terms::Accepted
+    accepted_relationship_terms::Relationships
+end
+
+struct _CheckerboardConstraintEvaluator{
+        T,Degree,HasParameters,Terms,Context,
+    }
+    context::Context
+    terms::Terms
 end
 
 const _ACCEPTED_SITE_DISABLED = UInt8(0x00)
@@ -416,8 +429,6 @@ end
         drive_energy = LocalMath.UniqueValue(evaluation.drive_energy),
         drive_log_bias = LocalMath.UniqueValue(evaluation.drive_log_bias),
         kinetic_modifier = LocalMath.UniqueValue(evaluation.kinetic_modifier),
-        constraints_allowed =
-            LocalMath.UniqueValue(evaluation.constraints_allowed),
     )
 end
 
@@ -909,16 +920,10 @@ _checkerboard_moment_component_count(::CellMomentsTracker{N}) where {N} =
     end
 end
 
-Base.@noinline function (evaluator::_CheckerboardScientificEvaluator{
-        T,N,Degree,HasParameters,Terms,Accepted,Relationships,
-        SiteNames,RelationshipNames,Handles,Ranges,TrackerDescriptors,
-        MomentDescriptor,RelationshipSchemas})(
-        item::Int32, reads, parameters,
-    ) where {
-        T,N,Degree,HasParameters,Terms,Accepted,Relationships,
-        SiteNames,RelationshipNames,Handles,Ranges,TrackerDescriptors,
-        MomentDescriptor,RelationshipSchemas,
-    }
+@inline function _checkerboard_proposal_context(
+        plan::_CheckerboardProposalContextPlan, reads, parameters,
+        ::Type{T}, ::Val{Degree}, ::Val{HasParameters},
+    ) where {T,Degree,HasParameters}
     sites = something(@inbounds getfield(reads, 1)[1].value)
     owners = something(@inbounds getfield(reads, 2)[1].value)
     kinds = something(@inbounds getfield(reads, 3)[1].value)
@@ -932,32 +937,32 @@ Base.@noinline function (evaluator::_CheckerboardScientificEvaluator{
         _checkerboard_scientific_contact(
             reads, Val(Degree), Val(HasParameters))
     tracker_values = _checkerboard_scientific_tracker_values(
-        reads, Val(length(evaluator.tracker_descriptors)),
+        reads, Val(length(plan.tracker_descriptors)),
         Val(6 + (HasParameters ? 1 : 0) + (iszero(Degree) ? 0 : 6)))
     tracker_offset = 6 + (HasParameters ? 1 : 0) +
         (iszero(Degree) ? 0 : 6)
     moment_first, moment_second = _checkerboard_scientific_moments(
-        reads, evaluator.moment_descriptor,
-        Val(tracker_offset + length(evaluator.tracker_descriptors)))
+        reads, plan.moment_descriptor,
+        Val(tracker_offset + length(plan.tracker_descriptors)))
     relationship_offset = tracker_offset +
-        length(evaluator.tracker_descriptors) +
-        _checkerboard_moment_component_count(evaluator.moment_descriptor)
+        length(plan.tracker_descriptors) +
+        _checkerboard_moment_component_count(plan.moment_descriptor)
     relationship_resources = _checkerboard_scientific_relationships(
-        reads, evaluator.relationship_schemas, evaluator.moment_descriptor,
+        reads, plan.relationship_schemas, plan.moment_descriptor,
         Val(relationship_offset))
     state_values = _checkerboard_scientific_gathers(
-        reads, Val(length(evaluator.state_handles)),
+        reads, Val(length(plan.state_handles)),
         Val(6 + (HasParameters ? 1 : 0) + (iszero(Degree) ? 0 : 6) +
-            length(evaluator.tracker_descriptors) +
+            length(plan.tracker_descriptors) +
             _checkerboard_moment_component_count(
-                evaluator.moment_descriptor) +
+                plan.moment_descriptor) +
             _checkerboard_relationship_read_count(
-                evaluator.relationship_schemas)),
+                plan.relationship_schemas)),
         Val(Degree))
     target_linear, source_linear = sites
-    target = _checkerboard_cartesian_site(evaluator.shape, target_linear)
+    target = _checkerboard_cartesian_site(plan.shape, target_linear)
     source = source_linear > 0 ?
-        _checkerboard_cartesian_site(evaluator.shape, source_linear) : target
+        _checkerboard_cartesian_site(plan.shape, source_linear) : target
     context = _gathered_proposal_context(
         source,
         target,
@@ -970,7 +975,7 @@ Base.@noinline function (evaluator::_CheckerboardScientificEvaluator{
         semantic,
         getfield(parameters, 1),
         getfield(parameters, 2),
-        evaluator.trajectory_seed,
+        plan.trajectory_seed,
         zero(T),
         science_parameters,
         state_values,
@@ -980,13 +985,28 @@ Base.@noinline function (evaluator::_CheckerboardScientificEvaluator{
         reverse_contact_sites,
         reverse_contact_owners,
         reverse_contact_kinds,
-        evaluator.contact_ranges,
-        tracker_values, evaluator.tracker_descriptors,
-        moment_first, moment_second, evaluator.moment_descriptor,
+        plan.contact_ranges,
+        tracker_values, plan.tracker_descriptors,
+        moment_first, moment_second, plan.moment_descriptor,
         relationship_resources,
     )
+    return actionable, context
+end
+
+Base.@noinline function (evaluator::_CheckerboardScientificEvaluator{
+        T,Degree,HasParameters,Terms,Accepted,Relationships,
+        SiteNames,RelationshipNames,Context})(
+        item::Int32, reads, parameters,
+    ) where {
+        T,Degree,HasParameters,Terms,Accepted,Relationships,
+        SiteNames,RelationshipNames,Context,
+    }
+    actionable, context = _checkerboard_proposal_context(
+        evaluator.context, reads, parameters, T, Val(Degree),
+        Val(HasParameters))
     evaluation = actionable ?
-        _fold_executable_proposal_terms(evaluator.terms, context, T) :
+        _fold_executable_proposal_numeric_terms(
+            evaluator.terms, context, T, _neutral_proposal_evaluation(T)) :
         _neutral_proposal_evaluation(T)
     accepted_site_evaluations = actionable ?
         _evaluate_accepted_site_terms(
@@ -1003,6 +1023,18 @@ Base.@noinline function (evaluator::_CheckerboardScientificEvaluator{
         evaluator.accepted_relationship_terms,
         accepted_relationship_evaluations,
         Val(RelationshipNames))
+end
+
+Base.@noinline function (evaluator::_CheckerboardConstraintEvaluator{
+        T,Degree,HasParameters,Terms,Context})(
+        item::Int32, reads, parameters,
+    ) where {T,Degree,HasParameters,Terms,Context}
+    actionable, context = _checkerboard_proposal_context(
+        evaluator.context, reads, parameters, T, Val(Degree),
+        Val(HasParameters))
+    allowed = !actionable ||
+        _fold_executable_proposal_constraints(evaluator.terms, context)
+    return (constraints_allowed = LocalMath.UniqueValue(allowed),)
 end
 
 function _checkerboard_scientific_declaration(
@@ -1030,6 +1062,8 @@ function _checkerboard_scientific_declaration(
         inventory, stage_plan, ownership_change_handles, tracker_plan)
     state_handles = requirements.state_handles
     terms = _compile_proposal_terms(descriptor_plan, state_handles)
+    numeric_terms = _proposal_numeric_terms(terms)
+    constraint_terms = _proposal_constraint_terms(terms)
     accepted_site_terms = _compile_accepted_site_terms(
         stage_plan, descriptor_plan, state_handles)
     accepted_relationship_terms = _compile_accepted_relationship_terms(
@@ -1285,21 +1319,28 @@ function _checkerboard_scientific_declaration(
         topology.source_space, accepted_site_terms, T)
     site_port_names = keys(accepted_site_fields)
     relationship_port_names = keys(accepted_relationship_fields)
+    proposal_context = _CheckerboardProposalContextPlan(
+        checkerboard.shape,
+        _trajectory_seed(seed, replica, repeat),
+        state_handles,
+        contact_ranges,
+        tracker_descriptors,
+        moment_descriptor,
+        relationship_schemas_compiled,
+    )
     scientific_evaluator = _CheckerboardScientificEvaluator{
-        T, length(checkerboard.shape), contact_degree,
-        !iszero(parameter_count),
-        typeof(terms), typeof(accepted_site_terms),
+        T, contact_degree, !iszero(parameter_count),
+        typeof(numeric_terms), typeof(accepted_site_terms),
         typeof(accepted_relationship_terms),
         site_port_names,
         relationship_port_names,
-        typeof(state_handles), typeof(contact_ranges),
-        typeof(tracker_descriptors),typeof(moment_descriptor),
-        typeof(relationship_schemas_compiled)}(
-            checkerboard.shape,
-            _trajectory_seed(seed, replica, repeat), terms,
-            accepted_site_terms, accepted_relationship_terms, state_handles,
-            contact_ranges, tracker_descriptors, moment_descriptor,
-            relationship_schemas_compiled)
+        typeof(proposal_context)}(
+            proposal_context, numeric_terms,
+            accepted_site_terms, accepted_relationship_terms)
+    constraint_evaluator = _CheckerboardConstraintEvaluator{
+        T, contact_degree, !iszero(parameter_count),
+        typeof(constraint_terms), typeof(proposal_context)}(
+            proposal_context, constraint_terms)
     core_reads = (
         sites = LocalMath.Access(
             topology.sites, topology.identity; required = true),
@@ -1355,8 +1396,6 @@ function _checkerboard_scientific_declaration(
         publication(evaluation.drive_energy, :drive_energy, T),
         publication(evaluation.drive_log_bias, :drive_log_bias, T),
         publication(evaluation.kinetic_modifier, :kinetic_modifier, T),
-        publication(evaluation.constraints_allowed,
-            :constraints_allowed, Bool),
     )
     site_publications = map(
         site_port_names, values(accepted_site_fields)) do name, field
@@ -1379,6 +1418,17 @@ function _checkerboard_scientific_declaration(
         LocalMath.SourceOrigin(@__FILE__, @__LINE__;
             label = :checkerboard_scientific_evaluation),
     )
+    constraint_stage = LocalMath.Stage(
+        topology.source_space,
+        scientific_reads,
+        (publication(evaluation.constraints_allowed,
+            :constraints_allowed, Bool),),
+        LocalMath.Evaluator(
+            constraint_evaluator, (topology.mcs, topology.color)),
+        LocalMath.Control(; prefix = topology.batch_size),
+        LocalMath.SourceOrigin(@__FILE__, @__LINE__;
+            label = :checkerboard_constraint_evaluation),
+    )
     tracker_laws = tracker_stage === nothing ? () :
         (LocalMath.LocalLaw(tracker_stage),)
     contact_laws = contact === nothing ? () : (contact.law,)
@@ -1394,6 +1444,7 @@ function _checkerboard_scientific_declaration(
         contact_laws...,
         relationship_geometry_laws...,
         LocalMath.LocalLaw(scientific_stage),
+        LocalMath.LocalLaw(constraint_stage),
     )
     return merge(topology, (;
         law, terms, shape = checkerboard.shape,
@@ -1403,7 +1454,8 @@ function _checkerboard_scientific_declaration(
         evaluation, accepted_site_terms, accepted_site_fields,
         accepted_relationship_terms, accepted_relationship_fields,
         accepted_count = stage_plan.accepted_count,
-        scientific_evaluator, state_handles, state_fields,
+        scientific_evaluator, constraint_evaluator,
+        state_handles, state_fields,
         accepted_state_handles, accepted_state_fields,
         ownership_change_handles,
         proposal_site_relation, science_parameters, parameter_count, contact,

@@ -876,6 +876,12 @@ function _compile_proposal_terms(
     end)
 end
 
+_proposal_constraint_terms(terms::Tuple) = Tuple(
+    term for term in terms if term.role isa ProposalConstraintRole)
+
+_proposal_numeric_terms(terms::Tuple) = Tuple(
+    term for term in terms if !(term.role isa ProposalConstraintRole))
+
 @inline _execute_proposal_scalar(value::_ExecutableLiteral, context) =
     value.value
 @inline _execute_proposal_scalar(value::_ExecutableDefaultParameter, context) =
