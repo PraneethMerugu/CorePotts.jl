@@ -361,7 +361,7 @@ function enqueue_lifecycle_backend_index!(
             state.program.lifecycle_plan.descriptors,
             _lifecycle_effect_workspace(workspace, retire_plan),
             _lifecycle_effect_control(control);
-            ndrange = 1,
+            ndrange = length(workspace.request_index.records.slot),
         )
     end
     for plan_class in (

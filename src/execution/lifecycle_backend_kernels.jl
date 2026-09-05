@@ -82,43 +82,45 @@ end
 @kernel function _plan_lifecycle_retire_backend_kernel!(
         runtime, descriptors, workspace, control
     )
-    index = @index(Global, Linear)
-    if index == 1 && _lifecycle_backend_open(workspace) &&
-            _lifecycle_backend_due(control)
-        count = Int(@inbounds workspace.request_count[1])
-        for position in 1:count
-            request = Int(@inbounds workspace.request_slots[position])
-            @inbounds workspace.active[request] || continue
-            descriptor = @inbounds descriptors[Int(workspace.descriptor[request])]
-            descriptor.effect === RetireCellLifecycleEffect || continue
-            request_workspace = _lifecycle_workspace_with_status(
-                workspace,
-                _ProgramStatusSlot(
-                    control.candidate_status, Int32(request)
-                ),
-            )
-            anchor = @inbounds workspace.anchor[request]
-            reason = if !_lifecycle_request_generation_current(
-                    runtime, workspace, request
+    position = @index(Global, Linear)
+    if _lifecycle_backend_open(workspace) &&
+            _lifecycle_backend_due(control) &&
+            position <= Int(@inbounds workspace.request_count[1])
+        request = Int(@inbounds workspace.request_slots[position])
+        if @inbounds workspace.active[request]
+            descriptor = @inbounds descriptors[
+                Int(workspace.descriptor[request])
+            ]
+            if descriptor.effect === RetireCellLifecycleEffect
+                request_workspace = _lifecycle_workspace_with_status(
+                    workspace,
+                    _ProgramStatusSlot(
+                        control.candidate_status, Int32(request)
+                    ),
                 )
-                _set_lifecycle_status!(
+                anchor = @inbounds workspace.anchor[request]
+                reason = if !_lifecycle_request_generation_current(
+                        runtime, workspace, request
+                    )
+                    _set_lifecycle_status!(
+                        request_workspace,
+                        ProgramStatusStaleGeneration;
+                        anchor,
+                    )
+                    :status_failure
+                elseif _lifecycle_retire_volume(runtime, anchor) != 0
+                    :retire_nonempty
+                else
+                    :ok
+                end
+                _record_lifecycle_planning_reason!(
+                    workspace,
                     request_workspace,
-                    ProgramStatusStaleGeneration;
-                    anchor,
+                    request,
+                    descriptor,
+                    reason,
                 )
-                :status_failure
-            elseif _lifecycle_retire_volume(runtime, anchor) != 0
-                :retire_nonempty
-            else
-                :ok
             end
-            _record_lifecycle_planning_reason!(
-                workspace,
-                request_workspace,
-                request,
-                descriptor,
-                reason,
-            )
         end
     end
 end
