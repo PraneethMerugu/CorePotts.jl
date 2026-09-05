@@ -472,6 +472,7 @@ end
         declaration.evaluation.constraints_allowed =>
             storage.constraints_allowed;
         backend = KernelAbstractions.CPU())
+    @test isempty(LocalMath.inspect(prepared).stages[end].reads)
     wait(LocalMath.execute!(prepared; parameters = (
         mcs = Int64(1), color = Int32(1), attempt_round = Int32(1),
         batch_size)))
@@ -484,7 +485,7 @@ end
         @test storage.delta_h[item] == 0
         @test storage.drive_log_bias[item] == 0
         @test storage.kinetic_modifier[item] == 0
-        @test storage.constraints_allowed[item] == !storage.actionable[item]
+        @test !storage.constraints_allowed[item]
         @test storage.kinds[item] == (
             old_owner > 0 ? cell_kinds[old_owner] : Int16(0),
             new_owner > 0 ? cell_kinds[new_owner] : Int16(0),
@@ -502,7 +503,7 @@ end
     scientific = CorePotts._checkerboard_scientific_declaration(
         checkerboard, reshape(Int8[-1], 1, 1),
         UInt64(0x55), UInt32(0), UInt32(0),
-        _context_proposal_plan(), CorePotts.StageExecutionPlan(),
+        _context_proposal_plan(false), CorePotts.StageExecutionPlan(),
         _compiler_test_tracker_plan(), (),
         CorePotts.RelationshipStorage(()),
         CorePotts.RelationshipStorage(()), 0, 3, Float32)
@@ -568,7 +569,7 @@ end
     @test isbitstype(typeof(declaration.acceptance_evaluator))
     for item in Int32(1):batch_size
         expected = storage.actionable[item] ?
-            CorePotts._PROGRAM_CHECKERBOARD_ENERGY :
+            CorePotts._PROGRAM_CHECKERBOARD_CONSTRAINT :
             CorePotts._PROGRAM_CHECKERBOARD_NULL
         @test storage.disposition[item] == expected
         @test storage.failure_code[item] ==
