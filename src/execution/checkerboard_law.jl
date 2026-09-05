@@ -251,6 +251,8 @@ function _checkerboard_color_declaration(
     validation_laws = accepted_validation_stage === nothing ? () :
         (LocalMath.LocalLaw(accepted_validation_stage),)
     state_laws = (LocalMath.LocalLaw(accepted_state_stage),)
+    # Private shadows always begin as exact live-state snapshots. Only the
+    # fallible transformations and shadow-to-live commits are gate-controlled.
     state_initialization_laws = (
         _checkerboard_field_copy_law(accepted.ownership, ownership_scratch,
             nothing, :checkerboard_ownership_shadow_initialize),

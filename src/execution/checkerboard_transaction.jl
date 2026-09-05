@@ -615,6 +615,8 @@ _checkerboard_tracker_scratch(field::LocalMath.Field) =
 function _checkerboard_transactional_tracker_group(laws_builder,
         tracker_index, source_fields, paths, terminal_gate)
     fields = map(_checkerboard_tracker_scratch, source_fields)
+    # Snapshot live tracker values independently of transaction admission;
+    # mutation and publication remain controlled by the terminal gate.
     initialization_laws = Tuple(_checkerboard_field_copy_law(source, scratch,
             nothing, Symbol(:checkerboard_tracker_initialize_,
                 tracker_index, :_, index))
