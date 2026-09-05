@@ -251,10 +251,12 @@ function _checkerboard_color_declaration(
     validation_laws = accepted_validation_stage === nothing ? () :
         (LocalMath.LocalLaw(accepted_validation_stage),)
     state_laws = (LocalMath.LocalLaw(accepted_state_stage),)
+    # Private shadows always begin as exact live-state snapshots. Only the
+    # fallible transformations and shadow-to-live commits are gate-controlled.
     state_initialization_laws = (
         _checkerboard_field_copy_law(accepted.ownership, ownership_scratch,
-            terminal_gate, :checkerboard_ownership_shadow_initialize),
-        Tuple(_checkerboard_field_copy_law(source, scratch, terminal_gate,
+            nothing, :checkerboard_ownership_shadow_initialize),
+        Tuple(_checkerboard_field_copy_law(source, scratch, nothing,
                 Symbol(:checkerboard_state_shadow_initialize_, index))
             for (index, (source, scratch)) in enumerate(zip(
                 accepted.accepted_state_fields, state_scratch)))...,
@@ -268,7 +270,7 @@ function _checkerboard_color_declaration(
                 state_scratch, accepted.accepted_state_fields)))...,
     )
     report_initialization_law = _checkerboard_field_copy_law(
-        report, report_scratch, terminal_gate, :checkerboard_report_initialize)
+        report, report_scratch, nothing, :checkerboard_report_initialize)
     report_commit_law = _checkerboard_field_copy_law(
         report_scratch, report, terminal_gate, :checkerboard_report_commit)
     relationship_laws = map(group -> group.law, relationship_groups)
