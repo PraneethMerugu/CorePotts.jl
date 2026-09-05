@@ -86,9 +86,9 @@ end
         key,
         cell::Int32,
     )
-    cell <= 0 && return Int32(0)
     view = context.view
     runtime = view.runtime
+    cell <= 0 && return zero(eltype(program_tracker_values(runtime, key)))
     view isa BeforeProposalView && return _proposal_science_tracker_value(
         runtime, key, cell)
     return _proposal_science_tracker_value_after(
@@ -142,18 +142,43 @@ end
     center = arguments[4]
     resources = context.view.runtime.program.descriptor_plan.domain_resources
     start, count = _contact_domain_columns(resources, relation_handle)
-    block = state_block(context.view.runtime.descriptor_state, handle).values
-    outcome = LocalMath.evaluate_bounded(fold, count) do direction
-        column = start + direction - Int32(1)
-        neighbor = _neighbor_index(
-            context.view.runtime.program,
-            center,
-            resources.contact_offsets,
-            Int(column),
-        )
-        present = neighbor !== nothing
-        value = present ? state_value(context, handle, neighbor) : zero(eltype(block))
-        (; present, value)
+    outcome = if handle isa StateHandle
+        block = state_block(context.view.runtime.descriptor_state, handle).values
+        LocalMath.evaluate_bounded(fold, count) do direction
+            column = start + direction - Int32(1)
+            neighbor = _neighbor_index(
+                context.view.runtime.program,
+                center,
+                resources.contact_offsets,
+                Int(column),
+            )
+            present = neighbor !== nothing
+            value = present ? state_value(context, handle, neighbor) :
+                zero(eltype(block))
+            (; present, value)
+        end
+    else
+        handle isa Union{Val,QualifiedTrackerKey} || throw(ArgumentError(
+            "bounded fold source is neither state nor a tracker quantity"
+        ))
+        tracker_values = program_tracker_values(context.view.runtime, handle)
+        tracker_values isa AbstractVector || throw(ArgumentError(
+            "bounded tracker folds require dense scalar tracker storage"
+        ))
+        LocalMath.evaluate_bounded(fold, count) do direction
+            column = start + direction - Int32(1)
+            neighbor = _neighbor_index(
+                context.view.runtime.program,
+                center,
+                resources.contact_offsets,
+                Int(column),
+            )
+            present = neighbor !== nothing
+            owner = present ? _view_owner(context.view, neighbor) : Int32(0)
+            value = owner > 0 ? tracker_operation_value(context, handle, owner) :
+                zero(eltype(tracker_values))
+            (; present = present && owner > 0, value)
+        end
     end
     outcome.valid && return outcome.value
     value = outcome.value

@@ -422,6 +422,56 @@ end
 end
 
 @inline function apply_resource_operation(
+        ::ResourceOperation{:bounded_fold},
+        arguments,
+        context::_ProposalEvaluationContext,
+    )
+    fold, source, relation_value, center = arguments
+    relation_handle = Int32(relation_value)
+    resources = context.runtime.program.descriptor_plan.domain_resources
+    start, count = _contact_domain_columns(resources, relation_handle)
+    outcome = if source isa StateHandle
+        block = state_block(context.runtime.descriptor_state, source).values
+        LocalMath.evaluate_bounded(fold, count) do direction
+            neighbor = _neighbor_index(
+                context.runtime.program,
+                center,
+                resources.contact_offsets,
+                Int(start + direction - Int32(1)),
+            )
+            present = neighbor !== nothing
+            value = present ? state_value(context, source, neighbor) :
+                zero(eltype(block))
+            (; present, value)
+        end
+    else
+        source isa Union{Val,QualifiedTrackerKey} || throw(ArgumentError(
+            "bounded fold source is neither state nor a tracker quantity"
+        ))
+        values = program_tracker_values(context.runtime, source)
+        values isa AbstractVector || throw(ArgumentError(
+            "bounded tracker folds require dense scalar tracker storage"
+        ))
+        LocalMath.evaluate_bounded(fold, count) do direction
+            neighbor = _neighbor_index(
+                context.runtime.program,
+                center,
+                resources.contact_offsets,
+                Int(start + direction - Int32(1)),
+            )
+            present = neighbor !== nothing
+            owner = present ? @inbounds(context.runtime.ownership[neighbor]) :
+                Int32(0)
+            value = owner > 0 ? @inbounds(values[Int(owner)]) : zero(eltype(values))
+            (; present = present && owner > 0, value)
+        end
+    end
+    outcome.valid && return outcome.value
+    value = outcome.value
+    return value isa AbstractFloat ? oftype(value, NaN) : value
+end
+
+@inline function apply_resource_operation(
         ::ResourceOperation{:degree},
         arguments,
         context::_ProposalEvaluationContext,

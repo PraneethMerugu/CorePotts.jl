@@ -386,12 +386,80 @@ struct _CheckerboardCompiledRelationshipTransition{P,S}
     schema::S
 end
 
-struct _CheckerboardScalarTrackerEvaluator{N,D,R,S}
+struct _CheckerboardScalarTrackerEvaluator{N,D,R,S,A}
     descriptors::D
     contact_ranges::R
     shape::S
     owner_capacity::Int32
     first_column::Int32
+end
+
+"""A device-portable signed accumulator for tracker fields of at most 32 bits."""
+struct _TrackerWideInteger
+    low::UInt32
+    high::Int32
+end
+
+Base.zero(::Type{_TrackerWideInteger}) =
+    _TrackerWideInteger(UInt32(0), Int32(0))
+Base.convert(::Type{_TrackerWideInteger}, value::Signed) =
+    _TrackerWideInteger(reinterpret(UInt32, Int32(value)),
+        value < 0 ? Int32(-1) : Int32(0))
+Base.convert(::Type{_TrackerWideInteger}, value::Unsigned) =
+    _TrackerWideInteger(UInt32(value), Int32(0))
+function Base.:+(left::_TrackerWideInteger, right::_TrackerWideInteger)
+    low = left.low + right.low
+    carry = Int32(low < left.low)
+    return _TrackerWideInteger(low, left.high + right.high + carry)
+end
+function Base.:-(value::_TrackerWideInteger)
+    low = ~value.low + UInt32(1)
+    carry = Int32(iszero(low))
+    return _TrackerWideInteger(low, ~value.high + carry)
+end
+Base.convert(::Type{T}, value::_TrackerWideInteger) where {T<:Signed} =
+    convert(T, reinterpret(Int32, value.low))
+Base.convert(::Type{T}, value::_TrackerWideInteger) where {T<:Unsigned} =
+    convert(T, value.low)
+
+@inline function _tracker_wide_less(
+        left::_TrackerWideInteger, right::_TrackerWideInteger)
+    left.high == right.high || return left.high < right.high
+    return left.low < right.low
+end
+@inline _tracker_wide_in_storage_range(
+        value::_TrackerWideInteger, ::Type{T}) where {T<:Integer} =
+    !_tracker_wide_less(value, convert(_TrackerWideInteger, typemin(T))) &&
+    !_tracker_wide_less(convert(_TrackerWideInteger, typemax(T)), value)
+
+struct _CheckerboardTrackerValueDomain{T} end
+@inline (::_CheckerboardTrackerValueDomain{T})(
+    value::_TrackerWideInteger) where {T<:Integer} =
+    _tracker_wide_in_storage_range(value, T)
+@inline (::_CheckerboardTrackerValueDomain{T})(value) where {T<:Integer} =
+    typemin(T) <= value <= typemax(T)
+@inline (::_CheckerboardTrackerValueDomain{T})(value) where {T<:AbstractFloat} =
+    isfinite(value)
+@inline _checkerboard_tracker_validation_combine(accumulator, value) = accumulator
+@inline _checkerboard_tracker_validation_finish(accumulator, count) = accumulator
+@inline _checkerboard_tracker_reduce(left, right) = left + right
+@inline _negative_tracker_delta(::Type{T}, value) where {T} =
+    -convert(T, value)
+
+struct _CheckerboardTrackerValidationEvaluator{F}
+    fold::F
+end
+@inline function (evaluator::_CheckerboardTrackerValidationEvaluator)(
+        item::Int32, reads, parameters)
+    value = evaluator.fold(getfield(reads, 1))
+    return (validated = LocalMath.UniqueValue(value),)
+end
+
+struct _CheckerboardFieldConvertEvaluator{T} end
+@inline function (::_CheckerboardFieldConvertEvaluator{T})(
+        item::Int32, reads, parameters) where {T}
+    value = something(@inbounds getfield(reads, 1)[1].value)
+    return (value = LocalMath.UniqueValue(convert(T, value)),)
 end
 
 struct _CheckerboardMomentTrackerEvaluator{N,C,T,S}
@@ -442,7 +510,7 @@ end
         new_owner > 0 && (new_amount += neighbor_owner == new_owner ?
             Int32(-1) : Int32(1))
     end
-    return SourceTargetScalarDelta(old_amount, new_amount)
+    return OldNewOwnerScalarDelta(old_amount, new_amount)
 end
 
 @inline _checkerboard_scalar_tracker_delta(
@@ -460,8 +528,8 @@ end
 @inline _checkerboard_scalar_tracker_delta(
     descriptor::AbstractTrackerDescriptor, contact_sites, contact_owners,
     contact_ranges, target, old_owner, new_owner,
-) = tracker_proposal_delta(
-    descriptor, nothing, target[2], old_owner, new_owner)
+) = tracker_ownership_delta(
+    descriptor, target[2], old_owner, new_owner)
 
 @inline function _checkerboard_scalar_tracker_pair(
         delta::OwnerScalarDelta,
@@ -470,38 +538,42 @@ end
         column::Int32,
         owner_capacity::Int32,
         accepted::Bool,
-    )
+        ::Type{A},
+    ) where {A}
     offset = (column - Int32(1)) * owner_capacity
     return (
         _checkerboard_tracker_contribution(
-            offset + old_owner, -delta.amount, accepted && old_owner > 0),
+            offset + old_owner, _negative_tracker_delta(A, delta.amount),
+            accepted && old_owner > 0),
         _checkerboard_tracker_contribution(
-            offset + new_owner, delta.amount, accepted && new_owner > 0),
+            offset + new_owner, convert(A, delta.amount),
+            accepted && new_owner > 0),
     )
 end
 
 @inline function _checkerboard_scalar_tracker_pair(
-        delta::SourceTargetScalarDelta,
+        delta::OldNewOwnerScalarDelta,
         old_owner::Int32,
         new_owner::Int32,
         column::Int32,
         owner_capacity::Int32,
         accepted::Bool,
-    )
+        ::Type{A},
+    ) where {A}
     offset = (column - Int32(1)) * owner_capacity
     return (
         _checkerboard_tracker_contribution(
-            offset + old_owner, delta.old_amount,
+            offset + old_owner, convert(A, delta.old_amount),
             accepted && old_owner > 0),
         _checkerboard_tracker_contribution(
-            offset + new_owner, delta.new_amount,
+            offset + new_owner, convert(A, delta.new_amount),
             accepted && new_owner > 0),
     )
 end
 
 @inline _checkerboard_scalar_tracker_contributions(
     ::Tuple{}, contact_sites, contact_owners, contact_ranges, target,
-    old_owner, new_owner, column, owner_capacity, accepted,
+    old_owner, new_owner, column, owner_capacity, accepted, accumulator_type,
 ) = ()
 
 @inline function _checkerboard_scalar_tracker_contributions(
@@ -515,22 +587,24 @@ end
         column,
         owner_capacity,
         accepted,
+        accumulator_type,
     )
     delta = _checkerboard_scalar_tracker_delta(
         first(descriptors), contact_sites, contact_owners, contact_ranges,
         target, old_owner, new_owner)
     return (
         _checkerboard_scalar_tracker_pair(
-            delta, old_owner, new_owner, column, owner_capacity, accepted)...,
+            delta, old_owner, new_owner, column, owner_capacity, accepted,
+            accumulator_type)...,
         _checkerboard_scalar_tracker_contributions(
             Base.tail(descriptors), contact_sites, contact_owners,
             contact_ranges, target, old_owner, new_owner, column + Int32(1),
-            owner_capacity, accepted)...,
+            owner_capacity, accepted, accumulator_type)...,
     )
 end
 
-@inline function (evaluator::_CheckerboardScalarTrackerEvaluator{Name})(
-        item::Int32, reads, parameters) where {Name}
+@inline function (evaluator::_CheckerboardScalarTrackerEvaluator{Name,D,R,S,A})(
+        item::Int32, reads, parameters) where {Name,D,R,S,A}
     disposition = something(@inbounds getfield(reads, 1)[1].value)
     owners = something(@inbounds getfield(reads, 2)[1].value)
     sites = something(@inbounds getfield(reads, 3)[1].value)
@@ -544,7 +618,7 @@ end
         evaluator.contact_ranges,
         (sites[1], _checkerboard_cartesian_site(evaluator.shape, sites[1])),
         owners[1], owners[2],
-        evaluator.first_column, evaluator.owner_capacity, accepted)
+        evaluator.first_column, evaluator.owner_capacity, accepted, A)
     return NamedTuple{(Name,)}((contributions,))
 end
 
@@ -609,8 +683,52 @@ function _checkerboard_tracker_field(array::AbstractArray)
     return LocalMath.Field(LocalMath.Space(size(array)), eltype(array))
 end
 
-_checkerboard_tracker_scratch(field::LocalMath.Field) =
-    LocalMath.Field(field.space, eltype(field))
+function _checkerboard_tracker_accumulator_type(::Type{T}) where {T<:Integer}
+    sizeof(T) <= 4 || throw(ArgumentError(
+        "checkerboard integer tracker storage must be at most 32 bits so " *
+        "transactional accumulation can detect overflow"))
+    return _TrackerWideInteger
+end
+_checkerboard_tracker_accumulator_type(::Type{T}) where {T<:AbstractFloat} = T
+_checkerboard_tracker_scratch(field::LocalMath.Field) = LocalMath.Field(
+    field.space, _checkerboard_tracker_accumulator_type(eltype(field)))
+
+function _checkerboard_tracker_validation(
+        field::LocalMath.Field, ::Type{T}, tracker_index, field_index,
+    ) where {T}
+    source = LocalMath.Space(1)
+    relation = LocalMath.FixedRelation(
+        source => field.space; degree = length(field.space))
+    output = LocalMath.Field(source, eltype(field))
+    fold = LocalMath.bounded_fold(
+        identity, _checkerboard_tracker_validation_combine,
+        zero(eltype(field)), _checkerboard_tracker_validation_finish;
+        domain = LocalMath.Where(_CheckerboardTrackerValueDomain{T}()),
+        oninvalid = LocalMath.RejectInvalid(),
+        onempty = LocalMath.FillEmpty(zero(eltype(field))),
+        order = LocalMath.CanonicalLeftFold())
+    label = Symbol(:checkerboard_tracker_validate_, tracker_index, :_, field_index)
+    stage = LocalMath.Stage(
+        source,
+        (values = LocalMath.Access(field, relation),),
+        (LocalMath.Publication((LocalMath.FieldPublication(
+            output, LocalMath.IdentityRelation(source),
+            LocalMath.PublicationValue(:validated)),),
+            LocalMath.Unique(eltype(output))),),
+        LocalMath.Evaluator(_CheckerboardTrackerValidationEvaluator(fold)),
+        LocalMath.Control(),
+        LocalMath.SourceOrigin(@__FILE__, @__LINE__; label),
+    )
+    endpoints = reshape(
+        Int32.(1:length(field.space)), length(field.space), 1)
+    return (;
+        law = LocalMath.LocalLaw(stage),
+        bindings = (
+            relation => LocalMath.Allocate(endpoints),
+            output => LocalMath.Allocate(zero(eltype(output))),
+        ),
+    )
+end
 
 function _checkerboard_transactional_tracker_group(laws_builder,
         tracker_index, source_fields, paths, terminal_gate)
@@ -626,8 +744,16 @@ function _checkerboard_transactional_tracker_group(laws_builder,
                 tracker_index, :_, index))
         for (index, (source, scratch)) in enumerate(zip(source_fields, fields)))
     laws = laws_builder(fields)
+    validations = ntuple(length(fields)) do index
+        _checkerboard_tracker_validation(
+            fields[index], eltype(source_fields[index]), tracker_index, index)
+    end
     return (; tracker_index = Int32(tracker_index), source_fields, fields,
-        paths, initialization_laws, laws, commit_laws)
+        paths, initialization_laws, laws,
+        validation_laws = map(validation -> validation.law, validations),
+        validation_bindings = Tuple(pair for validation in validations
+            for pair in validation.bindings),
+        commit_laws)
 end
 
 function _checkerboard_scalar_tracker_laws(
@@ -651,7 +777,7 @@ function _checkerboard_scalar_tracker_laws(
         degree_bound = 2chunk_count, key_type = Int32)
     evaluator = _CheckerboardScalarTrackerEvaluator{
         name,typeof(chunk),typeof(accepted.contact_ranges),
-        typeof(accepted.shape)}(
+        typeof(accepted.shape),eltype(field)}(
             chunk, accepted.contact_ranges, accepted.shape,
             Int32(owner_capacity), Int32(first_column))
     stage = LocalMath.Stage(
@@ -659,7 +785,7 @@ function _checkerboard_scalar_tracker_laws(
         _checkerboard_tracker_reads(accepted, chunk),
         (LocalMath.Publication((LocalMath.FieldPublication(
             field, relation, LocalMath.PublicationValue(name)),),
-            LocalMath.Reduce(eltype(field), +;
+            LocalMath.Reduce(eltype(field), _checkerboard_tracker_reduce;
                 maximum = 2chunk_count,
                 seed = LocalMath.ExistingSeed(),
                 order = LocalMath.CanonicalLeftFold())),),
@@ -759,8 +885,8 @@ function _checkerboard_tracker_group(
     elseif tracker_storage(descriptor) isa DenseOwnerScalarStorage
         if !(descriptor isa Union{OwnershipCountTracker,CellSurfaceTracker})
             target_type = CartesianIndex{length(accepted.shape)}
-            hasmethod(tracker_proposal_delta, Tuple{
-                typeof(descriptor),Nothing,target_type,Int32,Int32}) || throw(
+            hasmethod(tracker_ownership_delta, Tuple{
+                typeof(descriptor),target_type,Int32,Int32}) || throw(
                 ArgumentError(
                     "custom checkerboard scalar tracker delta must be " *
                     "computable from its descriptor, target, and owners"))
@@ -883,10 +1009,11 @@ function _checkerboard_relationship_endpoint_accesses(accepted, term_fields)
         relation = LocalMath.IndexRelation(
             fields.endpoints => accepted.cell_space; optional = true)
         push!(names, Symbol(:relationship_, index, :_status))
-        push!(accesses, LocalMath.Access(accepted.cell_kinds, relation))
+        push!(accesses, LocalMath.Access(
+            accepted.cell_kinds, relation; required = false))
         push!(names, Symbol(:relationship_, index, :_generations))
         push!(accesses, LocalMath.Access(
-            accepted.cell_generations, relation))
+            accepted.cell_generations, relation; required = false))
     end
     return NamedTuple{Tuple(names)}(Tuple(accesses))
 end
@@ -1292,17 +1419,20 @@ end
 
 function _checkerboard_field_copy_law(source::LocalMath.Field,
         destination::LocalMath.Field, gate, label::Symbol)
-    source.space == destination.space && eltype(source) === eltype(destination) ||
+    source.space == destination.space ||
         throw(ArgumentError(
-            "checkerboard transactional field copies require identical schemas"))
+            "checkerboard transactional field copies require identical spaces"))
     identity = LocalMath.IdentityRelation(source.space)
+    evaluator = eltype(source) === eltype(destination) ?
+        _ProgramStateCopyEvaluator() :
+        _CheckerboardFieldConvertEvaluator{eltype(destination)}()
     stage = LocalMath.Stage(
         source.space,
         (source = LocalMath.Access(source, identity; required = true),),
         (LocalMath.Publication((LocalMath.FieldPublication(
             destination, identity, LocalMath.PublicationValue(:value)),),
             LocalMath.Unique(eltype(destination))),),
-        LocalMath.Evaluator(_ProgramStateCopyEvaluator()),
+        LocalMath.Evaluator(evaluator),
         gate === nothing ? LocalMath.Control() : LocalMath.Control(; gate),
         LocalMath.SourceOrigin(@__FILE__, @__LINE__; label),
     )

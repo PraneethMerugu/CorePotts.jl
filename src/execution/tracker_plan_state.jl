@@ -190,17 +190,15 @@ function tracker_recompute(
     return CellMomentsState(expected_first, expected_second)
 end
 
-@inline tracker_proposal_delta(
+@inline tracker_ownership_delta(
     ::OwnershipCountTracker,
-    source::TrackerSourceView,
     target,
     old_owner::Int32,
     new_owner::Int32,
 ) = OwnerScalarDelta(Int32(1))
 
-@inline function tracker_proposal_delta(
+@inline function tracker_ownership_delta(
         ::CellMomentsTracker{N, T},
-        source::TrackerSourceView,
         target::CartesianIndex{N},
         old_owner::Int32,
         new_owner::Int32,
@@ -217,14 +215,14 @@ end
 end
 
 
-@inline function tracker_proposal_delta(
+@inline function _source_dependent_tracker_ownership_delta(
         descriptor::CellSurfaceTracker,
         source::TrackerSourceView,
         target,
         old_owner::Int32,
         new_owner::Int32,
     )
-    old_owner == new_owner && return SourceTargetScalarDelta(Int32(0), Int32(0))
+    old_owner == new_owner && return OldNewOwnerScalarDelta(Int32(0), Int32(0))
     old_amount = Int32(0)
     new_amount = Int32(0)
     for direction in 1:Int(descriptor.maximum_neighbors)
@@ -240,8 +238,16 @@ end
         new_owner > 0 && (new_amount += neighbor_owner == new_owner ?
             Int32(-1) : Int32(1))
     end
-    return SourceTargetScalarDelta(old_amount, new_amount)
+    return OldNewOwnerScalarDelta(old_amount, new_amount)
 end
+
+@inline _source_dependent_tracker_ownership_delta(
+    descriptor::AbstractTrackerDescriptor,
+    source::TrackerSourceView,
+    target,
+    old_owner::Int32,
+    new_owner::Int32,
+) = tracker_ownership_delta(descriptor, target, old_owner, new_owner)
 
 function _validate_tracker_state(
         ::DenseOwnerScalarStorage{T}, values, cell_count
@@ -290,7 +296,7 @@ end
 @inline function _apply_tracker_delta!(
         values::AbstractVector{T},
         ::DenseOwnerScalarStorage{T},
-        delta::SourceTargetScalarDelta{T},
+        delta::OldNewOwnerScalarDelta{T},
         old_owner::Int32,
         new_owner::Int32,
     ) where {T}

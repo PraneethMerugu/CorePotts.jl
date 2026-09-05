@@ -179,7 +179,8 @@ function _checkerboard_proposal_topology_declaration(
     owner_stage = LocalMath.Stage(
         geometry.source_space,
         (
-            ownership = LocalMath.Access(ownership, owner_relation),
+            ownership = LocalMath.Access(
+                ownership, owner_relation; required = false),
             raw_priority = LocalMath.Access(
                 geometry.priority, geometry.identity; required = true),
         ),
@@ -315,7 +316,7 @@ end
 end
 
 struct _CheckerboardProposalContextPlan{
-        N,Handles,Ranges,TrackerDescriptors,MomentDescriptor,
+        N,Handles,Ranges,TrackerDescriptors,BoundedTrackerDescriptors,MomentDescriptor,
         RelationshipSchemas,
     }
     shape::NTuple{N,Int}
@@ -323,6 +324,7 @@ struct _CheckerboardProposalContextPlan{
     state_handles::Handles
     contact_ranges::Ranges
     tracker_descriptors::TrackerDescriptors
+    bounded_tracker_descriptors::BoundedTrackerDescriptors
     moment_descriptor::MomentDescriptor
     relationship_schemas::RelationshipSchemas
 end
@@ -624,7 +626,7 @@ function _checkerboard_relationship_science_declarations(
         edge_stage = LocalMath.Stage(
             source_space,
             (incident_edges = LocalMath.Access(
-                bank_fields.incident_edges, incidence),),
+                bank_fields.incident_edges, incidence; required = false),),
             (LocalMath.Publication((LocalMath.FieldPublication(
                 edge_keys, LocalMath.IdentityRelation(source_space),
                 LocalMath.PublicationValue(:edge_keys)),),
@@ -638,8 +640,10 @@ function _checkerboard_relationship_science_declarations(
         )
         endpoint_stage = LocalMath.Stage(
             source_space,
-            (endpoint_a = LocalMath.Access(fields.endpoint_a, edge_relation),
-             endpoint_b = LocalMath.Access(fields.endpoint_b, edge_relation)),
+            (endpoint_a = LocalMath.Access(
+                 fields.endpoint_a, edge_relation; required = false),
+             endpoint_b = LocalMath.Access(
+                 fields.endpoint_b, edge_relation; required = false)),
             (LocalMath.Publication((LocalMath.FieldPublication(
                 endpoint_keys, LocalMath.IdentityRelation(source_space),
                 LocalMath.PublicationValue(:endpoint_keys)),),
@@ -673,24 +677,30 @@ function _checkerboard_relationship_science_reads(declarations::Tuple)
         prefix = Symbol(:proposal_relationship_, ordinal)
         push!(names, Symbol(prefix, :_active))
         push!(reads, LocalMath.Access(
-            declaration.fields.active, declaration.edge_relation))
+            declaration.fields.active, declaration.edge_relation;
+            required = false))
         push!(names, Symbol(prefix, :_endpoint_a))
         push!(reads, LocalMath.Access(
-            declaration.fields.endpoint_a, declaration.edge_relation))
+            declaration.fields.endpoint_a, declaration.edge_relation;
+            required = false))
         push!(names, Symbol(prefix, :_endpoint_b))
         push!(reads, LocalMath.Access(
-            declaration.fields.endpoint_b, declaration.edge_relation))
+            declaration.fields.endpoint_b, declaration.edge_relation;
+            required = false))
         for (payload_index, field) in enumerate(declaration.fields.payload)
             push!(names, Symbol(prefix, :_payload_, payload_index))
-            push!(reads, LocalMath.Access(field, declaration.edge_relation))
+            push!(reads, LocalMath.Access(
+                field, declaration.edge_relation; required = false))
         end
         push!(names, Symbol(prefix, :_endpoint_volumes))
         push!(reads, LocalMath.Access(
-            declaration.cell_volumes, declaration.endpoint_relation))
+            declaration.cell_volumes, declaration.endpoint_relation;
+            required = false))
         for (moment_index, field) in enumerate(
                 declaration.moment_source_fields)
             push!(names, Symbol(prefix, :_endpoint_moment_, moment_index))
-            push!(reads, LocalMath.Access(field, declaration.endpoint_relation))
+            push!(reads, LocalMath.Access(
+                field, declaration.endpoint_relation; required = false))
         end
     end
     return NamedTuple{Tuple(names)}(Tuple(reads))
@@ -865,6 +875,12 @@ end
         for index in 1:Count)...)
 end
 
+@generated function _checkerboard_scientific_tracker_gathers(
+        reads, ::Val{Count}, ::Val{Offset}) where {Count,Offset}
+    return Expr(:tuple, (
+        :(getfield(reads, $(Offset + index))) for index in 1:Count)...)
+end
+
 @generated function _checkerboard_scientific_moment_values(
         reads, ::Val{Count}, ::Val{Offset}, ::Type{T}) where {Count,Offset,T}
     return Expr(:tuple, (
@@ -948,11 +964,17 @@ end
         Val(6 + (HasParameters ? 1 : 0) + (iszero(Degree) ? 0 : 6)))
     tracker_offset = 6 + (HasParameters ? 1 : 0) +
         (iszero(Degree) ? 0 : 6)
+    bounded_tracker_count = iszero(Degree) ? 0 :
+        length(plan.bounded_tracker_descriptors)
+    bounded_tracker_samples = _checkerboard_scientific_tracker_gathers(
+        reads, Val(bounded_tracker_count),
+        Val(tracker_offset + length(plan.tracker_descriptors)))
     moment_first, moment_second = _checkerboard_scientific_moments(
         reads, plan.moment_descriptor,
-        Val(tracker_offset + length(plan.tracker_descriptors)))
+        Val(tracker_offset + length(plan.tracker_descriptors) +
+            bounded_tracker_count))
     relationship_offset = tracker_offset +
-        length(plan.tracker_descriptors) +
+        length(plan.tracker_descriptors) + bounded_tracker_count +
         _checkerboard_moment_component_count(plan.moment_descriptor)
     relationship_resources = _checkerboard_scientific_relationships(
         reads, plan.relationship_schemas, plan.moment_descriptor,
@@ -961,6 +983,7 @@ end
         reads, Val(length(plan.state_handles)),
         Val(6 + (HasParameters ? 1 : 0) + (iszero(Degree) ? 0 : 6) +
             length(plan.tracker_descriptors) +
+            bounded_tracker_count +
             _checkerboard_moment_component_count(
                 plan.moment_descriptor) +
             _checkerboard_relationship_read_count(
@@ -993,7 +1016,8 @@ end
         reverse_contact_owners,
         reverse_contact_kinds,
         plan.contact_ranges,
-        tracker_values, plan.tracker_descriptors,
+        tracker_values, bounded_tracker_samples, plan.tracker_descriptors,
+        plan.bounded_tracker_descriptors,
         moment_first, moment_second, plan.moment_descriptor,
         relationship_resources,
     )
@@ -1087,16 +1111,21 @@ function _checkerboard_scientific_declaration(
     volumes = LocalMath.Field(topology.source_space, NTuple{2,Int32})
     tracker_keys = requirements.tracker_keys
     tracker_descriptors = requirements.tracker_descriptors
+    bounded_tracker_descriptors = requirements.bounded_tracker_descriptors
     moment_descriptor = requirements.moment_descriptor
     tracker_source_fields = map(tracker_descriptors) do descriptor
-        LocalMath.Field(cell_space,
-            _tracker_storage_eltype(tracker_storage(descriptor)))
+        descriptor isa OwnershipCountTracker ? cell_volumes :
+            LocalMath.Field(cell_space,
+                _tracker_storage_eltype(tracker_storage(descriptor)))
     end
     tracker_pair_fields = map(tracker_source_fields) do field
         LocalMath.Field(topology.source_space, NTuple{2,eltype(field)})
     end
     tracker_names = ntuple(
         index -> Symbol(:proposal_tracker_, index), length(tracker_pair_fields))
+    bounded_tracker_names = ntuple(
+        index -> Symbol(:proposal_bounded_tracker_, index),
+        length(bounded_tracker_descriptors))
     moment_source_fields = if moment_descriptor === nothing
         ()
     else
@@ -1203,7 +1232,8 @@ function _checkerboard_scientific_declaration(
             reverse_contact_owners => cell_space; optional = true)
         owner_stage = LocalMath.Stage(
             topology.source_space,
-            (ownership = LocalMath.Access(topology.ownership, relation),),
+            (ownership = LocalMath.Access(
+                topology.ownership, relation; required = false),),
             (
                 publication(contact_owners, :contact_owners,
                     NTuple{contact_degree,Int32}),
@@ -1219,7 +1249,7 @@ function _checkerboard_scientific_declaration(
         reverse_owner_stage = LocalMath.Stage(
             topology.source_space,
             (ownership = LocalMath.Access(
-                topology.ownership, reverse_relation),),
+                topology.ownership, reverse_relation; required = false),),
             (
                 publication(reverse_contact_sites, :reverse_contact_sites,
                     NTuple{contact_degree,Int32}),
@@ -1234,7 +1264,8 @@ function _checkerboard_scientific_declaration(
         )
         kind_stage = LocalMath.Stage(
             topology.source_space,
-            (cell_kinds = LocalMath.Access(cell_kinds, kind_selection),),
+            (cell_kinds = LocalMath.Access(
+                cell_kinds, kind_selection; required = false),),
             (publication(contact_kinds, :contact_kinds,
                 NTuple{contact_degree,Int16}),),
             LocalMath.Evaluator(
@@ -1246,7 +1277,7 @@ function _checkerboard_scientific_declaration(
         reverse_kind_stage = LocalMath.Stage(
             topology.source_space,
             (cell_kinds = LocalMath.Access(
-                cell_kinds, reverse_kind_selection),),
+                cell_kinds, reverse_kind_selection; required = false),),
             (publication(reverse_contact_kinds, :reverse_contact_kinds,
                 NTuple{contact_degree,Int16}),),
             LocalMath.Evaluator(
@@ -1268,16 +1299,16 @@ function _checkerboard_scientific_declaration(
                 LocalMath.LocalLaw(reverse_kind_stage)))
     end
     state_accesses = map(state_fields) do field
-        LocalMath.Access(field, proposal_site_relation)
+        LocalMath.Access(field, proposal_site_relation; required = false)
     end
     contact_state_accesses = contact === nothing ? () : map(state_fields) do field
-        LocalMath.Access(field, contact.relation)
+        LocalMath.Access(field, contact.relation; required = false)
     end
     reverse_contact_state_accesses = contact === nothing ? () : map(state_fields) do field
-        LocalMath.Access(field, contact.reverse_relation)
+        LocalMath.Access(field, contact.reverse_relation; required = false)
     end
     affected_contact_state_accesses = contact === nothing ? () : map(state_fields) do field
-        LocalMath.Access(field, contact.affected_relation)
+        LocalMath.Access(field, contact.affected_relation; required = false)
     end
     state_names = ntuple(
         index -> Symbol(:proposal_state_, index), length(state_fields))
@@ -1290,8 +1321,10 @@ function _checkerboard_scientific_declaration(
     cell_resource_stage = LocalMath.Stage(
         topology.source_space,
         (
-            cell_kinds = LocalMath.Access(cell_kinds, kind_relation),
-            cell_volumes = LocalMath.Access(cell_volumes, kind_relation),
+            cell_kinds = LocalMath.Access(
+                cell_kinds, kind_relation; required = false),
+            cell_volumes = LocalMath.Access(
+                cell_volumes, kind_relation; required = false),
         ),
         (
             publication(kinds, :kinds, NTuple{2,Int16}),
@@ -1306,7 +1339,8 @@ function _checkerboard_scientific_declaration(
         nothing
     else
         tracker_accesses = NamedTuple{tracker_names}(map(
-            field -> LocalMath.Access(field, kind_relation),
+            field -> LocalMath.Access(
+                field, kind_relation; required = false),
             tracker_source_fields))
         tracker_publications = map(
             tracker_pair_fields, tracker_names) do field, name
@@ -1333,6 +1367,7 @@ function _checkerboard_scientific_declaration(
         state_handles,
         contact_ranges,
         tracker_descriptors,
+        bounded_tracker_descriptors,
         moment_descriptor,
         relationship_schemas_compiled,
     )
@@ -1388,18 +1423,30 @@ function _checkerboard_scientific_declaration(
         field -> LocalMath.Access(
             field, topology.identity; required = true),
         tracker_pair_fields))
+    bounded_tracker_source_fields = map(bounded_tracker_descriptors) do descriptor
+        index = findfirst(==(descriptor), tracker_descriptors)
+        index === nothing && error("bounded tracker was not inventoried")
+        tracker_source_fields[index]
+    end
+    bounded_tracker_reads = contact === nothing ? NamedTuple() :
+        NamedTuple{bounded_tracker_names}(map(
+            field -> LocalMath.Access(
+                field, contact.kind_selection; required = false),
+            bounded_tracker_source_fields))
     moment_reads = NamedTuple{moment_names}(map(
-        field -> LocalMath.Access(field, kind_relation),
+        field -> LocalMath.Access(field, kind_relation; required = false),
         moment_source_fields))
     relationship_reads = _checkerboard_relationship_science_reads(
         relationship_science)
     scientific_reads = NamedTuple{(
         keys(base_reads)..., keys(contact_reads)..., keys(tracker_reads)...,
-        keys(moment_reads)..., keys(relationship_reads)...,
+        keys(bounded_tracker_reads)..., keys(moment_reads)...,
+        keys(relationship_reads)...,
         state_names..., contact_state_names..., reverse_contact_state_names...,
         affected_contact_state_names...)}((
             values(base_reads)..., values(contact_reads)...,
-            values(tracker_reads)..., values(moment_reads)...,
+            values(tracker_reads)..., values(bounded_tracker_reads)...,
+            values(moment_reads)...,
             values(relationship_reads)...,
             state_accesses..., contact_state_accesses...,
             reverse_contact_state_accesses...,

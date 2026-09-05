@@ -7,9 +7,150 @@
     return destination
 end
 
-@inline _commit_tracker_updates!(
+@inline _validate_tracker_updates(
     ::Tuple{}, ::Tuple{}, source, target, old_owner, new_owner
 ) = nothing
+
+@inline function _validate_owner_index(values, owner::Int32)
+    owner <= 0 && return nothing
+    owner <= size(values, ndims(values)) || throw(BoundsError(values, owner))
+    return nothing
+end
+
+@inline _checked_tracker_add(value::T, delta::T) where {T<:Integer} =
+    Base.Checked.checked_add(value, delta)
+@inline _checked_tracker_sub(value::T, delta::T) where {T<:Integer} =
+    Base.Checked.checked_sub(value, delta)
+@inline function _checked_tracker_add(value::T, delta::T) where {T<:AbstractFloat}
+    result = value + delta
+    isfinite(value) && isfinite(delta) && isfinite(result) || throw(
+        ArgumentError("tracker ownership update produced a nonfinite value"))
+    return result
+end
+@inline function _checked_tracker_sub(value::T, delta::T) where {T<:AbstractFloat}
+    result = value - delta
+    isfinite(value) && isfinite(delta) && isfinite(result) || throw(
+        ArgumentError("tracker ownership update produced a nonfinite value"))
+    return result
+end
+
+@inline function _validate_scalar_delta(values, delta::OwnerScalarDelta,
+        old_owner::Int32, new_owner::Int32)
+    if old_owner > 0
+        value = @inbounds values[Int(old_owner)]
+        value = _checked_tracker_sub(value, delta.amount)
+        if old_owner == new_owner
+            _checked_tracker_add(value, delta.amount)
+            return nothing
+        end
+    end
+    new_owner > 0 &&
+        _checked_tracker_add(@inbounds(values[Int(new_owner)]), delta.amount)
+    return nothing
+end
+
+@inline function _validate_scalar_delta(values, delta::OldNewOwnerScalarDelta,
+        old_owner::Int32, new_owner::Int32)
+    if old_owner > 0
+        value = @inbounds values[Int(old_owner)]
+        value = _checked_tracker_add(value, delta.old_amount)
+        if old_owner == new_owner
+            _checked_tracker_add(value, delta.new_amount)
+            return nothing
+        end
+    end
+    new_owner > 0 &&
+        _checked_tracker_add(@inbounds(values[Int(new_owner)]), delta.new_amount)
+    return nothing
+end
+
+@inline function _validate_tracker_delta(
+        values::AbstractVector{T},
+        ::DenseOwnerScalarStorage{T},
+        delta::Union{OwnerScalarDelta{T},OldNewOwnerScalarDelta{T}},
+        old_owner::Int32,
+        new_owner::Int32,
+    ) where {T}
+    _validate_owner_index(values, old_owner)
+    _validate_owner_index(values, new_owner)
+    _validate_scalar_delta(values, delta, old_owner, new_owner)
+    return nothing
+end
+
+@inline function _validate_tracker_delta(
+        state::CellMomentsState{T},
+        ::DenseOwnerMomentsStorage{N,T},
+        delta::OwnerMomentsDelta,
+        old_owner::Int32,
+        new_owner::Int32,
+    ) where {N,T}
+    length(delta.first) == N && length(delta.second) == N * N || throw(
+        ArgumentError("tracker ownership delta violates its bounded moments contract")
+    )
+    all(value -> value isa T, delta.first) &&
+        all(value -> value isa T, delta.second) || throw(ArgumentError(
+            "tracker ownership delta element types differ from tracker storage"
+        ))
+    _validate_owner_index(state.first, old_owner)
+    _validate_owner_index(state.first, new_owner)
+    for (values, delta_values) in zip(
+            (state.first, state.second), (delta.first, delta.second))
+        for row in eachindex(delta_values)
+            component = delta_values[row]
+            if old_owner > 0
+                value = _checked_tracker_sub(
+                    @inbounds(values[row, Int(old_owner)]), component)
+                if old_owner == new_owner
+                    _checked_tracker_add(value, component)
+                    continue
+                end
+            end
+            new_owner > 0 && _checked_tracker_add(
+                @inbounds(values[row, Int(new_owner)]), component)
+        end
+    end
+    return nothing
+end
+
+@inline function _validate_tracker_delta(
+        values,
+        storage,
+        delta,
+        old_owner::Int32,
+        new_owner::Int32,
+    )
+    throw(ArgumentError(
+        "tracker ownership delta does not satisfy its storage contract"
+    ))
+end
+
+@inline function _validate_group_tracker_delta(
+        values::AbstractMatrix{T},
+        column::Int,
+        delta::Union{OwnerScalarDelta{T},OldNewOwnerScalarDelta{T}},
+        old_owner::Int32,
+        new_owner::Int32,
+    ) where {T}
+    1 <= column <= size(values, 2) || throw(BoundsError(values, (:, column)))
+    old_owner <= 0 || old_owner <= size(values, 1) ||
+        throw(BoundsError(values, (old_owner, column)))
+    new_owner <= 0 || new_owner <= size(values, 1) ||
+        throw(BoundsError(values, (new_owner, column)))
+    _validate_scalar_delta(view(values, :, column), delta, old_owner, new_owner)
+    return nothing
+end
+
+@inline function _validate_group_tracker_delta(
+        values,
+        column::Int,
+        delta,
+        old_owner::Int32,
+        new_owner::Int32,
+    )
+    throw(ArgumentError(
+        "grouped tracker ownership delta does not satisfy its storage contract"
+    ))
+end
 
 @inline function _apply_group_tracker_delta!(
         values,
@@ -23,10 +164,59 @@ end
     return nothing
 end
 
+@inline function _apply_validated_tracker_delta!(
+        values::AbstractVector{T},
+        delta::OwnerScalarDelta{T},
+        old_owner::Int32,
+        new_owner::Int32,
+    ) where {T}
+    old_owner > 0 && (@inbounds values[Int(old_owner)] -= delta.amount)
+    new_owner > 0 && (@inbounds values[Int(new_owner)] += delta.amount)
+    return nothing
+end
+
+@inline function _apply_validated_tracker_delta!(
+        values::AbstractVector{T},
+        delta::OldNewOwnerScalarDelta{T},
+        old_owner::Int32,
+        new_owner::Int32,
+    ) where {T}
+    old_owner > 0 &&
+        (@inbounds values[Int(old_owner)] += delta.old_amount)
+    new_owner > 0 &&
+        (@inbounds values[Int(new_owner)] += delta.new_amount)
+    return nothing
+end
+
+@inline function _apply_validated_tracker_delta!(
+        state::CellMomentsState{T},
+        delta::OwnerMomentsDelta,
+        old_owner::Int32,
+        new_owner::Int32,
+    ) where {T}
+    dimensions = length(delta.first)
+    for row in 1:dimensions
+        coordinate = delta.first[row]
+        old_owner > 0 &&
+            (@inbounds state.first[row, Int(old_owner)] -= coordinate)
+        new_owner > 0 &&
+            (@inbounds state.first[row, Int(new_owner)] += coordinate)
+        for column in 1:dimensions
+            slot = row + (column - 1) * dimensions
+            product = delta.second[slot]
+            old_owner > 0 &&
+                (@inbounds state.second[slot, Int(old_owner)] -= product)
+            new_owner > 0 &&
+                (@inbounds state.second[slot, Int(new_owner)] += product)
+        end
+    end
+    return nothing
+end
+
 @inline function _apply_group_tracker_delta!(
         values,
         column::Int,
-        delta::SourceTargetScalarDelta,
+        delta::OldNewOwnerScalarDelta,
         old_owner::Int32,
         new_owner::Int32,
     )
@@ -37,7 +227,7 @@ end
     return nothing
 end
 
-@inline function _commit_tracker_updates!(
+@inline function _validate_tracker_updates(
         descriptors::Tuple{G, Vararg},
         values::Tuple,
         source,
@@ -49,14 +239,14 @@ end
     group_values = first(values)
     for index in eachindex(group.descriptors)
         descriptor = @inbounds group.descriptors[index]
-        delta = tracker_proposal_delta(
+        delta = _source_dependent_tracker_ownership_delta(
             descriptor, source, target, old_owner, new_owner
         )
-        _apply_group_tracker_delta!(
+        _validate_group_tracker_delta(
             group_values, index, delta, old_owner, new_owner
         )
     end
-    return _commit_tracker_updates!(
+    return _validate_tracker_updates(
         Base.tail(descriptors),
         Base.tail(values),
         source,
@@ -66,7 +256,7 @@ end
     )
 end
 
-@inline function _commit_tracker_updates!(
+@inline function _validate_tracker_updates(
         descriptors::Tuple,
         values::Tuple,
         source,
@@ -76,25 +266,76 @@ end
     )
     descriptor = first(descriptors)
     contract = tracker_contract(descriptor)
-    contract.update_bound isa SourceTargetOwnerUpdateBound || throw(
+    contract.update_bound isa OldNewOwnerUpdateBound || throw(
         ArgumentError("unsupported tracker update bound")
     )
-    delta = tracker_proposal_delta(
+    delta = _source_dependent_tracker_ownership_delta(
         descriptor, source, target, old_owner, new_owner
     )
     delta isa AbstractTrackerDelta || throw(ArgumentError(
-        "tracker proposal delta must satisfy the closed delta protocol"
+        "tracker ownership delta must satisfy the closed delta protocol"
     ))
-    _apply_tracker_delta!(
+    _validate_tracker_delta(
         first(values), contract.storage, delta, old_owner, new_owner
     )
-    return _commit_tracker_updates!(
+    return _validate_tracker_updates(
         Base.tail(descriptors),
         Base.tail(values),
         source,
         target,
         old_owner,
         new_owner,
+    )
+end
+
+@inline _apply_tracker_updates!(
+    ::Tuple{}, ::Tuple{}, source, target, old_owner, new_owner
+) = nothing
+
+@inline function _apply_tracker_updates!(
+        descriptors::Tuple{G, Vararg},
+        values::Tuple,
+        source,
+        target,
+        old_owner,
+        new_owner,
+    ) where {G <: DenseScalarTrackerGroup}
+    group = first(descriptors)
+    group_values = first(values)
+    for index in eachindex(group.descriptors)
+        descriptor = @inbounds group.descriptors[index]
+        delta = _source_dependent_tracker_ownership_delta(
+            descriptor, source, target, old_owner, new_owner
+        )
+        _apply_group_tracker_delta!(
+            group_values, index, delta, old_owner, new_owner
+        )
+    end
+    return _apply_tracker_updates!(
+        Base.tail(descriptors), Base.tail(values), source, target,
+        old_owner, new_owner,
+    )
+end
+
+
+@inline function _apply_tracker_updates!(
+        descriptors::Tuple,
+        values::Tuple,
+        source,
+        target,
+        old_owner,
+        new_owner,
+    )
+    descriptor = first(descriptors)
+    delta = _source_dependent_tracker_ownership_delta(
+        descriptor, source, target, old_owner, new_owner
+    )
+    _apply_validated_tracker_delta!(
+        first(values), delta, old_owner, new_owner
+    )
+    return _apply_tracker_updates!(
+        Base.tail(descriptors), Base.tail(values), source, target,
+        old_owner, new_owner,
     )
 end
 
@@ -106,7 +347,10 @@ end
         old_owner::Int32,
         new_owner::Int32,
     )
-    _commit_tracker_updates!(
+    _validate_tracker_updates(
+        plan.descriptors, state.values, source, target, old_owner, new_owner
+    )
+    _apply_tracker_updates!(
         plan.descriptors, state.values, source, target, old_owner, new_owner
     )
     return nothing
@@ -127,7 +371,7 @@ end
 
 @inline function _scalar_value_after(
         value,
-        delta::SourceTargetScalarDelta,
+        delta::OldNewOwnerScalarDelta,
         owner::Int32,
         old_owner::Int32,
         new_owner::Int32,
@@ -151,7 +395,7 @@ end
     if isequal(tracker_quantity(descriptor), quantity)
         owner <= 0 && return zero(eltype(first(values)))
         value = @inbounds first(values)[Int(owner)]
-        delta = tracker_proposal_delta(
+        delta = _source_dependent_tracker_ownership_delta(
             descriptor, source, target, old_owner, new_owner
         )
         return _scalar_value_after(
@@ -234,7 +478,7 @@ end
                     key.source_handle == source_handle
                 owner <= 0 && return zero(eltype(values[$index]))
                 value = @inbounds values[$index][Int(owner)]
-                delta = tracker_proposal_delta(
+                delta = _source_dependent_tracker_ownership_delta(
                     descriptors[$index],
                     source,
                     target,
@@ -257,7 +501,7 @@ end
                 if @inbounds(group.source_handles[column]) == source_handle
                     owner <= 0 && return zero(eltype(group_values))
                     value = @inbounds group_values[Int(owner), column]
-                    delta = tracker_proposal_delta(
+                    delta = _source_dependent_tracker_ownership_delta(
                         descriptor,
                         source,
                         target,

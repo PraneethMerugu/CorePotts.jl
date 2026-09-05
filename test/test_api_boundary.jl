@@ -65,17 +65,17 @@
             :OwnershipTrackerSource,
             :AcceptedCommitTrackerVisibility,
             :ClaimedOwnerExclusiveTrackerConcurrency,
-            :SourceTargetOwnerUpdateBound,
+            :OldNewOwnerUpdateBound,
             :PersistTrackerCheckpoint,
             :ReconstructTrackerCheckpoint,
             :TrackerSupport,
             :ConstantTrackerCost,
             :LatticeLinearTrackerCost,
             :OwnerScalarDelta,
-            :SourceTargetScalarDelta,
+            :OldNewOwnerScalarDelta,
             :tracker_rebuild,
             :tracker_recompute,
-            :tracker_proposal_delta,
+            :tracker_ownership_delta,
         )) do name
         Base.ispublic(CorePotts.CompilerSPI, name)
     end
