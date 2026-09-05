@@ -472,6 +472,7 @@ end
         declaration.evaluation.constraints_allowed =>
             storage.constraints_allowed;
         backend = KernelAbstractions.CPU())
+    @test isempty(LocalMath.inspect(prepared).stages[end].reads)
     wait(LocalMath.execute!(prepared; parameters = (
         mcs = Int64(1), color = Int32(1), attempt_round = Int32(1),
         batch_size)))
@@ -484,7 +485,7 @@ end
         @test storage.delta_h[item] == 0
         @test storage.drive_log_bias[item] == 0
         @test storage.kinetic_modifier[item] == 0
-        @test storage.constraints_allowed[item] == !storage.actionable[item]
+        @test !storage.constraints_allowed[item]
         @test storage.kinds[item] == (
             old_owner > 0 ? cell_kinds[old_owner] : Int16(0),
             new_owner > 0 ? cell_kinds[new_owner] : Int16(0),

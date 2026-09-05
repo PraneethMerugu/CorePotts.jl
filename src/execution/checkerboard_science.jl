@@ -344,6 +344,13 @@ struct _CheckerboardConstraintEvaluator{
     terms::Terms
 end
 
+struct _CheckerboardLiteralConstraintEvaluator{Allowed} end
+
+@inline function (::_CheckerboardLiteralConstraintEvaluator{Allowed})(
+        item::Int32, reads, parameters) where {Allowed}
+    return (constraints_allowed = LocalMath.UniqueValue(Allowed),)
+end
+
 const _ACCEPTED_SITE_DISABLED = UInt8(0x00)
 const _ACCEPTED_SITE_READY = UInt8(0x01)
 const _ACCEPTED_SITE_INVALID_CONDITION = UInt8(0x02)
@@ -1064,6 +1071,7 @@ function _checkerboard_scientific_declaration(
     terms = _compile_proposal_terms(descriptor_plan, state_handles)
     numeric_terms = _proposal_numeric_terms(terms)
     constraint_terms = _proposal_constraint_terms(terms)
+    literal_constraint = _proposal_literal_constraint(constraint_terms)
     accepted_site_terms = _compile_accepted_site_terms(
         stage_plan, descriptor_plan, state_handles)
     accepted_relationship_terms = _compile_accepted_relationship_terms(
@@ -1337,10 +1345,15 @@ function _checkerboard_scientific_declaration(
         typeof(proposal_context)}(
             proposal_context, numeric_terms,
             accepted_site_terms, accepted_relationship_terms)
-    constraint_evaluator = _CheckerboardConstraintEvaluator{
-        T, contact_degree, !iszero(parameter_count),
-        typeof(constraint_terms), typeof(proposal_context)}(
-            proposal_context, constraint_terms)
+    constraint_evaluator = if literal_constraint === nothing
+        _CheckerboardConstraintEvaluator{
+            T, contact_degree, !iszero(parameter_count),
+            typeof(constraint_terms), typeof(proposal_context)}(
+                proposal_context, constraint_terms)
+    else
+        _CheckerboardLiteralConstraintEvaluator{
+            something(literal_constraint)}()
+    end
     core_reads = (
         sites = LocalMath.Access(
             topology.sites, topology.identity; required = true),
@@ -1418,9 +1431,11 @@ function _checkerboard_scientific_declaration(
         LocalMath.SourceOrigin(@__FILE__, @__LINE__;
             label = :checkerboard_scientific_evaluation),
     )
+    constraint_reads = literal_constraint === nothing ?
+        scientific_reads : NamedTuple()
     constraint_stage = LocalMath.Stage(
         topology.source_space,
-        scientific_reads,
+        constraint_reads,
         (publication(evaluation.constraints_allowed,
             :constraints_allowed, Bool),),
         LocalMath.Evaluator(

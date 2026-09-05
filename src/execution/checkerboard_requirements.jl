@@ -882,6 +882,19 @@ _proposal_constraint_terms(terms::Tuple) = Tuple(
 _proposal_numeric_terms(terms::Tuple) = Tuple(
     term for term in terms if !(term.role isa ProposalConstraintRole))
 
+function _proposal_literal_constraint(terms::Tuple)
+    allowed = true
+    for term in terms
+        evaluator = term.evaluator
+        evaluator isa _ExecutableLiteral || return nothing
+        value = evaluator.value
+        value isa Bool || throw(ArgumentError(
+            "proposal constraint source $(term.source_handle) does not return Bool"))
+        allowed &= value
+    end
+    return Some(allowed)
+end
+
 @inline _execute_proposal_scalar(value::_ExecutableLiteral, context) =
     value.value
 @inline _execute_proposal_scalar(value::_ExecutableDefaultParameter, context) =
