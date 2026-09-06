@@ -77,6 +77,58 @@ function _literal_proposal_plan(values)
         CorePotts.HamiltonianDomainResources(1, 1))
 end
 
+function _source_test_descriptor(handle)
+    expression = CorePotts.LiteralExpression(1.0)
+    return CorePotts.ProposalDescriptor(
+        CorePotts.StaticEvaluator(expression),
+        CorePotts.ResourceAccess(
+            (), (), CorePotts.EmptyFootprint(), CorePotts.EmptyFootprint(),
+            CorePotts.NoWriteAccess()),
+        CorePotts.DescriptorSupport(true, true, true, true),
+        (), (), CorePotts.ProposalEnergyDriveRole(), handle)
+end
+
+function _source_test_plan(descriptors, sources)
+    group = CorePotts.ProposalDescriptorGroup(
+        collect(descriptors), (), (), (family = :source_lookup,))
+    return CorePotts.DescriptorExecutionPlan(
+        (group,), CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
+        CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]), (),
+        Any[sources...], length(descriptors), "source-lookup-plan-v1",
+        CorePotts.HamiltonianDomainResources(1, 1))
+end
+
+@testset "descriptor sources are checked once and never degrade to handles" begin
+    descriptor = _source_test_descriptor(2)
+    error = try
+        _source_test_plan((descriptor,), (:only_source,))
+        nothing
+    catch caught
+        caught
+    end
+    @test error isa ArgumentError
+    message = sprint(showerror, error)
+    @test contains(message, "descriptor_plan_construction")
+    @test contains(message, "ProposalDescriptor")
+    @test contains(message, "LiteralExpression")
+    @test contains(message, "ProposalEnergyDriveRole")
+    @test contains(message, "handle=2")
+    @test contains(message, "source_count=1")
+
+    duplicate = _source_test_descriptor(1)
+    error = try
+        _source_test_plan((duplicate, duplicate), (:duplicate_source,))
+        nothing
+    catch caught
+        caught
+    end
+    @test error isa ArgumentError
+    message = sprint(showerror, error)
+    @test contains(message, "duplicate descriptor source")
+    @test contains(message, "handle=1")
+    @test contains(message, "source=:duplicate_source")
+end
+
 function _context_proposal_plan(constraint = nothing)
     expression = CorePotts.OperationExpression(
         CorePotts.OrderedFold(+),

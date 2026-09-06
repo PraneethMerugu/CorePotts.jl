@@ -787,8 +787,14 @@ function _compile_site_assignment_law(
     handles = _stage_descriptor_handles(descriptor)
     target = first(handles)
     descriptor.effect.target == target || error("stage target ordering changed")
-    source = 1 <= descriptor.source_handle <= length(source_table) ?
-        source_table[Int(descriptor.source_handle)] : descriptor.source_handle
+    source = _descriptor_source(
+        source_table,
+        descriptor.source_handle;
+        descriptor,
+        operation = descriptor.effect,
+        role = descriptor.stage,
+        context = :site_assignment_lowering,
+    )
     condition, value = _compiled_stage_expressions(descriptor, handles, source)
     dimensions = length(shape)
     offsets = _stage_offsets(descriptor, dimensions)
@@ -884,8 +890,14 @@ function _compile_model_assignment_law(
         source_table, status, gate, ::Type{T}) where {T}
     handles = _stage_descriptor_handles(descriptor)
     target = first(handles)
-    source = 1 <= descriptor.source_handle <= length(source_table) ?
-        source_table[Int(descriptor.source_handle)] : descriptor.source_handle
+    source = _descriptor_source(
+        source_table,
+        descriptor.source_handle;
+        descriptor,
+        operation = descriptor.effect,
+        role = descriptor.stage,
+        context = :model_assignment_lowering,
+    )
     condition, value = _compiled_stage_expressions(descriptor, handles, source)
     model = LocalMath.Space(_CheckerboardStageModelDomain, 1)
     status_space = LocalMath.Space(_CheckerboardStageStatusDomain, 1)
@@ -1099,9 +1111,14 @@ function _relationship_stage_terms(
         effect = descriptor.effect
         location = getfield(layout.slots, Int(effect.relationship_slot))
         bank = getfield(layout.banks, Int(location.bank))
-        source = 1 <= descriptor.source_handle <= length(source_table) ?
-            source_table[Int(descriptor.source_handle)] :
-            descriptor.source_handle
+        source = _descriptor_source(
+            source_table,
+            descriptor.source_handle;
+            descriptor,
+            operation = descriptor.effect,
+            role = descriptor.stage,
+            context = :relationship_stage_lowering,
+        )
         payload_zero = ntuple(_ -> zero(T), Int(bank.payload_count))
         payload_evaluators = if effect isa RelationshipRetuneEffect
             length(effect.payload) == length(payload_zero) || throw(

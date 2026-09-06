@@ -501,7 +501,7 @@ end
         layout,
         CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]),
         (),
-        Any[],
+        Any[:model_assignment],
         0,
         "model-assignment-descriptor-plan-v1",
         CorePotts.HamiltonianDomainResources(0, 0),

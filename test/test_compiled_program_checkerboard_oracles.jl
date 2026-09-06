@@ -366,7 +366,7 @@ end
         layout,
         CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]),
         (),
-        Any[],
+        Any[:accepted_marker],
         0,
         "accepted-marker-descriptor-plan-v1",
         CorePotts.HamiltonianDomainResources(0, 0),
@@ -458,14 +458,30 @@ end
         0,
         "accepted-relationship-stage-plan-v1",
     )
+    relationship_descriptor_plan(sources, fingerprint) =
+        CorePotts.DescriptorExecutionPlan(
+            (),
+            CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
+            CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]),
+            (),
+            Any[sources...],
+            0,
+            fingerprint,
+            CorePotts.HamiltonianDomainResources(0, 0),
+        )
     program = test_program(
         CorePotts.CheckerboardProgramEngine();
         relationships = relationship_schemas,
+        descriptor_plan = relationship_descriptor_plan(
+            (:accepted_relationship,),
+            "accepted-relationship-descriptor-plan-v1",
+        ),
         stage_plan,
     )
     ownership = zeros(Int32, 6, 6)
     ownership[2:3, 2:3] .= 1
     ownership[4:5, 4:5] .= 2
+    @test program.descriptor_plan.source_table == Any[:accepted_relationship]
     initial = CorePotts.ProgramInitialState(
         ownership,
         Int16[2, 2];
@@ -515,6 +531,10 @@ end
     permuted_program = test_program(
         CorePotts.CheckerboardProgramEngine();
         relationships = relationship_schemas,
+        descriptor_plan = relationship_descriptor_plan(
+            (:first_relationship, :second_relationship),
+            "accepted-relationship-permuted-descriptor-plan-v1",
+        ),
         stage_plan = permuted_stage_plan,
     )
     permuted = CorePotts.initialize_program(
@@ -558,6 +578,10 @@ end
     second_slot_program = test_program(
         CorePotts.CheckerboardProgramEngine();
         relationships = CorePotts.RelationshipStorage((schema, schema)),
+        descriptor_plan = relationship_descriptor_plan(
+            (:second_slot_relationship,),
+            "accepted-relationship-second-slot-descriptor-plan-v1",
+        ),
         stage_plan = second_slot_stage_plan,
     )
     second_slot_initial = CorePotts.ProgramInitialState(
@@ -639,6 +663,10 @@ end
     nonfinite_program = test_program(
         CorePotts.CheckerboardProgramEngine();
         relationships = relationship_schemas,
+        descriptor_plan = relationship_descriptor_plan(
+            (:nonfinite_relationship,),
+            "accepted-relationship-nonfinite-descriptor-plan-v1",
+        ),
         stage_plan = nonfinite_stage_plan,
     )
     nonfinite = CorePotts.initialize_program(
@@ -703,6 +731,10 @@ end
     cross_bank_program = test_program(
         CorePotts.CheckerboardProgramEngine();
         relationships = CorePotts.RelationshipStorage((schema, second_schema)),
+        descriptor_plan = relationship_descriptor_plan(
+            (:first_relationship, :later_nonfinite_relationship),
+            "accepted-relationship-cross-bank-descriptor-plan-v1",
+        ),
         stage_plan = cross_bank_stage_plan,
     )
     cross_bank_initial = CorePotts.ProgramInitialState(
