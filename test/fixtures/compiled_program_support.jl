@@ -64,6 +64,10 @@ function test_initial(scalar_type = Float64)
     )
 end
 
+struct ExternalSquareOperation <: CorePotts.AbstractContextualOperation end
+
+(::ExternalSquareOperation)(arguments, context) = only(arguments)^2
+
 function capability_test_program(
         program::CorePotts.CompiledPottsProgram;
         backend = program.backend,
