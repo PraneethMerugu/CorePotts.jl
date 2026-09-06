@@ -3,7 +3,6 @@ using Test
 import CorePotts
 
 const _COREPOTTS_COMPILED_PROGRAM_TESTS = (
-    "test_compiled_program_support.jl",
     "test_compiled_program_execution.jl",
     "test_compiled_program_checkerboard_oracles.jl",
     "test_compiled_program_state.jl",
@@ -17,14 +16,13 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_downstream_spi.jl",
     "test_rng_contract.jl",
     "test_scientific_reference.jl",
-    "test_compiled_program.jl",
     "test_surface_tracker_contract.jl",
     "test_scientific_geometry_contract.jl",
     "test_relationship_access_contract.jl",
     "test_descriptor_state_spi.jl",
     "test_acceptance.jl",
     "test_capabilities.jl",
-    "test_lifecycle_selection_oracle.jl",
+    "test_lifecycle_selection_decisions.jl",
     "test_lifecycle_receipts.jl",
     "test_localmath_compiler_boundary.jl",
 )
@@ -41,37 +39,10 @@ testsuite = Dict{String, Expr}(
     for file in _COREPOTTS_DIRECT_TESTS
 )
 
-# These focused contract tests use the compiled-program fixture without owning
-# the compiled-program aggregate. Make that dependency explicit so each entry
-# remains independently runnable under ParallelTestRunner.
-for name in (
-    "scientific_geometry_contract",
-    "descriptor_state_spi",
-    "acceptance",
-    "capabilities",
-)
-    test_file = "test_$(name).jl"
-    testsuite[name] = quote
-        include(joinpath(
-            $(_COREPOTTS_TEST_DIRECTORY), "test_compiled_program_support.jl"
-        ))
-        include(joinpath($(_COREPOTTS_TEST_DIRECTORY), $test_file))
-    end
-end
-
-# Lifecycle receipt tests share the complete runtime fixture used by the
-# compiled-program aggregate, but remain an independently runnable test unit.
-delete!(testsuite, "lifecycle_selection_oracle")
-testsuite["lifecycle_receipts"] = quote
-    include(joinpath(
-        $(_COREPOTTS_TEST_DIRECTORY), "test_compiled_program_support.jl"
-    ))
-    include(joinpath(
-        $(_COREPOTTS_TEST_DIRECTORY), "test_lifecycle_selection_oracle.jl"
-    ))
-    include(joinpath(
-        $(_COREPOTTS_TEST_DIRECTORY), "test_lifecycle_receipts.jl"
-    ))
+for file in _COREPOTTS_COMPILED_PROGRAM_TESTS
+    name = replace(file, r"^test_|\.jl$" => "")
+    testsuite[name] =
+        :(include(joinpath($(_COREPOTTS_TEST_DIRECTORY), $file)))
 end
 
 testsuite["inventory"] = quote
@@ -145,6 +116,12 @@ end
 init_code = quote
     import CorePotts
     import LocalMath
+    include(joinpath(
+        $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "compiled_program_support.jl"
+    ))
+    include(joinpath(
+        $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "lifecycle_selection_oracle.jl"
+    ))
     const _COREPOTTS_COMPILED_PROGRAM_TESTS =
         $(_COREPOTTS_COMPILED_PROGRAM_TESTS)
 end

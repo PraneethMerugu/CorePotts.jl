@@ -82,7 +82,7 @@ the changed behavior. For example, a focused root check can load the shared
 setup explicitly:
 
 ```sh
-julia --project=. --startup-file=no -e 'using Test; import CorePotts, LocalMath; include("test/test_compiled_program_support.jl"); include("test/test_acceptance.jl")'
+julia --project=. --startup-file=no -e 'using Test; import CorePotts, LocalMath; include("test/fixtures/compiled_program_support.jl"); include("test/test_acceptance.jl")'
 ```
 
 Focused commands shorten the edit loop; they are not a second test inventory

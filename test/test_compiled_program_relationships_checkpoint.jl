@@ -752,7 +752,3 @@ end
         UInt64(0x1234), UInt32(1), UInt32(2)
     )
 end
-
-struct ExternalSquareOperation <: CorePotts.AbstractContextualOperation end
-
-(::ExternalSquareOperation)(arguments, context) = only(arguments)^2
