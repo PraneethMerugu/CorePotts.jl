@@ -294,44 +294,17 @@ end
     return (canonical_requests = LocalMath.CollectedValue(record, enabled),)
 end
 
-@kernel function _fill_lifecycle_singleton_endpoints_kernel!(endpoints)
-    item = @index(Global, Linear)
-    item <= size(endpoints, 2) &&
-        (@inbounds endpoints[1, item] = Int32(1))
-end
-
-@kernel function _initialize_lifecycle_relation_authority_kernel!(
-        generations, statuses, validated_generations
-    )
-    slot = @index(Global, Linear)
-    if slot <= length(generations)
-        @inbounds begin
-            generations[slot] = UInt64(1)
-            statuses[slot] = Int32(0)
-            validated_generations[slot] = UInt64(0)
-        end
-    end
-end
-
-@kernel function _initialize_lifecycle_compacted_count_kernel!(count)
-    index = @index(Global, Linear)
-    index == 1 && (@inbounds count[1] = Int32(0))
-end
-
 function _allocate_lifecycle_relation_authority(backend, count::Integer)
     slots = Int(count)
-    generations = KernelAbstractions.allocate(backend, UInt64, (slots,))
-    statuses = KernelAbstractions.allocate(backend, Int32, (slots,))
-    validated_generations = KernelAbstractions.allocate(
-        backend, UInt64, (slots,))
-    _initialize_lifecycle_relation_authority_kernel!(backend)(
-        generations, statuses, validated_generations; ndrange = slots)
+    generations = KernelAbstractions.ones(backend, UInt64, slots)
+    statuses = KernelAbstractions.zeros(backend, Int32, slots)
+    validated_generations = KernelAbstractions.zeros(backend, UInt64, slots)
     KernelAbstractions.synchronize(backend)
     return (; generations, statuses, validated_generations)
 end
 
 function _allocate_lifecycle_compaction_results(
-        plan::LifecycleExecutionPlan, ownership, selection
+        plan::LifecycleExecutionPlan, ownership
     )
     backend = KernelAbstractions.get_backend(ownership)
     site_count = length(ownership)
@@ -351,19 +324,6 @@ function _allocate_lifecycle_compaction_results(
         source_items = request_count,
         source_position = true,
     )
-    _initialize_lifecycle_compacted_count_kernel!(backend)(
-        site_index.count; ndrange = 1)
-    _initialize_lifecycle_compacted_count_kernel!(backend)(
-        request_index.count; ndrange = 1)
-    for storage in (
-            selection.free_cells,
-            selection.demands,
-            selection.selected_requests,
-        )
-        _initialize_lifecycle_compacted_count_kernel!(backend)(
-            storage.count; ndrange = 1)
-    end
-    KernelAbstractions.synchronize(backend)
     return site_index, request_index
 end
 
@@ -492,14 +452,16 @@ function _prepare_sequential_lifecycle_compaction(
     capacity = Int(plan.maximum_requests)
     request_spec = _lifecycle_request_compaction_work(plan)
     gate = _SequentialLifecycleOpenGate(workspace.status)
-    site_indices = map(ownerships) do ownership
+    site_gate_endpoints = map(ownerships) do ownership
         length(ownership) == length(first(ownerships)) || throw(ArgumentError(
             "sequential ownership banks must have equal lengths"
         ))
-        endpoints = similar(ownership, Int32, 1, length(ownership))
-        _fill_lifecycle_singleton_endpoints_kernel!(backend)(
-            endpoints; ndrange = length(ownership))
-        KernelAbstractions.synchronize(backend)
+        KernelAbstractions.ones(backend, Int32, 1, length(ownership))
+    end
+    request_endpoints = KernelAbstractions.ones(
+        backend, Int32, 1, capacity)
+    KernelAbstractions.synchronize(backend)
+    site_indices = map(ownerships, site_gate_endpoints) do ownership, endpoints
         LocalMath.prepare(site_spec.law,
             site_spec.ownership => ownership,
             site_spec.gate => gate,
@@ -507,10 +469,6 @@ function _prepare_sequential_lifecycle_compaction(
             site_spec.sites => workspace.site_index;
             backend, lease_capacity = 1)
     end
-    request_endpoints = similar(first(ownerships), Int32, 1, capacity)
-    _fill_lifecycle_singleton_endpoints_kernel!(backend)(
-        request_endpoints; ndrange = capacity)
-    KernelAbstractions.synchronize(backend)
     request_index = LocalMath.prepare(request_spec.law,
         request_spec.requests => _lifecycle_request_source(workspace),
         request_spec.gate => gate,
