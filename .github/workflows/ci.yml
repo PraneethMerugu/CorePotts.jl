@@ -36,6 +36,7 @@ jobs:
         run: julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate(); Pkg.test(; test_args=["--jobs=2"])'
 
   macos-smoke:
+    if: github.event_name == 'pull_request'
     name: macos-smoke
     runs-on: macos-15
     timeout-minutes: 30
