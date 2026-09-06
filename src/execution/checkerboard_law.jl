@@ -38,9 +38,9 @@ function _checkerboard_color_declaration(
     gate_identity = LocalMath.IdentityRelation(gate_space)
     owner_relation = LocalMath.IndexRelation(
         accepted.owners => owners_space; optional = true)
-    status_relation = LocalMath.RuntimeRelation(
-        accepted.source_space => status_space;
-        degree_bound = 1, key_type = Int32)
+    acceptance_status = _checkerboard_status_fragments(
+        status, accepted.source_space, typemax(Int32))
+    status_relation = acceptance_status.route
     report_route = LocalMath.RuntimeRelation(
         accepted.source_space => report_space;
         degree_bound = 5, key_type = Int32)
@@ -63,12 +63,7 @@ function _checkerboard_color_declaration(
             semantic_ids = LocalMath.Access(
                 accepted.semantic, accepted.identity; required = true),
         ),
-        (LocalMath.Publication((LocalMath.FieldPublication(
-            status, status_relation,
-            LocalMath.PublicationValue(:status)),), LocalMath.Resolve(
-                Int32, ProgramStatus;
-                lower = Int32(1), upper = typemax(Int32),
-                onempty = LocalMath.PreserveEmpty())),),
+        (acceptance_status.publication,),
         LocalMath.Evaluator(_CheckerboardAcceptanceEvaluator(),
             (accepted.batch_size, accepted.mcs)),
         LocalMath.Control(;
@@ -156,17 +151,13 @@ function _checkerboard_color_declaration(
             term.descriptor_ordinal for term in (
                 accepted.accepted_site_terms...,
                 accepted.accepted_relationship_terms...)); init = Int32(1))
+        validation_status = _checkerboard_status_fragments(
+            status, accepted.source_space,
+            Int32(length(accepted.source_space) * maximum_ordinal))
         LocalMath.Stage(
             accepted.source_space,
             merge(base_reads, site_reads, relationship_reads),
-            (LocalMath.Publication((LocalMath.FieldPublication(
-                status, status_relation,
-                LocalMath.PublicationValue(:status)),), LocalMath.Resolve(
-                    Int32, ProgramStatus;
-                    lower = Int32(1),
-                    upper = Int32(length(accepted.source_space) *
-                        maximum_ordinal),
-                    onempty = LocalMath.PreserveEmpty())),),
+            (validation_status.publication,),
             LocalMath.Evaluator(evaluator, (accepted.mcs,)),
             LocalMath.Control(;
                 prefix = accepted.batch_size, gate = refreshed_gate),

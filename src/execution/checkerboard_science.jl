@@ -80,6 +80,26 @@ _checkerboard_scratch_unique(::Type{T}) where {T} = LocalMath.Unique(
     T; coverage = LocalMath.PartialCoverage(),
     onempty = LocalMath.PreserveEmpty())
 
+function _checkerboard_scratch_publication(
+        field::LocalMath.Field, name::Symbol)
+    identity = LocalMath.IdentityRelation(field.space)
+    return LocalMath.Publication((LocalMath.FieldPublication(
+        field, identity, LocalMath.PublicationValue(name)),),
+        _checkerboard_scratch_unique(eltype(field)))
+end
+
+function _checkerboard_status_fragments(
+        field::LocalMath.Field, source, upper::Int32)
+    route = LocalMath.RuntimeRelation(
+        source => field.space; degree_bound = 1, key_type = Int32)
+    publication = LocalMath.Publication((LocalMath.FieldPublication(
+        field, route, LocalMath.PublicationValue(:status)),),
+        LocalMath.Resolve(Int32, ProgramStatus;
+            lower = Int32(1), upper,
+            onempty = LocalMath.PreserveEmpty()))
+    return (; field, route, publication)
+end
+
 function _checkerboard_geometry_declaration(
         plan::CheckerboardPlan,
         proposal_offsets::AbstractMatrix{<:Integer},
@@ -111,19 +131,15 @@ function _checkerboard_geometry_declaration(
         _trajectory_seed(seed, replica, repeat),
         Int32(prod(plan.shape; init = 1)),
     )
-    publication(field, name, type) = LocalMath.Publication((
-        LocalMath.FieldPublication(
-            field, identity, LocalMath.PublicationValue(name)),),
-        _checkerboard_scratch_unique(type))
     stage = LocalMath.Stage(
         source_space,
         (target_options = LocalMath.Access(
             target_options, identity; required = true),),
         (
-            publication(target, :target, Int32),
-            publication(sites, :sites, NTuple{2,Int32}),
-            publication(semantic, :semantic, Int32),
-            publication(priority, :priority, UInt32),
+            _checkerboard_scratch_publication(target, :target),
+            _checkerboard_scratch_publication(sites, :sites),
+            _checkerboard_scratch_publication(semantic, :semantic),
+            _checkerboard_scratch_publication(priority, :priority),
         ),
         LocalMath.Evaluator(
             evaluator, (mcs, color, attempt_round, batch_size)),
@@ -172,10 +188,6 @@ function _checkerboard_proposal_topology_declaration(
         geometry.sites => lattice_space; optional = true)
     owners = LocalMath.Field(geometry.source_space, NTuple{2,Int32})
     actionable = LocalMath.Field(geometry.source_space, Bool)
-    publication(field, name, type) = LocalMath.Publication((
-        LocalMath.FieldPublication(
-            field, geometry.identity, LocalMath.PublicationValue(name)),),
-        _checkerboard_scratch_unique(type))
     owner_stage = LocalMath.Stage(
         geometry.source_space,
         (
@@ -185,9 +197,9 @@ function _checkerboard_proposal_topology_declaration(
                 geometry.priority, geometry.identity; required = true),
         ),
         (
-            publication(owners, :owners, NTuple{2,Int32}),
-            publication(geometry.priority, :priority, UInt32),
-            publication(actionable, :actionable, Bool),
+            _checkerboard_scratch_publication(owners, :owners),
+            _checkerboard_scratch_publication(geometry.priority, :priority),
+            _checkerboard_scratch_publication(actionable, :actionable),
         ),
         LocalMath.Evaluator(_CheckerboardOwnerEvaluator()),
         LocalMath.Control(; prefix = geometry.batch_size),
@@ -623,14 +635,13 @@ function _checkerboard_relationship_science_declarations(
             endpoint_b = bank_fields.endpoint_b,
             payload,
         )
+        # Endpoint gathers need a real stage boundary because IndexRelation
+        # keys observe the stage-entry field version.
         edge_stage = LocalMath.Stage(
             source_space,
             (incident_edges = LocalMath.Access(
                 bank_fields.incident_edges, incidence; required = false),),
-            (LocalMath.Publication((LocalMath.FieldPublication(
-                edge_keys, LocalMath.IdentityRelation(source_space),
-                LocalMath.PublicationValue(:edge_keys)),),
-        _checkerboard_scratch_unique(NTuple{selected_degree,Int32})),),
+            (_checkerboard_scratch_publication(edge_keys, :edge_keys),),
             LocalMath.Evaluator(
                 _CheckerboardRelationshipEdgeKeyEvaluator{selected_degree}(
                     edge_offset)),
@@ -644,10 +655,8 @@ function _checkerboard_relationship_science_declarations(
                  fields.endpoint_a, edge_relation; required = false),
              endpoint_b = LocalMath.Access(
                  fields.endpoint_b, edge_relation; required = false)),
-            (LocalMath.Publication((LocalMath.FieldPublication(
-                endpoint_keys, LocalMath.IdentityRelation(source_space),
-                LocalMath.PublicationValue(:endpoint_keys)),),
-        _checkerboard_scratch_unique(NTuple{2selected_degree,Int32})),),
+            (_checkerboard_scratch_publication(
+                endpoint_keys, :endpoint_keys),),
             LocalMath.Evaluator(
                 _CheckerboardRelationshipEndpointKeyEvaluator{
                     selected_degree}()),
@@ -1175,10 +1184,6 @@ function _checkerboard_scientific_declaration(
         requirements.parameter_count, Int(minimum_parameter_count))
     science_parameters = iszero(parameter_count) ? nothing :
         LocalMath.Field(topology.source_space, NTuple{parameter_count,T})
-    publication(field, name, type) = LocalMath.Publication((
-        LocalMath.FieldPublication(
-            field, topology.identity, LocalMath.PublicationValue(name)),),
-        _checkerboard_scratch_unique(type))
     contact_offset_table = descriptor_plan.domain_resources.contact_offsets
     contact_offsets = if iszero(size(contact_offset_table, 2))
         ()
@@ -1235,10 +1240,10 @@ function _checkerboard_scientific_declaration(
             (ownership = LocalMath.Access(
                 topology.ownership, relation; required = false),),
             (
-                publication(contact_owners, :contact_owners,
-                    NTuple{contact_degree,Int32}),
-                publication(contact_sites, :contact_sites,
-                    NTuple{contact_degree,Int32}),
+                _checkerboard_scratch_publication(
+                    contact_owners, :contact_owners),
+                _checkerboard_scratch_publication(
+                    contact_sites, :contact_sites),
             ),
             LocalMath.Evaluator(
                 _CheckerboardContactGatherEvaluator{contact_degree}()),
@@ -1251,10 +1256,10 @@ function _checkerboard_scientific_declaration(
             (ownership = LocalMath.Access(
                 topology.ownership, reverse_relation; required = false),),
             (
-                publication(reverse_contact_sites, :reverse_contact_sites,
-                    NTuple{contact_degree,Int32}),
-                publication(reverse_contact_owners, :reverse_contact_owners,
-                    NTuple{contact_degree,Int32}),
+                _checkerboard_scratch_publication(
+                    reverse_contact_sites, :reverse_contact_sites),
+                _checkerboard_scratch_publication(
+                    reverse_contact_owners, :reverse_contact_owners),
             ),
             LocalMath.Evaluator(
                 _CheckerboardReverseContactGatherEvaluator{contact_degree}()),
@@ -1266,8 +1271,8 @@ function _checkerboard_scientific_declaration(
             topology.source_space,
             (cell_kinds = LocalMath.Access(
                 cell_kinds, kind_selection; required = false),),
-            (publication(contact_kinds, :contact_kinds,
-                NTuple{contact_degree,Int16}),),
+            (_checkerboard_scratch_publication(
+                contact_kinds, :contact_kinds),),
             LocalMath.Evaluator(
                 _CheckerboardContactKindEvaluator{contact_degree}()),
             LocalMath.Control(; prefix = topology.batch_size),
@@ -1278,8 +1283,8 @@ function _checkerboard_scientific_declaration(
             topology.source_space,
             (cell_kinds = LocalMath.Access(
                 cell_kinds, reverse_kind_selection; required = false),),
-            (publication(reverse_contact_kinds, :reverse_contact_kinds,
-                NTuple{contact_degree,Int16}),),
+            (_checkerboard_scratch_publication(
+                reverse_contact_kinds, :reverse_contact_kinds),),
             LocalMath.Evaluator(
                 _CheckerboardReverseContactKindEvaluator{contact_degree}()),
             LocalMath.Control(; prefix = topology.batch_size),
@@ -1327,8 +1332,8 @@ function _checkerboard_scientific_declaration(
                 cell_volumes, kind_relation; required = false),
         ),
         (
-            publication(kinds, :kinds, NTuple{2,Int16}),
-            publication(volumes, :volumes, NTuple{2,Int32}),
+            _checkerboard_scratch_publication(kinds, :kinds),
+            _checkerboard_scratch_publication(volumes, :volumes),
         ),
         LocalMath.Evaluator(_CheckerboardCellResourceEvaluator()),
         LocalMath.Control(; prefix = topology.batch_size),
@@ -1344,7 +1349,7 @@ function _checkerboard_scientific_declaration(
             tracker_source_fields))
         tracker_publications = map(
             tracker_pair_fields, tracker_names) do field, name
-            publication(field, name, eltype(field))
+            _checkerboard_scratch_publication(field, name)
         end
         LocalMath.Stage(
             topology.source_space, tracker_accesses, tracker_publications,
@@ -1452,18 +1457,21 @@ function _checkerboard_scientific_declaration(
             reverse_contact_state_accesses...,
             affected_contact_state_accesses...))
     base_publications = (
-        publication(evaluation.delta_h, :delta_h, T),
-        publication(evaluation.drive_energy, :drive_energy, T),
-        publication(evaluation.drive_log_bias, :drive_log_bias, T),
-        publication(evaluation.kinetic_modifier, :kinetic_modifier, T),
+        _checkerboard_scratch_publication(evaluation.delta_h, :delta_h),
+        _checkerboard_scratch_publication(
+            evaluation.drive_energy, :drive_energy),
+        _checkerboard_scratch_publication(
+            evaluation.drive_log_bias, :drive_log_bias),
+        _checkerboard_scratch_publication(
+            evaluation.kinetic_modifier, :kinetic_modifier),
     )
     site_publications = map(
         site_port_names, values(accepted_site_fields)) do name, field
-        publication(field, name, eltype(field))
+        _checkerboard_scratch_publication(field, name)
     end
     relationship_publications = map(
         relationship_port_names, values(accepted_relationship_fields)) do name, field
-        publication(field, name, eltype(field))
+        _checkerboard_scratch_publication(field, name)
     end
     scientific_publications = (
         base_publications..., site_publications...,
@@ -1483,8 +1491,8 @@ function _checkerboard_scientific_declaration(
     constraint_stage = LocalMath.Stage(
         topology.source_space,
         constraint_reads,
-        (publication(evaluation.constraints_allowed,
-            :constraints_allowed, Bool),),
+        (_checkerboard_scratch_publication(
+            evaluation.constraints_allowed, :constraints_allowed),),
         LocalMath.Evaluator(
             constraint_evaluator, (topology.mcs, topology.color)),
         LocalMath.Control(; prefix = topology.batch_size),
