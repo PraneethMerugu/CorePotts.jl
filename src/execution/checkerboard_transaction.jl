@@ -1447,3 +1447,145 @@ function _checkerboard_relationship_commit_laws(groups, gate)
         for (name, shadow, live) in zip(keys(group.shadow_fields),
             values(group.shadow_fields), values(group.live_fields)))
 end
+
+# Packed relationship parsing and shadow-state settlement live with the
+# checkerboard transaction they serve.
+@inline function _checkerboard_endpoint_value(value::Integer)
+    value isa Bool && return (false, Int32(0))
+    typemin(Int32) <= value <= typemax(Int32) || return (false, Int32(0))
+    return (true, Int32(value))
+end
+
+@inline function _checkerboard_endpoint_value(value::AbstractFloat)
+    isfinite(value) || return (false, Int32(0))
+    lower = typeof(value)(-2147483648)
+    upper = typeof(value)(2147483648)
+    lower <= value < upper || return (false, Int32(0))
+    trunc(value) == value || return (false, Int32(0))
+    return (true, Int32(value))
+end
+
+@inline _checkerboard_endpoint_value(_value) = (false, Int32(0))
+
+@inline function _checkerboard_payload_value(prototype::T, value) where {
+        T <: AbstractFloat,
+    }
+    value isa Real || return (false, zero(T))
+    converted = T(value)
+    return (isfinite(converted), converted)
+end
+
+@generated function _checkerboard_payload_values(
+        prototype::P, values::V
+    ) where {P <: Tuple, V <: Tuple}
+    fieldcount(P) == fieldcount(V) || return :((false, prototype))
+    assignments = Expr[]
+    valid = Expr(:call, :(&),
+        [Symbol(:valid_, i) for i in 1:fieldcount(P)]...)
+    converted = Expr(:tuple,
+        [Symbol(:converted_, i) for i in 1:fieldcount(P)]...)
+    for index in 1:fieldcount(P)
+        push!(assignments, quote
+            $(Symbol(:valid_, index)), $(Symbol(:converted_, index)) =
+                _checkerboard_payload_value(
+                    getfield(prototype, $index), getfield(values, $index))
+        end)
+    end
+    isempty(assignments) && return :((true, ()))
+    return Expr(:block, assignments..., :(($valid, $converted)))
+end
+
+@inline _checkerboard_fold_edge_offset(reads, slot::Int32) =
+    @inbounds reads.edge_offsets[slot]
+@inline _checkerboard_fold_endpoint_offset(reads, slot::Int32) =
+    @inbounds reads.endpoint_offsets[slot]
+@inline _checkerboard_fold_incident_offset(reads, slot::Int32) =
+    @inbounds reads.incident_offsets[slot]
+@inline _checkerboard_fold_maximum_degree(reads, slot::Int32) =
+    @inbounds reads.maximum_degrees[slot]
+
+@inline function _checkerboard_fold_degree_index(
+        reads, slot::Int32, endpoint::Int32)
+    return _checkerboard_fold_endpoint_offset(reads, slot) + endpoint - Int32(1)
+end
+
+@inline function _checkerboard_fold_incident_index(
+        reads, slot::Int32, endpoint::Int32, position::Int32)
+    return _checkerboard_fold_incident_offset(reads, slot) +
+        (endpoint - Int32(1)) * _checkerboard_fold_maximum_degree(reads, slot) +
+        position - Int32(1)
+end
+
+@inline function _checkerboard_fold_relationship_edge(
+        state, reads, slot::Int32, a::Int32, b::Int32)
+    degree_a = Int32(@inbounds state.degree[
+        _checkerboard_fold_degree_index(reads, slot, a)])
+    degree_b = Int32(@inbounds state.degree[
+        _checkerboard_fold_degree_index(reads, slot, b)])
+    endpoint = degree_a <= degree_b ? a : b
+    degree = min(degree_a, degree_b)
+    edge_offset = _checkerboard_fold_edge_offset(reads, slot)
+    for position in Int32(1):degree
+        edge = @inbounds state.incident_edges[
+            _checkerboard_fold_incident_index(
+                reads, slot, endpoint, position)]
+        edge > 0 || continue
+        flat_edge = edge_offset + edge - Int32(1)
+        if @inbounds(state.active[flat_edge]) &&
+                @inbounds(state.endpoint_a[flat_edge]) == a &&
+                @inbounds(state.endpoint_b[flat_edge]) == b
+            return edge
+        end
+    end
+    return Int32(0)
+end
+
+@inline function _checkerboard_fold_available_edge(
+        state, reads, slot::Int32)
+    offset = _checkerboard_fold_edge_offset(reads, slot)
+    count = @inbounds reads.edge_counts[slot]
+    for edge in Int32(1):count
+        @inbounds(state.active[offset + edge - Int32(1)]) || return edge
+    end
+    return Int32(0)
+end
+
+@inline function _checkerboard_fold_insertion_position(
+        state, reads, slot::Int32, endpoint::Int32, edge::Int32,
+        degree::Int32)
+    position = degree + Int32(1)
+    while position > Int32(1)
+        previous = @inbounds state.incident_edges[
+            _checkerboard_fold_incident_index(
+                reads, slot, endpoint, position - Int32(1))]
+        previous > edge || break
+        position -= Int32(1)
+    end
+    return position
+end
+
+@inline function _checkerboard_fold_incident_write(
+        state, reads, slot::Int32, endpoint_a::Int32,
+        position_a::Int32, degree_a::Int32, endpoint_b::Int32,
+        position_b::Int32, degree_b::Int32, edge::Int32, lane::Int32)
+    count_a = degree_a - position_a + Int32(2)
+    if lane <= count_a
+        position = position_a + lane - Int32(1)
+        destination = _checkerboard_fold_incident_index(
+            reads, slot, endpoint_a, position)
+        value = position == position_a ? edge : @inbounds(
+            state.incident_edges[destination - Int32(1)])
+        return (destination, value)
+    end
+    local_lane = lane - count_a
+    count_b = degree_b - position_b + Int32(2)
+    if local_lane <= count_b
+        position = position_b + local_lane - Int32(1)
+        destination = _checkerboard_fold_incident_index(
+            reads, slot, endpoint_b, position)
+        value = position == position_b ? edge : @inbounds(
+            state.incident_edges[destination - Int32(1)])
+        return (destination, value)
+    end
+    return (Int32(1), Int32(0))
+end
