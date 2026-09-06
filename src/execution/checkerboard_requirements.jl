@@ -788,9 +788,9 @@ function _validate_gathered_operation_arguments(
          arguments[2].value isa Union{Val,QualifiedTrackerKey})) &&
     arguments[3] isa LiteralExpression &&
     arguments[3].value isa Integer || throw(ArgumentError(
-        "proposal source $(repr(source)) requires bounded_fold with a " *
-        "literal LocalMath.BoundedFold, a bound state or tracker, and a declared " *
-        "bounded relation handle"))
+        "proposal source $(repr(source)) requires a fold over gathered values " *
+        "with a literal LocalMath.BoundedFold, a bound state or tracker, and " *
+        "a declared bounded relation handle"))
     fold_source = arguments[2]
     if fold_source isa LiteralExpression &&
             fold_source.value isa Union{Val,QualifiedTrackerKey}

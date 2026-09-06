@@ -700,7 +700,8 @@ function _checkerboard_tracker_validation(
     relation = LocalMath.FixedRelation(
         source => field.space; degree = length(field.space))
     output = LocalMath.Field(source, eltype(field))
-    fold = LocalMath.bounded_fold(
+    fold = LocalMath.BoundedFold(
+        eltype(field),
         identity, _checkerboard_tracker_validation_combine,
         zero(eltype(field)), _checkerboard_tracker_validation_finish;
         domain = LocalMath.Where(_CheckerboardTrackerValueDomain{T}()),
