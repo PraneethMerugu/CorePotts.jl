@@ -105,6 +105,22 @@ Build documentation with:
 julia --project=docs docs/make.jl
 ```
 
+Run the lifecycle compiler flagship from its ordinary benchmark environment.
+For local cross-package development, develop the package checkout and a
+compatible LocalMath checkout temporarily; neither path is recorded in the
+repository:
+
+```sh
+julia --project=benchmark -e 'using Pkg; Pkg.develop([Pkg.PackageSpec(path="."), Pkg.PackageSpec(path=ARGS[1])]); Pkg.instantiate()' /absolute/path/to/LocalMath.jl
+julia --project=benchmark --startup-file=no benchmark/compiler_scaling/corepotts_flagship.jl --warm-samples=7
+```
+
+The report records cold preparation, first execution compilation, warm
+allocation and compilation observations, and physical launch structure. These
+measurements are engineering evidence rather than pass/fail timing gates. The
+fixture exercises empty lifecycle selection after resetting the workspace; it
+does not represent populated divide/retire throughput.
+
 The package suite includes Aqua and ExplicitImports checks. Real-Metal
 qualification lives in `test/metal` and uses Julia 1.12.6.
 

@@ -1,8 +1,10 @@
 #!/usr/bin/env julia
 
 # One fresh-process observation of the authentic CorePotts lifecycle selection
-# boundary. This is evidence tooling only and uses existing production
-# constructors and execution entry points without altering their semantics.
+# boundary. The fixture intentionally submits no lifecycle requests: it
+# exercises compiler preparation and empty selection, not lifecycle throughput.
+# This is evidence tooling only and uses existing production constructors and
+# execution entry points without altering their semantics.
 
 const _Compiler_PROCESS_START_NS = time_ns()
 
@@ -147,11 +149,11 @@ function _timing(f)
 end
 
 Base.@noinline function _run_request_index!(runtime, workspace)
-    return CorePotts._run_sequential_lifecycle_request_index!(runtime, workspace)
+    return CorePotts._run_host_lifecycle_request_index!(runtime, workspace)
 end
 
 Base.@noinline function _run_selection_phase!(runtime, workspace)
-    return CorePotts._run_sequential_lifecycle_selection!(runtime, workspace)
+    return CorePotts._run_host_lifecycle_selection!(runtime, workspace)
 end
 
 Base.@noinline function _run_selection!(runtime)
@@ -198,13 +200,21 @@ end
 function _flagship_physical_evidence(prepared)
     local_law = _flagship_stage_program(prepared)
     report = LocalMath.inspect(local_law)
-    identities = hasproperty(prepared, :publication) ?
-        ["CorePotts._lifecycle_selection_transaction_kernel!"] : String[]
-    push!(identities, "stage_program_status_reset")
-    for phases in report.planning.stage_phases, phase in phases
-        append!(identities, fill(String(phase.kind), phase.count))
+    families = hasproperty(prepared, :publication) ?
+        ["core_lifecycle_selection_transaction"] : String[]
+    core_launch_count = length(families)
+    for phase in report.planning.program_phases
+        append!(families, fill(String(phase.kind), phase.count))
     end
-    return (launch_count = length(identities), identities)
+    for segment in report.planning.physical_segments
+        append!(families, fill(String(segment.family), segment.launch_count))
+    end
+    launch_count = core_launch_count +
+        Int(report.planning.base_provider_launch_count)
+    length(families) == launch_count || error(
+        "flagship inspection disagrees on physical launch accounting",
+    )
+    return (; launch_count, families)
 end
 
 _flagship_stage_program(prepared) = hasproperty(prepared, :publication) ?
@@ -223,15 +233,15 @@ Base.@noinline function _cold_evidence_summary(prepared_banks)
     stage_program_banks = map(_flagship_stage_program, prepared_banks)
     physical = map(_flagship_physical_evidence, prepared_banks)
     launch_count = first(physical).launch_count
-    phases = first(physical).identities
+    launch_families = first(physical).families
     for fact in bank_evidence
         fact.planning.compiler == lowering_identity || error(
             "flagship physical banks disagree on lowering identity",
         )
     end
     for fact in physical
-        fact.identities == phases || error(
-            "flagship physical banks disagree on phase identity")
+        fact.families == launch_families || error(
+            "flagship physical banks disagree on launch families")
         fact.launch_count == launch_count || error(
             "flagship physical banks disagree on launch count")
     end
@@ -248,62 +258,46 @@ Base.@noinline function _cold_evidence_summary(prepared_banks)
         push!(stage_identities,
             string(stage.planning.executor, ":", laws))
     end
-    phase_identities = String[]
-    sizehint!(phase_identities, length(phases))
-    for phase in phases
-        push!(phase_identities, string(phase))
+    physical_launch_families = String[]
+    sizehint!(physical_launch_families, length(launch_families))
+    for family in launch_families
+        push!(physical_launch_families, string(family))
     end
     callback_summaries = Any[]
     for prepared in stage_program_banks
-        callbacks = prepared.plan.lowering.callback_facts
+        callbacks = LocalMath.inspect(prepared).realized.callback_methods
         stage_counts = Dict{String, Int}()
         purpose_counts = Dict{String, Int}()
-        admitted = 0
-        methods_current = true
         for callback in callbacks
             stage = "1"
-            purpose = string(getproperty(callback, :purpose))
+            purpose = string(callback.purpose)
             stage_counts[stage] = get(stage_counts, stage, 0) + 1
             purpose_counts[purpose] = get(purpose_counts, purpose, 0) + 1
-            admitted += hasproperty(callback, :qualification)
-            methods_current &= which(
-                getproperty(callback, :callback),
-                getproperty(callback, :signature),
-            ) === getproperty(callback, :method)
         end
+        facts = callbacks
         push!(callback_summaries, (
             count = length(callbacks),
             stage_counts,
             purpose_counts,
-            admitted,
-            methods_current,
-            world_current = getproperty(prepared, :operation_world) ==
-                Base.get_world_counter(),
+            admitted = length(callbacks),
+            facts,
         ))
     end
     first_callbacks = first(callback_summaries)
     all(==(first_callbacks), callback_summaries) || error(
         "flagship physical banks disagree on callback admission facts",
     )
-    first_callbacks.methods_current || error(
-        "flagship callback method identity changed after preparation",
-    )
-    first_callbacks.world_current || error(
-        "flagship callback world age changed during the probe",
-    )
     return Dict{String, Any}(
         "logical_stage_count" => logical_stage_count,
         "physical_launch_count" => Int(launch_count),
         "physical_bank_count" => length(prepared_banks),
         "lowering_identity" => string(lowering_identity),
-        "physical_phase_identities" => phase_identities,
+        "physical_launch_families" => physical_launch_families,
         "logical_stage_identities" => stage_identities,
         "operation_fact_count" => first_callbacks.count,
         "operation_fact_stage_counts" => first_callbacks.stage_counts,
         "operation_fact_purpose_counts" => first_callbacks.purpose_counts,
         "admitted_operation_fact_count" => first_callbacks.admitted,
-        "operation_methods_current" => first_callbacks.methods_current,
-        "operation_world_current" => first_callbacks.world_current,
     )
 end
 
@@ -314,8 +308,10 @@ function _argument(name::String, default::String)
 end
 
 Base.@noinline function _emit_flagship_report(
-        evidence, selection_succeeded, fixture_construction, initialization,
-        first_request_index, first_selection, warm,
+        evidence, selection_succeeded, request_count, selected_count,
+        fixture_construction, initialization, first_request_index,
+        first_selection, warm,
+        ; io::IO = stdout,
     )
     Base.@nospecialize evidence
     timed_boundaries = (
@@ -329,21 +325,21 @@ Base.@noinline function _emit_flagship_report(
     )
     options = Base.JLOptions()
     report = Dict{String, Any}(
-        "schema_version" => 1,
+        "schema_version" => 2,
         "profile" => "corepotts_lifecycle_flagship",
         "stage_count" => evidence["logical_stage_count"],
         "physical_launch_count" => evidence["physical_launch_count"],
         "physical_bank_count" => evidence["physical_bank_count"],
         "lowering_identity" => evidence["lowering_identity"],
-        "physical_phase_identities" => evidence["physical_phase_identities"],
+        "physical_launch_families" => evidence["physical_launch_families"],
         "logical_stage_identities" => evidence["logical_stage_identities"],
         "operation_fact_count" => evidence["operation_fact_count"],
         "operation_fact_stage_counts" => evidence["operation_fact_stage_counts"],
         "operation_fact_purpose_counts" => evidence["operation_fact_purpose_counts"],
         "admitted_operation_fact_count" => evidence["admitted_operation_fact_count"],
-        "operation_methods_current" => evidence["operation_methods_current"],
-        "operation_world_current" => evidence["operation_world_current"],
         "selection_succeeded" => selection_succeeded,
+        "request_count" => request_count,
+        "selected_count" => selected_count,
         "backend" => "cpu",
         "backend_type" => string(typeof(KernelAbstractions.CPU())),
         "hardware" => Sys.CPU_NAME,
@@ -377,7 +373,7 @@ Base.@noinline function _emit_flagship_report(
         "first_selection" => first_selection,
         "warm_execution" => warm,
     )
-    TOML.print(stdout, report; sorted = true)
+    TOML.print(io, report; sorted = true)
     return nothing
 end
 
@@ -402,14 +398,17 @@ function _main()
         _run_selection_phase!(runtime, workspace)
     end
     selection_succeeded || error("CorePotts flagship selection failed")
+    request_count = Int(CorePotts.lifecycle_request_count(workspace))
+    selected_count = CorePotts._lifecycle_selected_count(workspace)
     warm = _warm_samples(runtime, warm_samples)
 
     compaction = runtime.engine_workspace.lifecycle_compaction
     prepared_banks = compaction.selection
     evidence = _cold_evidence_summary(prepared_banks)
     return _emit_flagship_report(
-        evidence, selection_succeeded, fixture_construction, initialization,
-        first_request_index, first_selection, warm,
+        evidence, selection_succeeded, request_count, selected_count,
+        fixture_construction, initialization, first_request_index,
+        first_selection, warm,
     )
 end
 
