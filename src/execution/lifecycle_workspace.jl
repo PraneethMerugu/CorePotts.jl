@@ -210,7 +210,7 @@ function allocate_lifecycle_workspace(
         plan, ownership, relationships
     )
     site_index, request_index = _allocate_lifecycle_compaction_results(
-        plan, ownership, selection
+        plan, ownership
     )
     return LifecycleWorkspace(
         zeros(Int32, 1),

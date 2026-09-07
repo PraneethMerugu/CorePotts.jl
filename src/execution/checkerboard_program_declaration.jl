@@ -306,17 +306,10 @@ function _prepare_localmath_lifecycle_reductions(
         size(workspace.state.ownership), Int(lifecycle_plan.cell_capacity)
     )
     request_spec = _lifecycle_request_compaction_work(lifecycle_plan)
-    site_gate_endpoints = similar(
-        workspace.state.ownership, Int32, 1, site_count)
-    request_gate_endpoints = similar(
-        workspace.state.ownership, Int32, 1,
-        Int(lifecycle_plan.maximum_requests))
-    _fill_lifecycle_singleton_endpoints_kernel!(backend)(
-        site_gate_endpoints; ndrange = site_count)
-    _fill_lifecycle_singleton_endpoints_kernel!(backend)(
-        request_gate_endpoints;
-        ndrange = Int(lifecycle_plan.maximum_requests))
-    KernelAbstractions.synchronize(backend)
+    site_gate_endpoints = KernelAbstractions.ones(
+        backend, Int32, 1, site_count)
+    request_gate_endpoints = KernelAbstractions.ones(
+        backend, Int32, 1, Int(lifecycle_plan.maximum_requests))
     relation_authority = _allocate_lifecycle_relation_authority(backend, 2)
     relation_declaration(endpoints, slot) = LocalMath.MutableRelationStorage(
         (; endpoints);

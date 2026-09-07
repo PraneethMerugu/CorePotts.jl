@@ -326,6 +326,27 @@ function _assert_checkerboard_bank_invariants(workspace)
     return length(primary_leaves)
 end
 
+function _assert_lifecycle_compaction_empty(lifecycle)
+    storages = (
+        lifecycle.site_index,
+        lifecycle.request_index,
+        lifecycle.selection.free_cells,
+        lifecycle.selection.demands,
+        lifecycle.selection.selected_requests,
+    )
+    for storage in storages
+        @test storage.count == Int32[0]
+        if storage.segment_starts !== nothing
+            @test all(==(Int32(1)), storage.segment_starts)
+        end
+        @test all(iszero, storage.source_item)
+        @test all(iszero, storage.source_lane)
+        if storage.source_position !== nothing
+            @test all(iszero, storage.source_position)
+        end
+    end
+end
+
 @testset "checkerboard banks own disjoint science and aliased lifecycle staging" begin
     tracker_plan = CorePotts.TrackerExecutionPlan(
         (
@@ -388,6 +409,12 @@ end
             end
         end
         workspace = CorePotts._checkerboard_core(runtime.engine_workspace)
+        lifecycle_plan isa CorePotts.NoLifecycleExecutionPlan || begin
+            _assert_lifecycle_compaction_empty(
+                workspace.state.lifecycle_workspace)
+            _assert_lifecycle_compaction_empty(
+                workspace.alternate_state.lifecycle_workspace)
+        end
         _assert_checkerboard_bank_invariants(workspace)
     end
     @test allequal(leaf_counts)
