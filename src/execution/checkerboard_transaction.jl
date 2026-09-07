@@ -147,10 +147,6 @@ function _checkerboard_acceptance_declaration(
         _acceptance_temperature(temperature),
         forbid_extinction,
         retire_at_zero)
-    publication(field, name, type) = LocalMath.Publication((
-        LocalMath.FieldPublication(
-            field, scientific.identity, LocalMath.PublicationValue(name)),),
-        _checkerboard_scratch_unique(type))
     core_reads = (
         actionable = LocalMath.Access(
             scientific.actionable, scientific.identity; required = true),
@@ -187,9 +183,10 @@ function _checkerboard_acceptance_declaration(
         scientific.source_space,
         merge(core_reads, parameter_reads),
         (
-            publication(disposition, :disposition, UInt8),
-            publication(failure_code, :failure_code, UInt8),
-            publication(failure_identity, :failure_identity, Int32),
+            _checkerboard_scratch_publication(disposition, :disposition),
+            _checkerboard_scratch_publication(failure_code, :failure_code),
+            _checkerboard_scratch_publication(
+                failure_identity, :failure_identity),
         ),
         LocalMath.Evaluator(
             evaluator, (scientific.mcs, scientific.color)),
@@ -1325,9 +1322,7 @@ function _checkerboard_relationship_groups(
         endpoint_identity = LocalMath.IdentityRelation(accepted.source_space)
         endpoint_publications = map(
                 keys(endpoint_fields), values(endpoint_fields)) do name, field
-            LocalMath.Publication((LocalMath.FieldPublication(
-                field, endpoint_identity, LocalMath.PublicationValue(name)),),
-                _checkerboard_scratch_unique(eltype(field)))
+            _checkerboard_scratch_publication(field, name)
         end
         endpoint_stage = LocalMath.Stage(
             accepted.source_space,

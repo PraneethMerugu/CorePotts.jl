@@ -10,6 +10,8 @@ function _clear_checkerboard_bulk!(
     )
     bank = _checkerboard_authorized_bank(execution, state)
     receipt = LocalMath.execute!(execution.clear_report[bank])
+    # LocalMath owns receipt failure; this bridge translates it into Core's
+    # durable domain status without a host settlement boundary.
     _enqueue_localmath_failure_bridge!(
         receipt, execution.gates[bank], state.program_status,
         state.mcs + 1, ProgramStagePublication)

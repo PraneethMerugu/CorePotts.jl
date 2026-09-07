@@ -817,8 +817,8 @@ function _compile_site_assignment_law(
     status_field = LocalMath.Field(status_space, ProgramStatus)
     initial_gate = LocalMath.Field(gate.space, Bool)
     refreshed_gate = LocalMath.Field(gate.space, Bool)
-    status_route = LocalMath.RuntimeRelation(
-        lattice => status_space; degree_bound = 1, key_type = Int32)
+    status_fragments = _checkerboard_status_fragments(
+        status_field, lattice, Int32(prod(shape)))
     contact_offsets, contact_starts, contact_counts =
         _stage_contact_tables(resources, dimensions)
     evaluator = _CompiledSiteStageEvaluator{
@@ -848,12 +848,7 @@ function _compile_site_assignment_law(
             LocalMath.Publication((LocalMath.FieldPublication(
                 scratch, identity, LocalMath.PublicationValue(:value)),),
                 LocalMath.Unique(eltype(scratch))),
-            LocalMath.Publication((LocalMath.FieldPublication(
-                status_field, status_route,
-                LocalMath.PublicationValue(:status)),),
-                LocalMath.Resolve(Int32, ProgramStatus;
-                    lower = Int32(1), upper = Int32(prod(shape)),
-                    onempty = LocalMath.PreserveEmpty())),
+            status_fragments.publication,
         ),
         LocalMath.Evaluator(evaluator, (
             LocalMath.Parameter(:mcs, Int64;
@@ -910,8 +905,8 @@ function _compile_model_assignment_law(
     status_field = LocalMath.Field(status_space, ProgramStatus)
     initial_gate = LocalMath.Field(gate.space, Bool)
     refreshed_gate = LocalMath.Field(gate.space, Bool)
-    status_route = LocalMath.RuntimeRelation(
-        model => status_space; degree_bound = 1, key_type = Int32)
+    status_fragments = _checkerboard_status_fragments(
+        status_field, model, Int32(1))
     zeros = map(handle -> zero(_stage_handle_element_type(handle, T)), handles)
     evaluator = _CompiledModelStageEvaluator{
         !iszero(parameter_count),typeof(condition),typeof(value),
@@ -929,12 +924,7 @@ function _compile_model_assignment_law(
             LocalMath.Publication((LocalMath.FieldPublication(
                 scratch, identity, LocalMath.PublicationValue(:value)),),
                 LocalMath.Unique(eltype(scratch))),
-            LocalMath.Publication((LocalMath.FieldPublication(
-                status_field, status_route,
-                LocalMath.PublicationValue(:status)),),
-                LocalMath.Resolve(Int32, ProgramStatus;
-                    lower = Int32(1), upper = Int32(1),
-                    onempty = LocalMath.PreserveEmpty())),
+            status_fragments.publication,
         ),
         LocalMath.Evaluator(evaluator, (
             LocalMath.Parameter(:mcs, Int64;
@@ -1268,9 +1258,8 @@ function _compile_relationship_stage_group(
             length(payload_zero),typeof(terms),typeof(inventory.handles),
             typeof(zeros),T,typeof(stops)}(
                 terms, inventory.handles, zeros, zero(T), stops)
-        status_route = LocalMath.RuntimeRelation(
-            request_space => status_space;
-            degree_bound = 1, key_type = Int32)
+        status_fragments = _checkerboard_status_fragments(
+            status_field, request_space, Int32(request_count))
         evaluate = LocalMath.Stage(
             request_space, reads,
             (
@@ -1278,12 +1267,7 @@ function _compile_relationship_stage_group(
                     event, request_identity,
                     LocalMath.PublicationValue(:event)),),
                     LocalMath.Unique(event_type)),
-                LocalMath.Publication((LocalMath.FieldPublication(
-                    status_field, status_route,
-                    LocalMath.PublicationValue(:status)),),
-                    LocalMath.Resolve(Int32, ProgramStatus;
-                        lower = Int32(1), upper = Int32(request_count),
-                        onempty = LocalMath.PreserveEmpty())),
+                status_fragments.publication,
             ),
             LocalMath.Evaluator(evaluator, (
                 LocalMath.Parameter(:mcs, Int64;

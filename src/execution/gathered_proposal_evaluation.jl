@@ -1156,6 +1156,8 @@ end
 @inline function _fold_executable_proposal_numeric_terms(
         terms::Tuple, context, ::Type{T}, result::ProposalEvaluation{T},
     ) where {T<:AbstractFloat}
+    # Tuple order is the descriptor source-table order and is scientifically
+    # observable for non-associative floating-point terms.
     contribution = _proposal_numeric_evaluation(
         first(terms), context, T)::ProposalEvaluation{T}
     combined = ProposalEvaluation(
