@@ -98,7 +98,9 @@ testsuite["package_quality"] = quote
             :invoke_in_world,
             :libllvm_version,
             :mightalias,
+            :ones,
             :setindex,
+            :zeros,
         )
         ExplicitImports.test_explicit_imports(
             CorePotts;
