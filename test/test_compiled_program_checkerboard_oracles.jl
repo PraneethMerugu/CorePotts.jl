@@ -416,7 +416,10 @@ end
     )
     CorePotts.advance_mcs!(runtime)
     marker = CorePotts.state_block(runtime.descriptor_state, handle).values
-    @test runtime.engine_workspace isa CorePotts._CheckerboardExecutionWorkspace
+    execution = CorePotts._inspect_checkerboard_execution(
+        runtime.engine_workspace)
+    @test execution.identity.provider === :KernelAbstractions
+    @test !isempty(execution.color_mechanics)
     @test runtime.accepted > 0
     @test any(==(7.0), marker)
 

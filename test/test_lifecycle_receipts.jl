@@ -508,18 +508,16 @@ end
         checkerboard.engine_workspace.lifecycle_reductions[1].emission
     sequential_emission =
         sequential.engine_workspace.lifecycle_compaction.emission[1]
-    @test checkerboard_emission isa CorePotts._PreparedLifecycleEmission
-    @test sequential_emission isa CorePotts._PreparedLifecycleEmission
+    @test CorePotts._inspect_lifecycle_emission(
+        checkerboard_emission).kind === :request_emission
+    @test CorePotts._inspect_lifecycle_emission(
+        sequential_emission).kind === :request_emission
     @test checkerboard_emission.runtime.ownership ===
         checkerboard.engine_workspace.core.state.ownership
     @test length(sequential.engine_workspace.lifecycle_compaction.emission) == 2
-    @test all(
-        emission -> emission isa CorePotts._PreparedLifecycleEmission,
-        sequential.engine_workspace.lifecycle_compaction.emission,
-    )
-    @test !isdefined(CorePotts, :_emit_lifecycle_requests!)
-    @test isdefined(CorePotts, :_lifecycle_request_emission_kernel!)
-    @test isdefined(CorePotts, :_lifecycle_emission_status_kernel!)
+    @test all(emission -> CorePotts._inspect_lifecycle_emission(
+            emission).provider === :KernelAbstractions,
+        sequential.engine_workspace.lifecycle_compaction.emission)
 
     inspection = CorePotts._inspect_checkerboard_execution(
         checkerboard.engine_workspace
@@ -539,13 +537,21 @@ end
     @test hasproperty(inspection.lifecycle_reductions[1], :emission)
     @test hasproperty(inspection.completion_receipts, :mechanics)
     @test length(inspection.completion_receipts.mechanics) == 2
-    @test all(
-        bank -> bank isa Vector{LocalMath.ExecutionReceipt},
-        inspection.completion_receipts.mechanics,
-    )
+    @test all(bank -> bank.retained == 0 && bank.pending == 0,
+        inspection.completion_receipts.mechanics)
     @test hasproperty(
         inspection.completion_receipts.lifecycle, :emission
     )
+    @test inspection.lifecycle_reductions[1].direct.kind ===
+        :status_reduction
+    @test inspection.lifecycle_reductions[1].direct.mode ===
+        :candidate_order
+    @test inspection.lifecycle_reductions[1].planning.mode ===
+        :canonical_requests
+    @test inspection.lifecycle_reductions[1].emission.kind ===
+        :request_emission
+    @test inspection.lifecycle_reductions[1].selection.selection.kind ===
+        :lifecycle_selection
 
     # Emission follows the candidate science bank selected by the same physical
     # ownership identity as site indexing; it never retains the initial bank.

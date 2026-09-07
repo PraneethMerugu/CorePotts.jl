@@ -1,5 +1,21 @@
 # Checkerboard queue admission, submission, settlement, and inspection.
 
+function _inspect_receipt_bank(bank)
+    return (
+        retained = length(bank),
+        pending = count(LocalMath.ispending, bank),
+    )
+end
+
+function _inspect_checkerboard_receipts(receipts)
+    return (
+        mechanics = map(_inspect_receipt_bank, receipts.mechanics),
+        lifecycle = map(receipts.lifecycle) do bank
+            map(_inspect_receipt_bank, bank)
+        end,
+    )
+end
+
 @inline function _program_backend_open(state)
     return (@inbounds state.program_status[1]).code === ProgramStatusSuccess &&
            _lifecycle_backend_open(state.lifecycle_workspace)

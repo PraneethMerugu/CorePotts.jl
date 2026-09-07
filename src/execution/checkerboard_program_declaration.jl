@@ -222,6 +222,17 @@ function LocalMath.submission_capacity(
     return (; capacity, outstanding,
         available = capacity, submitted = 0, drained = 0)
 end
+
+function _inspect_lifecycle_status_reduction(
+        prepared::_PreparedLifecycleStatusReduction)
+    return (
+        kind = :status_reduction,
+        provider = :KernelAbstractions,
+        mode = prepared.planning ? :canonical_requests : :candidate_order,
+        candidate_capacity = length(prepared.candidate_status),
+        submission_capacity = prepared.lease_capacity,
+    )
+end
 function LocalMath.submission_capacity(prepared::_PreparedLifecycleEmission)
     capacity = typemax(Int)
     outstanding = 0

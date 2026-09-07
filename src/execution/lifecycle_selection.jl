@@ -757,9 +757,9 @@ end
 function _inspect_lifecycle_selection(prepared::_PreparedLifecycleSelection)
     return (
         selection = (
-            owner = :CorePotts,
-            executor = :KernelAbstractions,
-            lowering = :corepotts_lifecycle_selection_ka_v1,
+            kind = :lifecycle_selection,
+            provider = :KernelAbstractions,
+            request_capacity = length(prepared.reads.selected),
         ),
         publication = LocalMath.inspect(prepared.publication),
     )

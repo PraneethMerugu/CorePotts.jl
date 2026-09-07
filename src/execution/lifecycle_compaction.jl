@@ -415,6 +415,15 @@ struct _PreparedLifecycleEmission{R,O,D,S,G,B}
     backend::B
 end
 
+
+function _inspect_lifecycle_emission(prepared::_PreparedLifecycleEmission)
+    return (
+        kind = :request_emission,
+        provider = :KernelAbstractions,
+        request_capacity = length(prepared.destination),
+    )
+end
+
 function _run_lifecycle_emission!(prepared::_PreparedLifecycleEmission, mcs::Integer)
     capacity = length(prepared.destination)
     _lifecycle_request_emission_kernel!(prepared.backend)(

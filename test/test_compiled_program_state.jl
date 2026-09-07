@@ -627,11 +627,11 @@ end
             )
             @test plan_report.site_count == prod(program.shape)
             @test plan_report.color_count >= 2
-            @test first.engine_workspace isa
-                  CorePotts._CheckerboardExecutionWorkspace
-            @test CorePotts._checkerboard_core(first.engine_workspace) isa
-                  CorePotts.CheckerboardWorkspace
-            @test isconcretetype(typeof(first.engine_workspace))
+            execution = CorePotts._inspect_checkerboard_execution(
+                first.engine_workspace)
+            @test execution.identity.provider === :KernelAbstractions
+            @test execution.identity.queue_policy.receipt_cumulative
+            @test !execution.identity.queue_policy.receipt_selective
             @test first.accepted + first.rejected + first.null_attempts ==
                   length(first.ownership) * Int(program.attempts_per_site)
             @test sum(CorePotts.program_tracker_values(
