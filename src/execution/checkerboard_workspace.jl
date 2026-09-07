@@ -470,10 +470,15 @@ function _validate_gpu_descriptor_plan(
             support isa DescriptorSupport || throw(ArgumentError(
                 "descriptor support must be a DescriptorSupport value"
             ))
-            source_handle = Int(descriptor_source_handle(descriptor))
-            qualified_source = 1 <= source_handle <= length(source_table) ?
-                repr(source_table[source_handle]) :
-                "<missing qualified source for handle $source_handle>"
+            qualified_source = repr(_descriptor_source(
+                source_table,
+                descriptor_source_handle(descriptor);
+                descriptor,
+                operation = descriptor isa ProposalDescriptor ?
+                    descriptor.evaluator.expression : descriptor_role(descriptor),
+                role = descriptor_role(descriptor),
+                context = :gpu_descriptor_admission,
+            ))
             support.gpu || throw(ArgumentError(
                 "descriptor source $qualified_source " *
                 "does not declare GPU support (reason code " *

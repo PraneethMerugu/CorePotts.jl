@@ -21,6 +21,32 @@ struct ParameterDomainConstraint{E <: StaticEvaluator}
     source_handle::Int32
 end
 
+function _descriptor_source(
+        source_table::Union{Tuple, AbstractVector},
+        handle::Integer;
+        descriptor = nothing,
+        operation = nothing,
+        role = nothing,
+        context,
+    )
+    index = Int(handle)
+    descriptor_identity = descriptor === nothing ? "unknown" :
+        string(nameof(typeof(descriptor)))
+    operation_identity = operation === nothing ? "unknown" :
+        string(operation isa Symbol ? operation :
+            operation isa Type ? nameof(operation) : nameof(typeof(operation)))
+    role_identity = role === nothing ? "unknown" :
+        string(role isa Symbol ? role :
+            role isa Type ? nameof(role) : nameof(typeof(role)))
+    1 <= index <= length(source_table) || throw(ArgumentError(
+        "descriptor source lookup failed in $(context): descriptor=" *
+        "$(descriptor_identity), operation=$(operation_identity), " *
+        "role=$(role_identity), handle=$(handle), " *
+        "source_count=$(length(source_table))",
+    ))
+    return @inbounds source_table[index]
+end
+
 """Homogeneous parameter-domain constraints sharing one evaluator type."""
 struct ConstraintGroup{C, V <: AbstractVector{C}}
     instances::V
@@ -76,6 +102,36 @@ struct DescriptorExecutionPlan{
         end || throw(ArgumentError(
             "descriptor execution plans admit only compiler-owned ProposalDescriptor values"
         ))
+        seen_sources = Set{Int32}()
+        for group in groups, descriptor in group.instances
+            handle = descriptor.source_handle
+            source = _descriptor_source(
+                source_table,
+                handle;
+                descriptor,
+                operation = descriptor.evaluator.expression,
+                role = descriptor.role,
+                context = :descriptor_plan_construction,
+            )
+            handle in seen_sources && throw(ArgumentError(
+                "duplicate descriptor source in descriptor plan construction: " *
+                "descriptor=$(nameof(typeof(descriptor))), " *
+                "operation=$(nameof(typeof(descriptor.evaluator.expression))), " *
+                "role=$(nameof(typeof(descriptor.role))), handle=$(handle), " *
+                "source=$(repr(source))",
+            ))
+            push!(seen_sources, handle)
+        end
+        for group in constraints, constraint in group.instances
+            _descriptor_source(
+                source_table,
+                constraint.source_handle;
+                descriptor = constraint,
+                operation = constraint.evaluator.expression,
+                role = :parameter_constraint,
+                context = :descriptor_plan_construction,
+            )
+        end
         for group in groups, descriptor in group.instances
             descriptor.role isa HamiltonianRole || continue
             _contains_tracker_fold(descriptor.evaluator.expression) || continue
@@ -98,6 +154,23 @@ struct DescriptorExecutionPlan{
             domain_resources,
         )
     end
+end
+
+function _descriptor_source(
+        plan::DescriptorExecutionPlan,
+        descriptor;
+        operation = nothing,
+        role = descriptor_role(descriptor),
+        context,
+    )
+    return _descriptor_source(
+        plan.source_table,
+        descriptor_source_handle(descriptor);
+        descriptor,
+        operation,
+        role,
+        context,
+    )
 end
 
 function DescriptorExecutionPlan(
@@ -473,9 +546,12 @@ function descriptor_plan_report(plan::DescriptorExecutionPlan)
             [
                 merge(
                     (
-                        qualified_source = plan.source_table[
-                            getfield(descriptor, :source_handle)
-                        ],
+                        qualified_source = _descriptor_source(
+                            plan,
+                            descriptor;
+                            operation = descriptor.evaluator.expression,
+                            context = :descriptor_plan_inspection,
+                        ),
                     ),
                     _compiled_descriptor_inspection(descriptor),
                 )

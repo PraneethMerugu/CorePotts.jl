@@ -16,12 +16,6 @@ _contextual_operation_identity(
 _contextual_operation_identity(operation::AbstractContextualOperation) =
     typeof(operation)
 
-function _proposal_descriptor_source(plan::DescriptorExecutionPlan, handle::Int32)
-    1 <= handle <= length(plan.source_table) || throw(ArgumentError(
-        "proposal descriptor source handle $(handle) is outside the source table"
-    ))
-    return plan.source_table[Int(handle)]
-end
 function _proposal_descriptors_in_source_order(plan::DescriptorExecutionPlan)
     descriptors = ProposalDescriptor[]
     for group in plan.groups, descriptor in group.instances
@@ -180,7 +174,12 @@ function _proposal_gather_inventory(plan::DescriptorExecutionPlan)
     records = Any[]
     descriptors = _proposal_descriptors_in_source_order(plan)
     for descriptor in descriptors
-        source = _proposal_descriptor_source(plan, descriptor.source_handle)
+        source = _descriptor_source(
+            plan,
+            descriptor;
+            operation = descriptor.evaluator.expression,
+            context = :proposal_requirement_lowering,
+        )
         _validate_proposal_footprint(descriptor.access.footprint, source)
         _record_proposal_expression!(
             records,
@@ -569,14 +568,6 @@ function _checkerboard_scientific_requirements(
 end
 
 
-function _accepted_descriptor_source(
-        descriptor_plan::DescriptorExecutionPlan, source_handle::Int32)
-    return 1 <= source_handle <= length(descriptor_plan.source_table) ?
-        _proposal_descriptor_source(descriptor_plan, source_handle) :
-        source_handle
-end
-
-
 function _compile_accepted_relationship_terms(
         stage_plan::StageExecutionPlan,
         descriptor_plan::DescriptorExecutionPlan,
@@ -592,8 +583,13 @@ function _compile_accepted_relationship_terms(
         relationship_ordinal, record = indexed
         descriptor = record.descriptor
         effect = descriptor.effect
-        source = _accepted_descriptor_source(
-            descriptor_plan, descriptor.source_handle)
+        source = _descriptor_source(
+            descriptor_plan,
+            descriptor;
+            operation = descriptor.effect,
+            role = descriptor.stage,
+            context = :accepted_relationship_lowering,
+        )
         _validate_proposal_footprint(descriptor.access.footprint, source)
         location = _relationship_location(
             relationship_schemas, Int(effect.relationship_slot))
@@ -694,8 +690,13 @@ function _compile_accepted_site_terms(
     records = _accepted_site_descriptors(stage_plan)
     return Tuple(map(records) do record
         descriptor = record.descriptor
-        source = _accepted_descriptor_source(
-            descriptor_plan, descriptor.source_handle)
+        source = _descriptor_source(
+            descriptor_plan,
+            descriptor;
+            operation = descriptor.effect,
+            role = descriptor.stage,
+            context = :accepted_site_lowering,
+        )
         _validate_proposal_footprint(descriptor.access.footprint, source)
         _ExecutableAcceptedSiteTerm(
             _compile_proposal_expression(
@@ -912,7 +913,12 @@ function _compile_proposal_terms(
     )
     inventory = _proposal_gather_inventory(plan)
     return Tuple(map(inventory.descriptors) do descriptor
-        source = _proposal_descriptor_source(plan, descriptor.source_handle)
+        source = _descriptor_source(
+            plan,
+            descriptor;
+            operation = descriptor.evaluator.expression,
+            context = :proposal_term_lowering,
+        )
         role = descriptor.role
         role isa Union{
             ProposalDriveRole,
