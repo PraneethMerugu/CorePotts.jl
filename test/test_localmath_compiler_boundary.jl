@@ -277,9 +277,15 @@ _compiler_test_tracker_plan() = CorePotts.TrackerExecutionPlan(
 )
 
 _compiler_bounded_sum_finish(sum, count) = sum
+struct _CompilerFloat32Map end
+@inline (::_CompilerFloat32Map)(value::Int32) = Float32(value)
+struct _CompilerFloat32Mean end
+@inline (::_CompilerFloat32Mean)(sum::Float32, count::Int32) =
+    sum / Float32(count)
 
 @testset "bounded tracker gathers preserve relation-lane semantics" begin
-    fold = LocalMath.bounded_fold(
+    fold = LocalMath.BoundedFold(
+        Int32,
         identity, +, Int32(0), _compiler_bounded_sum_finish;
         domain = LocalMath.Where(>=(Int32(0))),
         oninvalid = LocalMath.RejectInvalid(),
@@ -303,6 +309,14 @@ _compiler_bounded_sum_finish(sum, count) = sum
     reference = CorePotts._ExecutableTrackerKey{:cell_volume,0}()
     @test CorePotts._gathered_bounded_fold(
         fold, reference, Int32(1), context) == Int32(4)
+    mapped_fold = LocalMath.BoundedFold(
+        Int32, _CompilerFloat32Map(), +, 0.0f0, _CompilerFloat32Mean();
+        onempty = LocalMath.FillEmpty(Float32(NaN)),
+    )
+    mapped = CorePotts._gathered_bounded_fold(
+        mapped_fold, reference, Int32(1), context)
+    @test mapped === 2.0f0
+    @test mapped isa Float32
     @test_throws ArgumentError CorePotts._gathered_bounded_tracker_samples(
         Val(:cell_surface), (descriptor,), samples)
 
