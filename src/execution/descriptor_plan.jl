@@ -21,6 +21,22 @@ struct ParameterDomainConstraint{E <: StaticEvaluator}
     source_handle::Int32
 end
 
+function _descriptor_source_context(
+        descriptor, operation, role, handle; source = nothing)
+    descriptor_identity = descriptor === nothing ? "unknown" :
+        string(nameof(typeof(descriptor)))
+    operation_identity = operation === nothing ? "unknown" :
+        string(operation isa Symbol ? operation :
+            operation isa Type ? nameof(operation) : nameof(typeof(operation)))
+    role_identity = role === nothing ? "unknown" :
+        string(role isa Symbol ? role :
+            role isa Type ? nameof(role) : nameof(typeof(role)))
+    suffix = source === nothing ? "" : ", source=$(repr(source))"
+    return "descriptor=$(descriptor_identity), " *
+        "operation=$(operation_identity), role=$(role_identity), " *
+        "handle=$(handle)$(suffix)"
+end
+
 function _descriptor_source(
         source_table::Union{Tuple, AbstractVector},
         handle::Integer;
@@ -30,18 +46,10 @@ function _descriptor_source(
         context,
     )
     index = Int(handle)
-    descriptor_identity = descriptor === nothing ? "unknown" :
-        string(nameof(typeof(descriptor)))
-    operation_identity = operation === nothing ? "unknown" :
-        string(operation isa Symbol ? operation :
-            operation isa Type ? nameof(operation) : nameof(typeof(operation)))
-    role_identity = role === nothing ? "unknown" :
-        string(role isa Symbol ? role :
-            role isa Type ? nameof(role) : nameof(typeof(role)))
+    source_context = _descriptor_source_context(
+        descriptor, operation, role, handle)
     1 <= index <= length(source_table) || throw(ArgumentError(
-        "descriptor source lookup failed in $(context): descriptor=" *
-        "$(descriptor_identity), operation=$(operation_identity), " *
-        "role=$(role_identity), handle=$(handle), " *
+        "descriptor source lookup failed in $(context): $(source_context), " *
         "source_count=$(length(source_table))",
     ))
     return @inbounds source_table[index]
@@ -115,10 +123,9 @@ struct DescriptorExecutionPlan{
             )
             handle in seen_sources && throw(ArgumentError(
                 "duplicate descriptor source in descriptor plan construction: " *
-                "descriptor=$(nameof(typeof(descriptor))), " *
-                "operation=$(nameof(typeof(descriptor.evaluator.expression))), " *
-                "role=$(nameof(typeof(descriptor.role))), handle=$(handle), " *
-                "source=$(repr(source))",
+                _descriptor_source_context(
+                    descriptor, descriptor.evaluator.expression,
+                    descriptor.role, handle; source),
             ))
             push!(seen_sources, handle)
         end

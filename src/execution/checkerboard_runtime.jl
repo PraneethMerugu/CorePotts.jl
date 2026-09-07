@@ -274,30 +274,23 @@ function _inspect_checkerboard_execution(
         lifecycle_reductions = execution.lifecycle_reductions === nothing ?
             nothing : map(execution.lifecycle_reductions) do reductions
                 (
-                    direct = (owner = :CorePotts,
-                        executor = :KernelAbstractions,
-                        lowering = :corepotts_lifecycle_status_ka_v1),
-                    planning = (owner = :CorePotts,
-                        executor = :KernelAbstractions,
-                        lowering = :corepotts_lifecycle_status_ka_v1),
+                    direct = _inspect_lifecycle_status_reduction(
+                        reductions.direct),
+                    planning = _inspect_lifecycle_status_reduction(
+                        reductions.planning),
                     site_index = LocalMath.inspect(reductions.site_index),
                     request_index = LocalMath.inspect(
                         reductions.request_index
                     ),
-                    emission = (
-                        owner = :CorePotts,
-                        executor = :KernelAbstractions,
-                        lowering = :corepotts_lifecycle_emission_ka_v1,
-                    ),
+                    emission = _inspect_lifecycle_emission(
+                        reductions.emission),
                     selection = _inspect_lifecycle_selection(
                         reductions.selection
                     ),
                 )
             end,
-        completion_receipts = (
-            mechanics = execution.receipts.mechanics,
-            lifecycle = execution.receipts.lifecycle,
-        ),
+        completion_receipts = _inspect_checkerboard_receipts(
+            execution.receipts),
         order = (
             :state_initialization_and_report_reset,
             :color_mechanics,
