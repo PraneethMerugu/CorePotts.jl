@@ -25,7 +25,9 @@ Metal = "1"
 ParallelTestRunner = "2.8"
 SHA = "0.7"
 StaticArrays = "1"
+Statistics = "1.11"
 StructArrays = "0.7"
+TOML = "1"
 Test = "1"
 julia = "1.12"
 
@@ -39,7 +41,9 @@ CorePottsMetalExt = "Metal"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 ParallelTestRunner = "d3525ed8-44d0-4b2c-a655-542cee43accc"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "ExplicitImports", "ParallelTestRunner", "Test"]
+test = ["Aqua", "ExplicitImports", "ParallelTestRunner", "Statistics", "TOML", "Test"]
