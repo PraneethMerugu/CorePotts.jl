@@ -22,7 +22,7 @@ struct ParameterDomainConstraint{E <: StaticEvaluator}
 end
 
 function _descriptor_source(
-        source_table::AbstractVector,
+        source_table::Union{Tuple, AbstractVector},
         handle::Integer;
         descriptor = nothing,
         operation = nothing,

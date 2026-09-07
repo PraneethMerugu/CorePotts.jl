@@ -99,6 +99,10 @@ function _source_test_plan(descriptors, sources)
 end
 
 @testset "descriptor sources are checked once and never degrade to handles" begin
+    @test CorePotts._descriptor_source((:tuple_source,), 1;
+        operation = :tuple_lookup, role = :stage,
+        context = :compiler_tuple_source) === :tuple_source
+
     descriptor = _source_test_descriptor(2)
     error = try
         _source_test_plan((descriptor,), (:only_source,))
