@@ -1,7 +1,18 @@
 using Test
 import CorePotts
+import LocalMath
 
 _required_science_read(value) = ((value = Some(value), present = true),)
+
+struct ScientificTrackerReadEvaluator{Layout}
+    layout::Layout
+end
+
+function (evaluator::ScientificTrackerReadEvaluator)(item, reads, parameters)
+    offset = CorePotts._checkerboard_read_offset(evaluator.layout, Val(:trackers))
+    value = only(CorePotts._checkerboard_scientific_tracker_values(reads, Val(1), offset))
+    return (tracker = LocalMath.UniqueValue(value),)
+end
 
 @testset "scientific decoding follows optional read declarations" begin
     for has_parameters in (false, true), has_contact in (false, true)
@@ -59,6 +70,9 @@ _required_science_read(value) = ((value = Some(value), present = true),)
                 reads, Val(1), tracker_offset
             )
         ) == ((11, 13),)
+        evaluator = ScientificTrackerReadEvaluator(offsets)
+        LocalMath.Evaluator(evaluator)
+        @test @inferred(evaluator(Int32(1), reads, ())).tracker.value == (11, 13)
         bounded_offset = CorePotts._checkerboard_read_offset(offsets, Val(:bounded_trackers))
         bounded = CorePotts._checkerboard_scientific_tracker_gathers(
             reads, Val(Int(has_contact)), bounded_offset
@@ -70,6 +84,19 @@ _required_science_read(value) = ((value = Some(value), present = true),)
         )
         @test only(state).sites == (19, 19)
     end
+end
+
+@testset "wide scientific read groups remain admissible and concretely decoded" begin
+    prefix_names = ntuple(index -> Symbol(:prefix_, index), 40)
+    declared, layout = CorePotts._checkerboard_scientific_read_groups(
+        (
+            core = NamedTuple{prefix_names}(ntuple(_required_science_read, 40)),
+            trackers = (tracker = _required_science_read((41, 43)),),
+        )
+    )
+    evaluator = ScientificTrackerReadEvaluator(layout)
+    LocalMath.Evaluator(evaluator)
+    @test @inferred(evaluator(Int32(1), values(declared), ())).tracker.value == (41, 43)
 end
 
 @testset "scientific read declarations reject ambiguous names" begin

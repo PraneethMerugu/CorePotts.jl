@@ -329,7 +329,7 @@ end
 
 struct _CheckerboardProposalContextPlan{
         N, Handles, Ranges, TrackerDescriptors, BoundedTrackerDescriptors, MomentDescriptor,
-        RelationshipSchemas, ReadOffsets,
+        RelationshipSchemas, ReadLayout,
     }
     shape::NTuple{N, Int}
     trajectory_seed::UInt64
@@ -339,29 +339,34 @@ struct _CheckerboardProposalContextPlan{
     bounded_tracker_descriptors::BoundedTrackerDescriptors
     moment_descriptor::MomentDescriptor
     relationship_schemas::RelationshipSchemas
-    read_offsets::ReadOffsets
+    read_layout::ReadLayout
 end
 
+# Only group identity and tuple arity enter the concrete callable. Actual
+# accesses remain in the LocalMath declaration, never captured by execution.
+struct _CheckerboardReadLayout{Names, Groups} end
+
 # The declaration order also owns decoder offsets. This runs only when the
-# LocalMath law is declared; its Val result specializes away in the evaluator.
+# LocalMath law is declared; the layout has no runtime storage.
 function _checkerboard_scientific_read_groups(groups::NamedTuple)
-    offset = 0
-    offsets = map(values(groups)) do group
-        start = offset
-        offset += length(group)
-        start
-    end
     reads = merge(values(groups)...)
-    length(reads) == offset || throw(
+    length(reads) == sum(length, values(groups)) || throw(
         ArgumentError(
             "checkerboard scientific read groups must have distinct names"
         )
     )
-    return reads, Val(NamedTuple{keys(groups)}(offsets))
+    widths = Tuple{map(group -> NTuple{length(group), Nothing}, values(groups))...}
+    return reads, _CheckerboardReadLayout{keys(groups), widths}()
 end
 
-@inline _checkerboard_read_offset(::Val{Offsets}, ::Val{Group}) where {Offsets, Group} =
-    Val(getfield(Offsets, Group))
+@generated function _checkerboard_read_offset(
+        ::_CheckerboardReadLayout{Names, Groups}, ::Val{Group}
+    ) where {Names, Groups, Group}
+    index = findfirst(==(Group), Names)
+    index === nothing && error("unknown checkerboard scientific read group")
+    offset = sum(fieldcount, Groups.parameters[1:(index - 1)]; init = 0)
+    return :(Val($offset))
+end
 
 struct _CheckerboardScientificEvaluator{
         T,Degree,HasParameters,Terms,Accepted,Relationships,
@@ -978,7 +983,7 @@ end
     volumes = something(@inbounds getfield(reads, 4)[1].value)
     actionable = something(@inbounds getfield(reads, 5)[1].value)
     semantic = something(@inbounds getfield(reads, 6)[1].value)
-    offsets = plan.read_offsets
+    offsets = plan.read_layout
     science_parameters = _checkerboard_scientific_parameters(
         reads, Val(HasParameters), _checkerboard_read_offset(offsets, Val(:parameters))
     )
@@ -1462,7 +1467,7 @@ function _checkerboard_scientific_declaration(
             affected_contact_state_accesses...,
         )
     )
-    scientific_reads, read_offsets = _checkerboard_scientific_read_groups(
+    scientific_reads, read_layout = _checkerboard_scientific_read_groups(
         (
             core = core_reads,
             parameters = parameter_reads,
@@ -1483,7 +1488,7 @@ function _checkerboard_scientific_declaration(
         bounded_tracker_descriptors,
         moment_descriptor,
         relationship_schemas_compiled,
-        read_offsets,
+        read_layout,
     )
     scientific_evaluator = _CheckerboardScientificEvaluator{
         T, contact_degree, !iszero(parameter_count),
