@@ -1,6 +1,7 @@
 import StaticArrays: SVector
 
 struct NonfiniteStructuredStageValue end
+@inline (::NonfiniteStructuredStageValue)(::Float32) = NaN32
 @inline (::NonfiniteStructuredStageValue)(value::SVector{2, Float32}) =
     SVector(value[1], NaN32)
 @inline (::NonfiniteStructuredStageValue)(value::NamedTuple) =
@@ -78,6 +79,7 @@ _structured_stage_values(snapshot, handles) =
 
 @testset "logical model-state assignments preserve transaction boundaries" begin
     pairs = (
+        (1.0f0, 3.0f0),
         (SVector(1.0f0, 2.0f0), SVector(3.0f0, 4.0f0)),
         (
             (active = false, count = Int32(2), polarity = SVector(1.0f0, 2.0f0)),
