@@ -321,16 +321,22 @@ function run_localmath_checkerboard_failures(
         provider_program = _boundary_program(
             (6, 6); branch = :provider_failure
         )
-        provider_runtime = _localmath_canonical_runtime(
-            device_array, provider_program, initial, seed, replica
+        # Provider failure poisons its preparing task's scope. Keep the
+        # deliberate failure in its own owner task so later fixtures remain usable.
+        provider_failure = fetch(
+            @async begin
+                provider_runtime = _localmath_canonical_runtime(
+                    device_array, provider_program, initial, seed, replica
+                )
+                try
+                    CorePotts.enqueue_program_mcs!(provider_runtime)
+                    CorePotts.settle_program!(provider_runtime, request)
+                    nothing
+                catch error
+                    error
+                end
+            end
         )
-        provider_failure = try
-            CorePotts.enqueue_program_mcs!(provider_runtime)
-            CorePotts.settle_program!(provider_runtime, request)
-            nothing
-        catch error
-            error
-        end
         @test provider_failure isa CorePotts.LifecycleBackendFailure
         @test provider_failure.first_possible_mcs == 1
         @test provider_failure.last_possible_mcs == 1
