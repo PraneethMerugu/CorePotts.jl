@@ -99,6 +99,12 @@ ordinary concrete callables used inside `OperationExpression`; construction
 preserves the promoted element type. Authoring compilers own shape and index
 admission, including proving literal indices in bounds before device execution.
 
+`operation_callable(Val(:product_field), v"1.0.0")` selects one field of a
+named product by its declared ordinal without converting its value. Authoring
+compilers prove that the ordinal selects an existing field and retain the
+selected field's type, shape, and units. Field spellings and symbolic declaration
+types do not enter the execution callable or create separate operation schemas.
+
 ## Diagnosing a settled failure
 
 `program_failure_report(runtime)` is passive: it returns the cached immutable

@@ -267,6 +267,22 @@ end
 struct FixedVectorConstruction end
 @inline (::FixedVectorConstruction)(arguments...) = StaticArrays.SVector(arguments)
 
+struct ProductFieldProjection{Ordinal} end
+@inline (::ProductFieldProjection{Ordinal})(value::NamedTuple) where {Ordinal} =
+    getfield(value, Ordinal)
+
+function OperationExpression(
+        ::typeof(getfield), arguments::Tuple{E, LiteralExpression{I}},
+    ) where {E <: AbstractStaticExpression, I <: Integer}
+    ordinal = last(arguments).value
+    !(ordinal isa Bool) && ordinal > 0 || throw(ArgumentError("product field requires a positive literal ordinal"))
+    # A heterogeneous product needs the proven field selection in the callable
+    # type. Consume the cold literal here, before any execution path diverges.
+    operation = ProductFieldProjection{Int(ordinal)}()
+    values = (first(arguments),)
+    return OperationExpression{typeof(operation), typeof(values)}(operation, values)
+end
+
 @inline function (comparison::NumericComparison)(left, right)
     if left isa Integer && right isa AbstractFloat
         return comparison.operation(typeof(right)(left), right)
@@ -435,6 +451,7 @@ for (identity, operation) in (
         :square_root => sqrt,
         :fixed_vector => FixedVectorConstruction(),
         :fixed_index => getindex,
+        :product_field => getfield,
     )
     @eval operation_callable(
         ::Val{$(QuoteNode(identity))}, version::VersionNumber
