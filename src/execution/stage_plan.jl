@@ -13,7 +13,7 @@ abstract type AbstractStageSiteSelector end
 struct ProposalTargetStageSite <: AbstractStageSiteSelector end
 """Bind stage evaluation to the current explicit iteration site."""
 struct IterationStageSite <: AbstractStageSiteSelector end
-"""Select the sole scalar value of a model-scoped state block."""
+"""Select the sole logical value of a model-scoped state block."""
 struct ModelStageSite <: AbstractStageSiteSelector end
 
 """Read one declared state block at the site bound by a compiled stage."""
@@ -83,12 +83,12 @@ operation_context_supported(
 
 abstract type AbstractCompiledEffect end
 
-"""Assign a scalar value to one site in a declared auxiliary-state block."""
+"""Assign one logical value to one site in a declared auxiliary-state block."""
 struct SiteAssignmentEffect{H <: StateHandle} <: AbstractCompiledEffect
     target::H
 end
 
-"""Assign one scalar model-scoped state value once at an after-MCS boundary."""
+"""Assign one model-scoped logical value once at an after-MCS boundary."""
 struct ModelAssignmentEffect{H <: StateHandle} <: AbstractCompiledEffect
     target::H
 end
@@ -407,6 +407,9 @@ struct StageEvaluation{T}
     value::T
 end
 
+_state_value_zero(::Type{StageEvaluation{T}}) where {T} =
+    StageEvaluation(false, _state_value_zero(T))
+
 mutable struct StageRuntimeBuffers{A, S, M, R}
     accepted_copy::A
     after_mcs::S
@@ -431,7 +434,7 @@ _stage_handle_element_type(handle::StateHandle, ::Type{T}) where {T} =
 
 function _stage_evaluation_buffer(descriptor, ::Type{T}) where {T}
     V = _stage_value_type(descriptor.effect, T)
-    return Ref(StageEvaluation(false, _state_value_zero(V)))
+    return Ref(_state_value_zero(StageEvaluation{V}))
 end
 
 function allocate_stage_runtime_buffers(

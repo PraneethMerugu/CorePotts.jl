@@ -27,7 +27,8 @@ function _metal_model_assignment_descriptor()
     handle = only(CorePotts.StateLayout([schema]).entries).handle
     read_model = CorePotts.OperationExpression(
         CorePotts.operation_callable(
-            Val(:model_bound_state_value), v"1.0.0"),
+            Val(:model_bound_state_value), v"1.0.0"
+        ),
         CorePotts.StateExpression(handle),
     )
     value = CorePotts.OperationExpression(
@@ -69,11 +70,12 @@ end
     )
     model_storage = Metal.MtlArray(Float32[2])
     status_storage = Metal.MtlArray(
-        CorePotts.ProgramStatus[CorePotts.ProgramStatus()])
+        CorePotts.ProgramStatus[CorePotts.ProgramStatus()]
+    )
     prepared = LocalMath.prepare(
-        declaration.law,
+        LocalMath.sequence(declaration.evaluation, declaration.publication),
         only(declaration.fields) => model_storage,
-        declaration.scratch => LocalMath.Allocate(0.0f0),
+        declaration.scratch => LocalMath.Allocate(CorePotts.StageEvaluation(false, 0.0f0)),
         declaration.status_field => status_storage,
         declaration.initial_gate => LocalMath.Allocate(false),
         declaration.refreshed_gate => LocalMath.Allocate(false),

@@ -532,10 +532,10 @@ end
 end
 
 struct _CheckerboardParameterView{
-        N,T,A<:AbstractVector{T},
-    } <: AbstractVector{NTuple{N,T}}
+        P, N, T, A <: AbstractVector{T},
+    } <: AbstractArray{NTuple{P, T}, N}
     values::A
-    extent::Int
+    shape::NTuple{N, Int}
 end
 
 struct _GatheredRelationshipSchema{P,D,N}
@@ -825,36 +825,47 @@ end
 end
 
 function _checkerboard_parameter_view(
-        values::AbstractVector{T}, ::Val{N}, extent::Integer,
-    ) where {T,N}
-    length(values) >= N || throw(ArgumentError(
-        "checkerboard parameter storage is shorter than its compiled schema"))
-    extent >= 0 || throw(ArgumentError(
-        "checkerboard parameter view extent cannot be negative"))
-    return _CheckerboardParameterView{N,T,typeof(values)}(
-        values, Int(extent))
+        values::AbstractVector{T}, ::Val{P}, shape::NTuple{N, <:Integer},
+    ) where {T, P, N}
+    length(values) >= P || throw(
+        ArgumentError(
+            "checkerboard parameter storage is shorter than its compiled schema"
+        )
+    )
+    all(>=(0), shape) || throw(
+        ArgumentError(
+            "checkerboard parameter view dimensions cannot be negative"
+        )
+    )
+    return _CheckerboardParameterView{P, N, T, typeof(values)}(
+        values, map(Int, shape)
+    )
 end
 
 Base.IndexStyle(::Type{<:_CheckerboardParameterView}) = IndexLinear()
-Base.size(view::_CheckerboardParameterView) = (view.extent,)
-Base.length(view::_CheckerboardParameterView) = view.extent
-Base.strides(::_CheckerboardParameterView) = (1,)
+Base.size(view::_CheckerboardParameterView) = view.shape
+Base.length(view::_CheckerboardParameterView) = prod(view.shape)
+Base.strides(view::_CheckerboardParameterView{P, N}) where {P, N} = ntuple(Val(N)) do dimension
+    dimension == 1 && return 1
+    return prod(view.shape[index] for index in 1:(dimension - 1))
+end
 @inline function Base.getindex(
-        view::_CheckerboardParameterView{N}, index::Int,
-    ) where {N}
+        view::_CheckerboardParameterView{P}, index::Int,
+    ) where {P}
     @boundscheck checkbounds(view, index)
-    return ntuple(N) do slot
+    return ntuple(P) do slot
         @inbounds view.values[slot]
     end
 end
 KernelAbstractions.get_backend(view::_CheckerboardParameterView) =
     KernelAbstractions.get_backend(view.values)
-Adapt.adapt_structure(to, view::_CheckerboardParameterView{N}) where {N} =
+Adapt.adapt_structure(to, view::_CheckerboardParameterView{P}) where {P} =
     _checkerboard_parameter_view(
-        Adapt.adapt(to, view.values), Val(N), view.extent)
+    Adapt.adapt(to, view.values), Val(P), view.shape
+)
 
 @inline _checkerboard_cartesian_site(
-    shape::NTuple{1,<:Integer}, linear::Int32,
+    shape::NTuple{1, <:Integer}, linear::Int32,
 ) = CartesianIndex(linear)
 @inline function _checkerboard_cartesian_site(
         shape::NTuple{2,<:Integer}, linear::Int32)

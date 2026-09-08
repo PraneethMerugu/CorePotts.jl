@@ -250,7 +250,7 @@ end
     handle = first(handles)
     value = first(values)
     baseline = ownership_changed && handle in clear_handles ?
-        zero(value) : value
+        _state_value_zero(typeof(value)) : value
     result = _apply_accepted_site_assignments(
         assignments, evaluations, handle, baseline)
     return (LocalMath.ConditionalUniqueValue(result, accepted),

@@ -331,18 +331,18 @@ function _checkerboard_state_field_bindings(fields::Tuple, handles::Tuple, state
 end
 
 
-_checkerboard_parameter_binding(::Nothing, state, extent) = ()
+_checkerboard_parameter_binding(::Nothing, state, shape) = ()
 function _checkerboard_parameter_binding(
-        field::LocalMath.Field{T}, state, extent,
+        field::LocalMath.Field{T}, state, shape,
     ) where {T<:Tuple}
     N = fieldcount(T)
     N > 0 && all(==(fieldtype(T, 1)), fieldtypes(T)) || throw(ArgumentError(
         "checkerboard parameter fields require a nonempty homogeneous tuple"))
     return (field => _checkerboard_parameter_view(
-        state.parameters, Val(N), extent),)
+        state.parameters, Val(N), shape),)
 end
 
-_checkerboard_storage_zero(::Type{T}) where {T} = zero(T)
+_checkerboard_storage_zero(::Type{T}) where {T} = _state_value_zero(T)
 @generated function _checkerboard_storage_zero(::Type{T}) where {T<:Tuple}
     types = fieldtypes(T)
     return Expr(:tuple, (
@@ -556,7 +556,7 @@ function _checkerboard_color_bindings(
     volumes = tracker_values(
         state.program.tracker_plan, state.trackers, Val(:cell_volume))
     parameter_binding = _checkerboard_parameter_binding(
-        declaration.science_parameters, state, maximum_batch)
+        declaration.science_parameters, state, (maximum_batch,))
     state_bindings = _checkerboard_state_field_bindings(
         declaration.state_fields, declaration.state_handles, state)
     contact_bindings = _checkerboard_contact_bindings(declaration.contact)

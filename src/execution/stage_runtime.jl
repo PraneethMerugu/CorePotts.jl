@@ -131,6 +131,13 @@ operation_context_supported(
     ).values[site]
 end
 
+@inline function apply_resource_operation(
+        ::ResourceOperation{:field_value}, arguments,
+        context::_RelationshipStageEvaluationContext,
+    )
+    return state_value(context, first(arguments), last(arguments))
+end
+
 @inline _compiled_evaluator_parameters(
     context::_SiteStageEvaluationContext
 ) = context.runtime.parameters
@@ -189,7 +196,7 @@ end
 end
 
 @inline function descriptor_emit_requests!(
-        requests::Base.RefValue{StageEvaluation{T}},
+        requests::Ref{StageEvaluation{T}},
         descriptor::CompiledStageDescriptor{
             C, V, E, AcceptedCopyStage,
         },
@@ -253,7 +260,7 @@ end
 end
 
 @inline function descriptor_emit_requests!(
-        requests::Base.RefValue{StageEvaluation{T}},
+        requests::Ref{StageEvaluation{T}},
         descriptor::CompiledStageDescriptor{
             C, V, E, AcceptedCopyStage,
         },
@@ -318,7 +325,7 @@ end
 end
 
 @inline function descriptor_emit_requests!(
-        scratch::Base.RefValue{StageEvaluation{T}},
+        scratch::Ref{StageEvaluation{T}},
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
@@ -492,7 +499,7 @@ function _clear_ownership_changed_state!(
             lifecycle.declared : nothing
         declared === :ClearOnOwnershipChange || continue
         values = state_block(state, entry.handle).values
-        @inbounds values[site] = zero(eltype(values))
+        @inbounds values[site] = _state_value_zero(eltype(values))
     end
     return state
 end
@@ -500,7 +507,7 @@ end
 @inline _clear_ownership_changed_handles!(::Tuple{}, state, site) = state
 @inline function _clear_ownership_changed_handles!(handles::Tuple, state, site)
     values = state_block(state, first(handles)).values
-    @inbounds values[site] = zero(eltype(values))
+    @inbounds values[site] = _state_value_zero(eltype(values))
     return _clear_ownership_changed_handles!(Base.tail(handles), state, site)
 end
 
@@ -656,7 +663,7 @@ function _apply_after_mcs_descriptor!(
     values = state_block(runtime.descriptor_state, descriptor.effect.target).values
     length(values) == 1 || throw(
         ArgumentError(
-            "compiled model assignment target is not scalar"
+            "compiled model assignment target must contain exactly one logical value"
         )
     )
     @inbounds values[firstindex(values)] = evaluation.value

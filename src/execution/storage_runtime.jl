@@ -18,7 +18,11 @@ end
 @inline _state_value_isfinite(::Integer) = true
 @inline _state_value_isfinite(value::Complex) =
     _state_value_isfinite(real(value)) && _state_value_isfinite(imag(value))
-@inline _state_value_isfinite(value::Union{Tuple, NamedTuple, StaticArrays.StaticArray}) =
+@inline _state_value_isfinite(::Tuple{}) = true
+@inline _state_value_isfinite(value::Tuple) =
+    _state_value_isfinite(first(value)) && _state_value_isfinite(Base.tail(value))
+@inline _state_value_isfinite(value::NamedTuple) = _state_value_isfinite(values(value))
+@inline _state_value_isfinite(value::StaticArrays.StaticArray) =
     all(_state_value_isfinite, value)
 
 function state_storage_class(schema::StateBlockSchema)

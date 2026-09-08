@@ -9,14 +9,17 @@ Metal.allowscalar(false)
 const COREPOTTS_METAL_WITNESSES = (
     "corepotts_feasibility.jl",
     "corepotts_stage_boundaries.jl",
+    "corepotts_structured_transactions.jl",
     "corepotts_runtime_conformance.jl",
 )
 
 @testset "CorePotts Metal runner inventory" begin
-    discovered = Set(filter(
-        name -> endswith(name, ".jl") && name != "runtests.jl",
-        readdir(@__DIR__),
-    ))
+    discovered = Set(
+        filter(
+            name -> endswith(name, ".jl") && name != "runtests.jl",
+            readdir(@__DIR__),
+        )
+    )
     @test discovered == Set(COREPOTTS_METAL_WITNESSES)
 end
 

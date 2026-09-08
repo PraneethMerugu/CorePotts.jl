@@ -159,6 +159,13 @@ end
     )
 end
 
+@inline function apply_resource_operation(
+        ::ResourceOperation{:field_value}, arguments,
+        context::_GatheredRelationshipStageContext,
+    )
+    return state_value(context, first(arguments), last(arguments))
+end
+
 @inline stage_site(
     ::IterationStageSite,
     context::_GatheredSiteStageContext
@@ -275,7 +282,7 @@ struct _CompiledSiteStageEvaluator{HasParameters, C, V, H, Z, S, B, O, R}
     source_handle::Int32
 end
 
-struct _CompiledModelStageEvaluator{HasParameters, C, V, H, Z}
+struct _CompiledModelStageEvaluator{HasParameters, Evaluation, C, V, H, Z}
     condition::C
     value::V
     handles::H
@@ -314,7 +321,8 @@ end
         Int32(0), Int32(0), Int32(0)
     )
     return (
-        value = LocalMath.UniqueValue(result),
+        value = result,
+        enabled,
         status = LocalMath.RoutedResolutionValue(
             Int32(1), item, status, invalid
         ),
@@ -344,16 +352,17 @@ end
         stage_site(IterationStageSite(), context)
     )
     value = condition isa Bool && condition ?
-        _execute_proposal_scalar(evaluator.value, context) : baseline
-    return _compiled_stage_result(
+        convert(typeof(baseline), _execute_proposal_scalar(evaluator.value, context)) : baseline
+    result = _compiled_stage_result(
         condition, value, baseline, evaluator.source_handle,
         item, getfield(parameters, 1)
     )
+    return (value = LocalMath.UniqueValue(result.value), status = result.status)
 end
 
-@inline function (evaluator::_CompiledModelStageEvaluator{HasParameters})(
+@inline function (evaluator::_CompiledModelStageEvaluator{HasParameters, Evaluation})(
         item::Int32, reads, parameters
-    ) where {HasParameters}
+    ) where {HasParameters, Evaluation}
     count = length(evaluator.handles)
     values = _stage_read_prefix(reads, evaluator.handles)
     science_parameters = HasParameters ?
@@ -368,20 +377,35 @@ end
         context, _stage_state_reference(target, Val(1)), 1
     )
     value = condition isa Bool && condition ?
-        _execute_proposal_scalar(evaluator.value, context) : baseline
-    return _compiled_stage_result(
+        convert(typeof(baseline), _execute_proposal_scalar(evaluator.value, context)) : baseline
+    result = _compiled_stage_result(
         condition, value, baseline, evaluator.source_handle,
         item, getfield(parameters, 1)
     )
+    return (
+        value = LocalMath.UniqueValue(Evaluation(result.enabled, result.value)),
+        status = result.status,
+    )
 end
 
-struct _CompiledStageCommit end
-@inline function (::_CompiledStageCommit)(item::Int32, reads, parameters)
+struct _CompiledStageCommit{E <: AbstractCompiledEffect} end
+_CompiledStageCommit(::E) where {E <: AbstractCompiledEffect} = _CompiledStageCommit{E}()
+
+@inline function (::_CompiledStageCommit{E})(item::Int32, reads, parameters) where {
+        E <: Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect},
+    }
     return (
         value = LocalMath.UniqueValue(
             something(@inbounds reads[1][1].value)
         ),
     )
+end
+
+@inline function (::_CompiledStageCommit{E})(item::Int32, reads, parameters) where {
+        E <: ModelAssignmentEffect,
+    }
+    evaluation = something(@inbounds reads[1][1].value)
+    return (value = LocalMath.ConditionalUniqueValue(evaluation.value, evaluation.enabled),)
 end
 
 struct _CheckerboardMomentTupleView{
@@ -790,7 +814,7 @@ end
     end
 end
 
-function _stage_gate_snapshot(external, destination, label)
+function _stage_gate_snapshot(external, destination, label; parameters = ())
     space = external.space
     identity = LocalMath.IdentityRelation(space)
     return LocalMath.Stage(
@@ -806,7 +830,7 @@ function _stage_gate_snapshot(external, destination, label)
                 LocalMath.Unique(Bool)
             ),
         ),
-        LocalMath.Evaluator(_CheckerboardAcceptedGateCopy()),
+        LocalMath.Evaluator(_CheckerboardAcceptedGateCopy(), parameters),
         LocalMath.Control(),
         LocalMath.SourceOrigin(@__FILE__, @__LINE__; label),
     )
@@ -957,7 +981,10 @@ end
 
 function _stage_state_fields(space, handles::Tuple, ::Type{T}) where {T}
     return map(handles) do handle
-        Tuple(Int.(handle_shape(handle))) == Tuple(size(space)) || throw(
+        shape = Tuple(Int.(handle_shape(handle)))
+        shape_matches = space isa LocalMath.Space{_CheckerboardStageModelDomain} ?
+            prod(shape) == 1 : shape == Tuple(size(space))
+        shape_matches || throw(
             ArgumentError("after-MCS state handle shape does not match its source domain")
         )
         LocalMath.Field(space, _stage_handle_element_type(handle, T))
@@ -972,6 +999,13 @@ function _stage_access_tuple(fields::Tuple, relation)
         ), fields
     )
     return NamedTuple{names}(values)
+end
+
+function _model_stage_state_storage(model, handle, state)
+    values = state_block(state.descriptor_state, handle).values
+    # A model has one logical value even when its schema is zero-dimensional.
+    # Rebind the existing bank region; snapshots keep the declared shape.
+    return BlockView(values.storage, values.offset, Tuple(size(model)))
 end
 
 function _stage_state_bindings(fields::Tuple, handles::Tuple, state)
@@ -1063,6 +1097,9 @@ function _compile_site_assignment_law(
             ),
         )
     reads = merge(core_reads, parameter_reads)
+    submission_parameters = (
+        LocalMath.Parameter(:mcs, Int64; bounds = (Int64(1), typemax(Int64))),
+    )
     evaluate = LocalMath.Stage(
         lattice, reads,
         (
@@ -1076,14 +1113,7 @@ function _compile_site_assignment_law(
             ),
             status_fragments.publication,
         ),
-        LocalMath.Evaluator(
-            evaluator, (
-                LocalMath.Parameter(
-                    :mcs, Int64;
-                    bounds = (Int64(1), typemax(Int64))
-                ),
-            )
-        ),
+        LocalMath.Evaluator(evaluator, submission_parameters),
         LocalMath.Control(; gate = initial_gate),
         LocalMath.SourceOrigin(
             @__FILE__, @__LINE__;
@@ -1103,29 +1133,32 @@ function _compile_site_assignment_law(
                 LocalMath.Unique(eltype(first(fields)))
             ),
         ),
-        LocalMath.Evaluator(_CompiledStageCommit()),
+        LocalMath.Evaluator(_CompiledStageCommit(descriptor.effect)),
         LocalMath.Control(; gate = refreshed_gate),
         LocalMath.SourceOrigin(
             @__FILE__, @__LINE__;
             label = :corepotts_stage_site_publication
         ),
     )
-    law = LocalMath.sequence(
+    evaluation = LocalMath.sequence(
         LocalMath.LocalLaw(
             _stage_gate_snapshot(
                 gate, initial_gate, :corepotts_stage_site_initial_gate
             )
         ),
-        LocalMath.LocalLaw(evaluate),
+        LocalMath.LocalLaw(evaluate)
+    )
+    publication = LocalMath.sequence(
         LocalMath.LocalLaw(
             _stage_gate_snapshot(
-                gate, refreshed_gate, :corepotts_stage_site_refreshed_gate
+                gate, refreshed_gate, :corepotts_stage_site_refreshed_gate;
+                parameters = submission_parameters,
             )
         ),
         LocalMath.LocalLaw(commit)
     )
     return (;
-        law, fields, handles, parameter_field, scratch,
+        evaluation, publication, fields, handles, parameter_field, scratch,
         ownership_field, cell_kind_field, status_field,
         initial_gate, refreshed_gate,
     )
@@ -1153,7 +1186,7 @@ function _compile_model_assignment_law(
     parameter_count = _stage_parameter_count(descriptor)
     parameter_field = iszero(parameter_count) ? nothing :
         LocalMath.Field(model, NTuple{parameter_count, T})
-    scratch = LocalMath.Field(model, _stage_handle_element_type(target, T))
+    scratch = LocalMath.Field(model, StageEvaluation{_stage_handle_element_type(target, T)})
     status_field = LocalMath.Field(status_space, ProgramStatus)
     initial_gate = LocalMath.Field(gate.space, Bool)
     refreshed_gate = LocalMath.Field(gate.space, Bool)
@@ -1162,7 +1195,7 @@ function _compile_model_assignment_law(
     )
     zeros = map(handle -> _state_value_zero(_stage_handle_element_type(handle, T)), handles)
     evaluator = _CompiledModelStageEvaluator{
-        !iszero(parameter_count), typeof(condition), typeof(value),
+        !iszero(parameter_count), eltype(scratch), typeof(condition), typeof(value),
         typeof(handles), typeof(zeros),
     }(
         condition, value, handles,
@@ -1176,6 +1209,9 @@ function _compile_model_assignment_law(
             ),
         )
     reads = merge(_stage_access_tuple(fields, identity), parameter_reads)
+    submission_parameters = (
+        LocalMath.Parameter(:mcs, Int64; bounds = (Int64(1), typemax(Int64))),
+    )
     evaluate = LocalMath.Stage(
         model, reads,
         (
@@ -1189,14 +1225,7 @@ function _compile_model_assignment_law(
             ),
             status_fragments.publication,
         ),
-        LocalMath.Evaluator(
-            evaluator, (
-                LocalMath.Parameter(
-                    :mcs, Int64;
-                    bounds = (Int64(1), typemax(Int64))
-                ),
-            )
-        ),
+        LocalMath.Evaluator(evaluator, submission_parameters),
         LocalMath.Control(; gate = initial_gate),
         LocalMath.SourceOrigin(
             @__FILE__, @__LINE__;
@@ -1213,32 +1242,38 @@ function _compile_model_assignment_law(
                         first(fields), identity, LocalMath.PublicationValue(:value)
                     ),
                 ),
-                LocalMath.Unique(eltype(first(fields)))
+                LocalMath.Unique(
+                    eltype(first(fields)); coverage = LocalMath.PartialCoverage(),
+                    onempty = LocalMath.PreserveEmpty(),
+                )
             ),
         ),
-        LocalMath.Evaluator(_CompiledStageCommit()),
+        LocalMath.Evaluator(_CompiledStageCommit(descriptor.effect)),
         LocalMath.Control(; gate = refreshed_gate),
         LocalMath.SourceOrigin(
             @__FILE__, @__LINE__;
             label = :corepotts_stage_model_publication
         ),
     )
-    law = LocalMath.sequence(
+    evaluation = LocalMath.sequence(
         LocalMath.LocalLaw(
             _stage_gate_snapshot(
                 gate, initial_gate, :corepotts_stage_model_initial_gate
             )
         ),
-        LocalMath.LocalLaw(evaluate),
+        LocalMath.LocalLaw(evaluate)
+    )
+    publication = LocalMath.sequence(
         LocalMath.LocalLaw(
             _stage_gate_snapshot(
-                gate, refreshed_gate, :corepotts_stage_model_refreshed_gate
+                gate, refreshed_gate, :corepotts_stage_model_refreshed_gate;
+                parameters = submission_parameters,
             )
         ),
         LocalMath.LocalLaw(commit)
     )
     return (;
-        law, fields, handles, parameter_field, scratch, status_field,
+        model, evaluation, publication, fields, handles, parameter_field, scratch, status_field,
         initial_gate, refreshed_gate,
     )
 end
@@ -1659,6 +1694,9 @@ function _compile_relationship_stage_group(
         status_fragments = _checkerboard_status_fragments(
             status_field, request_space, Int32(request_count)
         )
+        submission_parameters = (
+            LocalMath.Parameter(:mcs, Int64; bounds = (Int64(1), typemax(Int64))),
+        )
         evaluate = LocalMath.Stage(
             request_space, reads,
             (
@@ -1673,14 +1711,7 @@ function _compile_relationship_stage_group(
                 ),
                 status_fragments.publication,
             ),
-            LocalMath.Evaluator(
-                evaluator, (
-                    LocalMath.Parameter(
-                        :mcs, Int64;
-                        bounds = (Int64(1), typemax(Int64))
-                    ),
-                )
-            ),
+            LocalMath.Evaluator(evaluator, submission_parameters),
             LocalMath.Control(; gate = initial_gate),
             LocalMath.SourceOrigin(
                 @__FILE__, @__LINE__;
@@ -1753,7 +1784,7 @@ function _compile_relationship_stage_group(
             LocalMath.LocalLaw(settle)
         )
         return (;
-            law, bank_index, live_fields, shadow_fields,
+            law, submission_parameters, bank_index, live_fields, shadow_fields,
             fold_state_fields,
             seen, seen_source, seen_initial,
             state_fields, handles = inventory.handles, volume, moments,
@@ -1770,8 +1801,8 @@ end
     descriptor.effect isa IteratedSiteAssignmentEffect ?
     Int(descriptor.effect.iterations) : 1
 
-function _prepare_site_stage_declaration(
-        declaration, bank, gate, backend, lease_capacity
+function _site_stage_bindings(
+        declaration, bank, gate
     )
     bindings = (
         _stage_state_bindings(
@@ -1781,42 +1812,56 @@ function _prepare_site_stage_declaration(
         declaration.cell_kind_field => bank.cell_kinds,
         _checkerboard_parameter_binding(
             declaration.parameter_field, bank,
-            prod(bank.program.shape)
+            bank.program.shape
         )...,
         declaration.scratch => LocalMath.Allocate(
             _checkerboard_storage_zero(declaration.scratch)
         ),
         declaration.status_field => bank.program_status,
         declaration.initial_gate => LocalMath.Allocate(false),
-        declaration.refreshed_gate => LocalMath.Allocate(false),
         declaration.external_gate => gate,
     )
-    return LocalMath.prepare(
-        declaration.law, bindings...;
-        backend, lease_capacity, dependency_arity = 1
-    )
+    return bindings
 end
 
-function _prepare_model_stage_declaration(
-        declaration, bank, gate, backend, lease_capacity
+function _model_stage_bindings(
+        declaration, bank, gate
     )
+    state_bindings = map(declaration.fields, declaration.handles) do field, handle
+        field => _model_stage_state_storage(declaration.model, handle, bank)
+    end
     bindings = (
-        _stage_state_bindings(
-            declaration.fields, declaration.handles, bank
-        )...,
+        state_bindings...,
         _checkerboard_parameter_binding(
-            declaration.parameter_field, bank, 1
+            declaration.parameter_field, bank, (1,)
         )...,
         declaration.scratch => LocalMath.Allocate(
             _checkerboard_storage_zero(declaration.scratch)
         ),
         declaration.status_field => bank.program_status,
         declaration.initial_gate => LocalMath.Allocate(false),
+        declaration.external_gate => gate,
+    )
+    return bindings
+end
+
+function _prepare_assignment_publication(
+        declaration, evaluation, bank, gate, backend, lease_capacity, effect
+    )
+    # The evaluation owns scratch. Publication binds that exact storage, so
+    # the queue dependency carries the evaluated value without another copy.
+    target_storage = effect isa ModelAssignmentEffect ?
+        _model_stage_state_storage(declaration.model, first(declaration.handles), bank) :
+        state_block(bank.descriptor_state, first(declaration.handles)).values
+    bindings = (
+        first(declaration.fields) => target_storage,
+        declaration.scratch => LocalMath.storage(evaluation, declaration.scratch),
         declaration.refreshed_gate => LocalMath.Allocate(false),
         declaration.external_gate => gate,
     )
     return LocalMath.prepare(
-        declaration.law, bindings...;
+        declaration.publication,
+        bindings...;
         backend, lease_capacity, dependency_arity = 1
     )
 end
@@ -1878,7 +1923,7 @@ function _relationship_stage_bindings(declaration, bank)
         ) :
         _checkerboard_parameter_binding(
             declaration.parameter_field, bank,
-            length(declaration.request_endpoints)
+            (length(declaration.request_endpoints),)
         )
     bindings = (
         live_bindings...,
@@ -1902,136 +1947,113 @@ function _relationship_stage_bindings(declaration, bank)
     return bindings
 end
 
-function _prepare_relationship_stage_transaction(
-        declarations::Tuple, bank, gate, backend, lease_capacity
+function _prepare_relationship_stage_publication(
+        declaration, evaluation, bank, gate, backend, lease_capacity
     )
-    isempty(declarations) && throw(
-        ArgumentError(
-            "relationship stage transaction requires at least one packed bank"
-        )
-    )
-    external_gate = first(declarations).external_gate
+    external_gate = declaration.external_gate
     commit_gate = LocalMath.Field(external_gate.space, Bool)
     commit_gate_law = LocalMath.LocalLaw(
         _stage_gate_snapshot(
-            external_gate, commit_gate, :corepotts_relationship_commit_gate
+            external_gate, commit_gate, :corepotts_relationship_commit_gate;
+            parameters = declaration.submission_parameters,
         )
     )
     commit_laws = Tuple(
         _checkerboard_field_copy_law(
                 shadow, live, commit_gate,
-                Symbol(
-                    :corepotts_relationship_commit_, declaration.bank_index,
-                    :_, name
-                )
+                Symbol(:corepotts_relationship_commit_, declaration.bank_index, :_, name)
             )
-            for declaration in declarations
             for (name, shadow, live) in zip(
                 keys(declaration.shadow_fields),
                 values(declaration.shadow_fields), values(declaration.live_fields)
             )
     )
-    law = LocalMath.sequence(
-        map(declaration -> declaration.law, declarations)...,
-        commit_gate_law,
-        commit_laws...
-    )
-    bindings = Tuple(
-        pair for declaration in declarations
-            for pair in _relationship_stage_bindings(declaration, bank)
-    )
+    fields = (values(declaration.shadow_fields)..., values(declaration.live_fields)...)
+    bindings = map(field -> field => LocalMath.storage(evaluation, field), fields)
+    publication = LocalMath.sequence(commit_gate_law, commit_laws...)
     return LocalMath.prepare(
-        law, bindings...,
-        external_gate => gate,
-        commit_gate => LocalMath.Allocate(false);
+        publication, bindings...,
+        external_gate => gate, commit_gate => LocalMath.Allocate(false);
         backend, lease_capacity, dependency_arity = 1
     )
+end
+
+function _stage_boundary_entry(prepared, source_handle, effect; repetitions = 1)
+    typeof(prepared[1]) === typeof(prepared[2]) || throw(
+        ArgumentError("checkerboard stage banks produced different PreparedPlan types")
+    )
+    return (; prepared, repetitions, source_handle, effect)
 end
 
 function _compile_checkerboard_stage_boundary(
         workspace, groups::Tuple, backend, queue_mcs_capacity::Integer
     )
-    isempty(groups) && return ()
+    descriptors = _stage_descriptors(groups)
+    isempty(descriptors) && return ()
     state = workspace.state
-    alternate = workspace.alternate_state
+    banks = (state, workspace.alternate_state)
+    gates = map(_checkerboard_open_gate, banks)
     T = eltype(state.parameters)
     shape = Tuple(state.program.shape)
     periodic = Tuple(state.program.periodic)
     resources = state.program.domain_resources
-    gates = (
-        _checkerboard_open_gate(state),
-        _checkerboard_open_gate(alternate),
-    )
-    descriptors = _stage_descriptors(groups)
     is_relationship(descriptor) = descriptor.effect isa Union{
         RelationshipRemoveEffect, RelationshipRetuneEffect,
     }
-    entries = ()
-    index = 1
-    while index <= length(descriptors)
-        descriptor = descriptors[index]
+    relationship_descriptors = filter(is_relationship, descriptors)
+    evaluations = ()
+    publications = ()
+    relationship_publications = ()
+    relationships_prepared = false
+    for descriptor in descriptors
         if is_relationship(descriptor)
-            stop = index
-            while stop < length(descriptors) && is_relationship(descriptors[stop + 1])
-                stop += 1
-            end
-            relationship_descriptors = descriptors[index:stop]
-            relationship_groups = _compile_relationship_stage_group(
+            relationships_prepared && continue
+            relationships_prepared = true
+            # All requests for a packed relationship bank share one transaction,
+            # including descriptors separated by ordinary state assignments.
+            declarations = _compile_relationship_stage_group(
                 relationship_descriptors, workspace.source_table, state.program,
-                state.relationships, length(
-                    tracker_values(
-                        state.program.tracker_plan, state.trackers,
-                        Val(:cell_volume)
+                state.relationships,
+                length(tracker_values(state.program.tracker_plan, state.trackers, Val(:cell_volume))),
+                LocalMath.Field(LocalMath.Space(_CheckerboardStageGateDomain, 1), Bool), T
+            )
+            for declaration in declarations
+                prepared = map(banks, gates) do bank, gate
+                    LocalMath.prepare(
+                        declaration.law, _relationship_stage_bindings(declaration, bank)...,
+                        declaration.external_gate => gate;
+                        backend, lease_capacity = queue_mcs_capacity, dependency_arity = 1
                     )
-                ),
-                LocalMath.Field(
-                    LocalMath.Space(_CheckerboardStageGateDomain, 1), Bool
-                ), T
-            )
-            prepared = (
-                _prepare_relationship_stage_transaction(
-                    relationship_groups, state, gates[1], backend,
-                    queue_mcs_capacity
-                ),
-                _prepare_relationship_stage_transaction(
-                    relationship_groups, alternate, gates[2], backend,
-                    queue_mcs_capacity
-                ),
-            )
-            typeof(prepared[1]) === typeof(prepared[2]) || throw(
-                ArgumentError(
-                    "checkerboard relationship banks produced different PreparedPlan types"
+                end
+                evaluations = (
+                    evaluations..., _stage_boundary_entry(
+                        prepared, descriptor.source_handle, :RelationshipEvaluation
+                    ),
                 )
-            )
-            entries = (
-                entries..., (;
-                    prepared, repetitions = 1,
-                    source_handle = first(relationship_descriptors).source_handle,
-                    effect = :RelationshipTransaction,
-                ),
-            )
-            index = stop + 1
+                published = map(prepared, banks, gates) do evaluation, bank, gate
+                    _prepare_relationship_stage_publication(
+                        declaration, evaluation, bank, gate, backend, queue_mcs_capacity
+                    )
+                end
+                relationship_publications = (
+                    relationship_publications..., _stage_boundary_entry(
+                        published, descriptor.source_handle, :RelationshipPublication
+                    ),
+                )
+            end
             continue
         end
-        repetitions = _stage_submission_count(descriptor)
-        lease_capacity = _checked_checkerboard_capacity_mul(
-            queue_mcs_capacity, repetitions,
-            :stage_boundary_lease_capacity
-        )
+        effect = descriptor.effect
         external_gate = LocalMath.Field(
             LocalMath.Space(_CheckerboardStageGateDomain, 1), Bool
         )
-        effect = descriptor.effect
-        declaration = if effect isa Union{
-                SiteAssignmentEffect, IteratedSiteAssignmentEffect,
-            }
+        declaration = if effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect}
             merge(
                 _compile_site_assignment_law(
                     descriptor, workspace.source_table, shape, periodic,
                     state.program.medium_kind, resources, state.ownership,
                     state.cell_kinds, state.program_status, external_gate, T
-                ),
-                (; external_gate)
+                ), (; external_gate)
             )
         elseif effect isa ModelAssignmentEffect
             merge(
@@ -2041,53 +2063,75 @@ function _compile_checkerboard_stage_boundary(
                 ), (; external_gate)
             )
         elseif effect isa ShiftAppendEffect
-            merge(
-                _compile_history_law(
-                    descriptor, external_gate, T
-                ), (; external_gate)
-            )
+            merge(_compile_history_law(descriptor, external_gate, T), (; external_gate))
         else
             throw(
                 ArgumentError(
                     "checkerboard LocalMath boundary compiler does not support " *
-                        "$(nameof(typeof(effect))) from source " *
-                        "$(descriptor.source_handle)"
+                        "$(nameof(typeof(effect))) from source $(descriptor.source_handle)"
                 )
             )
         end
-        prepare_bank = if effect isa Union{
-                SiteAssignmentEffect, IteratedSiteAssignmentEffect,
-            }
-            _prepare_site_stage_declaration
-        elseif effect isa ModelAssignmentEffect
-            _prepare_model_stage_declaration
-        else
-            _prepare_history_stage_declaration
-        end
-        prepared = (
-            prepare_bank(
-                declaration, state, gates[1], backend,
-                lease_capacity
-            ),
-            prepare_bank(
-                declaration, alternate, gates[2], backend,
-                lease_capacity
-            ),
-        )
-        typeof(prepared[1]) === typeof(prepared[2]) || throw(
-            ArgumentError(
-                "checkerboard stage banks produced different PreparedPlan types"
+        if effect isa ShiftAppendEffect
+            prepared = map(banks, gates) do bank, gate
+                _prepare_history_stage_declaration(
+                    declaration, bank, gate, backend, queue_mcs_capacity
+                )
+            end
+            publications = (
+                publications..., _stage_boundary_entry(
+                    prepared, descriptor.source_handle, nameof(typeof(effect))
+                ),
             )
-        )
-        entries = (
-            entries..., (;
-                prepared, repetitions, source_handle =
-                    descriptor.source_handle, effect = nameof(typeof(effect)),
+            continue
+        end
+        bindings_for = effect isa ModelAssignmentEffect ?
+            _model_stage_bindings : _site_stage_bindings
+        if effect isa IteratedSiteAssignmentEffect
+            repetitions = _stage_submission_count(descriptor)
+            lease_capacity = _checked_checkerboard_capacity_mul(
+                queue_mcs_capacity, repetitions, :stage_boundary_lease_capacity
+            )
+            prepared = map(banks, gates) do bank, gate
+                LocalMath.prepare(
+                    LocalMath.sequence(declaration.evaluation, declaration.publication),
+                    bindings_for(declaration, bank, gate)...,
+                    declaration.refreshed_gate => LocalMath.Allocate(false);
+                    backend, lease_capacity, dependency_arity = 1
+                )
+            end
+            publications = (
+                publications..., _stage_boundary_entry(
+                    prepared, descriptor.source_handle, nameof(typeof(effect)); repetitions
+                ),
+            )
+            continue
+        end
+        prepared = map(banks, gates) do bank, gate
+            LocalMath.prepare(
+                declaration.evaluation, bindings_for(declaration, bank, gate)...;
+                backend, lease_capacity = queue_mcs_capacity, dependency_arity = 1
+            )
+        end
+        evaluations = (
+            evaluations..., _stage_boundary_entry(
+                prepared, descriptor.source_handle, :StateEvaluation
             ),
         )
-        index += 1
+        published = map(prepared, banks, gates) do evaluation, bank, gate
+            _prepare_assignment_publication(
+                declaration, evaluation, bank, gate, backend, queue_mcs_capacity, effect
+            )
+        end
+        publications = (
+            publications..., _stage_boundary_entry(
+                published, descriptor.source_handle, nameof(typeof(effect))
+            ),
+        )
     end
-    return entries
+    # Ordinary right-hand sides observe boundary-entry state. Ordered substeps
+    # and history then execute in descriptor order, before relationship commit.
+    return (evaluations..., publications..., relationship_publications...)
 end
 
 function _prepare_checkerboard_stage_boundaries(

@@ -67,6 +67,31 @@ foreign or out-of-range source handle is rejected with the descriptor,
 operation, role, and source-table context instead of becoming an anonymous
 integer provenance value.
 
+### Scheduled state and relationship publication
+
+At each before- or after-lifecycle boundary, ordinary site and model assignment
+right-hand sides and relationship requests observe boundary-entry state.
+Assignments then publish in descriptor order. Iterated site updates and history
+appends retain their ordered position: each iteration observes the preceding
+iteration, and a history append records the value at its position in the
+boundary. Prepared relationship changes publish after those state operations.
+Sequential and checkerboard execution share this contract; checkerboard
+evaluation and publication use the existing LocalMath execution path.
+Disabled model assignments do not publish: a later disabled assignment cannot
+undo an earlier enabled write to the same model value. Site assignments retain
+their entry-value fallback when disabled.
+Assignment results are converted to the declared logical type before finiteness is
+checked; conversion overflow is a failed transaction, not a published infinity.
+
+A site or model assignment stores one logical value, which need not be a
+scalar. Supported fixed-size products retain their declared type through
+assignment, logical checkpoint storage, and ownership-change clearing.
+A zero-dimensional singleton model block retains its declared shape in
+snapshots and checkpoints; its model-domain execution view shares that storage.
+`ClearOnOwnershipChange` clears the registered value at a changed site, not the
+whole block. Unsupported operations or storage still require explicit
+admission; these contracts do not imply support for every value type or device.
+
 ## Diagnosing a settled failure
 
 `program_failure_report(runtime)` is passive: it returns the cached immutable

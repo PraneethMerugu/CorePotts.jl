@@ -75,6 +75,28 @@ Before handing off a change, check:
 
 Resolve any affirmative answer as part of the same change.
 
+## Scheduled publication ownership
+
+Compiler extensions declare scheduled effects in `src/execution/stage_plan.jl`.
+`stage_runtime.jl` owns sequential boundary evaluation and application;
+`checkerboard_stage_compiler.jl` lowers the same boundary-entry reads and
+ordered publications into LocalMath plans. Its evaluation and publication
+plans share the allocated scratch storage, not a second representation of
+state. `storage_runtime.jl` owns logical-value zero and finiteness policies;
+ownership-change paths delegate there instead of defining backend-specific
+product semantics.
+`checkerboard_science.jl` owns the shared parameter view; its semantic consumers
+provide their execution-domain shapes without expanding parameter storage.
+
+The ordinary behavioral tests are `test_structured_stage_transactions.jl`
+(simultaneous assignments, ordered history and substeps, failure rollback),
+`test_site_assignment_conversion.jl` (target conversion and overflow rollback),
+`test_stage_relationship_snapshot.jl` (relationship requests share entry state),
+and `test_logical_ownership_change.jl` (accepted copies clear only changed site
+values and preserve logical checkpoint state). Keep device-specific witnesses
+in the ordinary Metal inventory, and distinguish tested device behavior from
+CPU-only coverage.
+
 ## Test
 
 During development, start with the smallest self-contained test file that owns
