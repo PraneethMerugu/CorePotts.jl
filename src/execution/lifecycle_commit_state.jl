@@ -75,7 +75,7 @@ end
     for rule in plan.ownership_rules
         rule.action === ClearLifecycleOwnershipState || continue
         values = state_block(workspace.staged_descriptor_state, rule.handle).values
-        @inbounds values[linear] = zero(eltype(values))
+        @inbounds values[linear] = _state_value_zero(eltype(values))
     end
     return true
 end
@@ -96,11 +96,7 @@ end
         )
         return LifecycleEvaluationFailed()
     end
-    finite = try
-        isfinite(converted)
-    catch
-        true
-    end
+    finite = _state_value_isfinite(converted)
     finite || begin
         _set_lifecycle_status!(
             workspace,
@@ -123,7 +119,7 @@ end
         value,
     )
     converted = convert(eltype(values), value)
-    if converted isa AbstractFloat && !isfinite(converted)
+    if !_state_value_isfinite(converted)
         _set_lifecycle_status!(
             workspace,
             ProgramStatusEvaluator;
@@ -524,28 +520,28 @@ function _apply_lifecycle_state_rule!(
     )
     action === PreserveParentResetDaughterLifecycleState &&
         return _apply_lifecycle_state_rule_action!(
-            rule, mode, runtime, plan, workspace, descriptor, request, source,
-            destination, Val(PreserveParentResetDaughterLifecycleState),
-        )
+        rule, mode, runtime, plan, workspace, descriptor, request, source,
+        destination, Val(PreserveParentResetDaughterLifecycleState),
+    )
     action === ResetBothLifecycleState && return _apply_lifecycle_state_rule_action!(
         rule, mode, runtime, plan, workspace, descriptor, request, source,
         destination, Val(ResetBothLifecycleState),
     )
     action === SplitConservativelyLifecycleState &&
         return _apply_lifecycle_state_rule_action!(
-            rule, mode, runtime, plan, workspace, descriptor, request, source,
-            destination, Val(SplitConservativelyLifecycleState),
-        )
+        rule, mode, runtime, plan, workspace, descriptor, request, source,
+        destination, Val(SplitConservativelyLifecycleState),
+    )
     action === TransformDaughtersLifecycleState &&
         return _apply_lifecycle_state_rule_action!(
-            rule, mode, runtime, plan, workspace, descriptor, request, source,
-            destination, Val(TransformDaughtersLifecycleState),
-        )
+        rule, mode, runtime, plan, workspace, descriptor, request, source,
+        destination, Val(TransformDaughtersLifecycleState),
+    )
     action === RedrawDaughtersLifecycleState &&
         return _apply_lifecycle_state_rule_action!(
-            rule, mode, runtime, plan, workspace, descriptor, request, source,
-            destination, Val(RedrawDaughtersLifecycleState),
-        )
+        rule, mode, runtime, plan, workspace, descriptor, request, source,
+        destination, Val(RedrawDaughtersLifecycleState),
+    )
     return _set_lifecycle_status!(
         workspace,
         ProgramStatusInvariant;

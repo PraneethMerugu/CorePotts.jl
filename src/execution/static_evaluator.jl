@@ -9,31 +9,31 @@ abstract type AbstractContextualOperation end
 abstract type AbstractEvaluatorExecutionContext end
 """Cold context used to validate evaluator construction without scientific execution."""
 abstract type AbstractProbeEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting before/after Hamiltonian evaluation."""
 abstract type AbstractHamiltonianEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting proposal-scoped scientific evaluation."""
 abstract type AbstractProposalEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting one site-stage evaluation."""
 abstract type AbstractSiteStageEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting one relationship-stage evaluation."""
 abstract type AbstractRelationshipStageEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting lifecycle-trigger evaluation."""
 abstract type AbstractLifecycleTriggerEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting lifecycle-placement evaluation."""
 abstract type AbstractLifecyclePlacementEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting lifecycle-partition evaluation."""
 abstract type AbstractLifecyclePartitionEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting lifecycle state-transform evaluation."""
 abstract type AbstractLifecycleStateTransformEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 
 abstract type AbstractStorageRepresentation end
 
@@ -60,12 +60,16 @@ struct BlockLocation{N}
     function BlockLocation(
             offset::Integer, shape::NTuple{N, <:Integer}
         ) where {N}
-        offset > 0 || throw(ArgumentError(
-            "a block location offset must be positive"
-        ))
-        all(>(0), shape) || throw(ArgumentError(
-            "block location dimensions must be positive"
-        ))
+        offset > 0 || throw(
+            ArgumentError(
+                "a block location offset must be positive"
+            )
+        )
+        all(>(0), shape) || throw(
+            ArgumentError(
+                "block location dimensions must be positive"
+            )
+        )
         return new{N}(Int32(offset), Int32.(shape))
     end
 end
@@ -118,8 +122,8 @@ StateHandle(
     shape::Tuple,
 ) where {Representation <: AbstractStorageRepresentation} =
     StateHandle{Representation}(
-        bank, slot, BlockLocation(offset, shape)
-    )
+    bank, slot, BlockLocation(offset, shape)
+)
 StateHandle(slot::Integer) =
     StateHandle{DefaultStateStorageRepresentation}(1, slot)
 StateHandle(bank::Integer, slot::Integer) =
@@ -167,8 +171,8 @@ WorkspaceHandle(
     shape::Tuple,
 ) where {Representation <: AbstractStorageRepresentation} =
     WorkspaceHandle{Representation}(
-        bank, slot, BlockLocation(offset, shape)
-    )
+    bank, slot, BlockLocation(offset, shape)
+)
 WorkspaceHandle(slot::Integer) =
     WorkspaceHandle{DefaultWorkspaceStorageRepresentation}(1, slot)
 WorkspaceHandle(bank::Integer, slot::Integer) =
@@ -188,6 +192,14 @@ handle_representation(
 handle_representation(
     ::WorkspaceHandle{Representation}
 ) where {Representation} = Representation
+
+_state_handle_element_type(
+    ::StateHandle{
+        StateStorageRepresentation{
+            ElementType, Dimensions, Layout, Adaptation,
+        },
+    },
+) where {ElementType, Dimensions, Layout, Adaptation} = ElementType
 
 function Base.getproperty(
         handle::Union{StateHandle, WorkspaceHandle}, name::Symbol
@@ -210,7 +222,7 @@ struct ParameterExpression{T <: AbstractFloat} <: AbstractStaticExpression
         }
         0 <= index <= typemax(Int32) ||
             throw(ArgumentError("parameter expression index is out of range"))
-        new{T}(default, Int32(index))
+        return new{T}(default, Int32(index))
     end
 end
 
@@ -497,7 +509,7 @@ end
     )
     index = expression.index
     return index == 0 ? expression.default :
-           @inbounds evaluator_parameters(context)[index]
+        @inbounds evaluator_parameters(context)[index]
 end
 
 @inline evaluate_expression(
@@ -535,7 +547,7 @@ end
     )
     index = expression.index
     return index == 0 ? expression.default :
-           @inbounds _compiled_evaluator_parameters(context)[index]
+        @inbounds _compiled_evaluator_parameters(context)[index]
 end
 
 @inline _compiled_evaluate_expression(
@@ -612,12 +624,12 @@ end
     operation::QualifiedTrackerOperation
 )(arguments::Tuple, context) =
     qualified_tracker_operation_call(
-        operation.operation,
-        arguments,
-        context,
-        operation.quantity,
-        operation.source_handle,
-    )
+    operation.operation,
+    arguments,
+    context,
+    operation.quantity,
+    operation.source_handle,
+)
 
 operation_context_supported(
     operation::QualifiedTrackerOperation,
@@ -625,7 +637,7 @@ operation_context_supported(
 ) = operation_context_supported(operation.operation, context)
 
 struct EvaluatorProbeContext{P, V, S, W} <:
-       AbstractProbeEvaluationContext
+    AbstractProbeEvaluationContext
     parameters::P
     values::V
     states::S

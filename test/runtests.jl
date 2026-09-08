@@ -20,6 +20,8 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_scientific_geometry_contract.jl",
     "test_relationship_access_contract.jl",
     "test_descriptor_state_spi.jl",
+    "test_logical_state_values.jl",
+    "test_logical_state_lifecycle.jl",
     "test_acceptance.jl",
     "test_capabilities.jl",
     "test_lifecycle_selection_decisions.jl",
@@ -38,7 +40,7 @@ const _COREPOTTS_TEST_DIRECTORY = @__DIR__
 testsuite = Dict{String, Expr}(
     replace(file, r"^test_|\.jl$" => "") =>
         :(include(joinpath($(_COREPOTTS_TEST_DIRECTORY), $file)))
-    for file in _COREPOTTS_DIRECT_TESTS
+        for file in _COREPOTTS_DIRECT_TESTS
 )
 
 for file in _COREPOTTS_COMPILED_PROGRAM_TESTS
@@ -49,14 +51,18 @@ end
 
 testsuite["inventory"] = quote
     @testset "ordinary test runner owns every CorePotts test file" begin
-        discovered = Set(filter(
-            name -> startswith(name, "test_") && endswith(name, ".jl"),
-            readdir($(_COREPOTTS_TEST_DIRECTORY)),
-        ))
-        included = Set((
-            $(_COREPOTTS_DIRECT_TESTS)...,
-            $(_COREPOTTS_COMPILED_PROGRAM_TESTS)...,
-        ))
+        discovered = Set(
+            filter(
+                name -> startswith(name, "test_") && endswith(name, ".jl"),
+                readdir($(_COREPOTTS_TEST_DIRECTORY)),
+            )
+        )
+        included = Set(
+            (
+                $(_COREPOTTS_DIRECT_TESTS)...,
+                $(_COREPOTTS_COMPILED_PROGRAM_TESTS)...,
+            )
+        )
         exclusions = Set($(_COREPOTTS_TEST_HELPER_EXCLUSIONS))
         @test isempty(intersect(included, exclusions))
         @test union(included, exclusions) == discovered
@@ -66,9 +72,11 @@ testsuite["inventory"] = quote
         witness_directory = joinpath(
             $(_COREPOTTS_TEST_DIRECTORY), "backend_conformance"
         )
-        discovered = Set(filter(
-            name -> endswith(name, ".jl"), readdir(witness_directory)
-        ))
+        discovered = Set(
+            filter(
+                name -> endswith(name, ".jl"), readdir(witness_directory)
+            )
+        )
         @test discovered == Set($(_COREPOTTS_DEVICE_CONFORMANCE_WITNESSES))
     end
 end
@@ -120,12 +128,16 @@ end
 init_code = quote
     import CorePotts
     import LocalMath
-    include(joinpath(
-        $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "compiled_program_support.jl"
-    ))
-    include(joinpath(
-        $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "lifecycle_selection_oracle.jl"
-    ))
+    include(
+        joinpath(
+            $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "compiled_program_support.jl"
+        )
+    )
+    include(
+        joinpath(
+            $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "lifecycle_selection_oracle.jl"
+        )
+    )
     const _COREPOTTS_COMPILED_PROGRAM_TESTS =
         $(_COREPOTTS_COMPILED_PROGRAM_TESTS)
 end

@@ -1,13 +1,13 @@
 # Generic accepted-copy and after-MCS staged-effect execution.
 
 struct _SiteStageEvaluationContext{R, I} <:
-       AbstractSiteStageEvaluationContext
+    AbstractSiteStageEvaluationContext
     runtime::R
     site::I
 end
 
 struct _RelationshipStageEvaluationContext{R, S} <:
-       AbstractRelationshipStageEvaluationContext
+    AbstractRelationshipStageEvaluationContext
     runtime::R
     relationship::S
     edge::Int32
@@ -63,7 +63,7 @@ end
     )
 end
 @inline function apply_resource_operation(
-    ::ResourceOperation{:cell_volume},
+        ::ResourceOperation{:cell_volume},
         arguments,
         context::_RelationshipStageEvaluationContext,
     )
@@ -189,23 +189,29 @@ end
 end
 
 @inline function descriptor_emit_requests!(
-        requests::AbstractVector{StageEvaluation{T}},
+        requests::Base.RefValue{StageEvaluation{T}},
         descriptor::CompiledStageDescriptor{
             C, V, E, AcceptedCopyStage,
         },
         context::_ProposalEvaluationContext,
-    ) where {T <: AbstractFloat, C, V, E}
+    ) where {T, C, V, E}
     condition = _compiled_evaluate_static(descriptor.condition, context)
-    condition isa Bool || throw(ArgumentError(
-        "accepted-copy stage condition must return Bool"
-    ))
-    value = condition ? T(_compiled_evaluate_static(
-        descriptor.value, context
-    )) : zero(T)
-    isfinite(value) || throw(DomainError(
-        value, "accepted-copy stage value must be finite"
-    ))
-    @inbounds requests[Int(descriptor.buffer_slot)] =
+    condition isa Bool || throw(
+        ArgumentError(
+            "accepted-copy stage condition must return Bool"
+        )
+    )
+    value = condition ? convert(
+            T, _compiled_evaluate_static(
+                descriptor.value, context
+            )
+        ) : _state_value_zero(T)
+    _state_value_isfinite(value) || throw(
+        DomainError(
+            value, "accepted-copy stage value must be finite"
+        )
+    )
+    requests[] =
         StageEvaluation(condition, value)
     return requests
 end
@@ -214,22 +220,26 @@ end
         effect::RelationshipCreateEffect,
         context::_ProposalEvaluationContext,
     )
-    endpoint_a = Int32(_compiled_evaluate_static(
-        effect.endpoint_a, context
-    ))
-    endpoint_b = Int32(_compiled_evaluate_static(
-        effect.endpoint_b, context
-    ))
+    endpoint_a = Int32(
+        _compiled_evaluate_static(
+            effect.endpoint_a, context
+        )
+    )
+    endpoint_b = Int32(
+        _compiled_evaluate_static(
+            effect.endpoint_b, context
+        )
+    )
     payload = map(
         evaluator -> _compiled_evaluate_static(evaluator, context),
         effect.payload,
     )
     generation_a = 1 <= endpoint_a <= length(context.runtime.cell_generations) ?
-                   @inbounds(context.runtime.cell_generations[endpoint_a]) :
-                   UInt32(0)
+        @inbounds(context.runtime.cell_generations[endpoint_a]) :
+        UInt32(0)
     generation_b = 1 <= endpoint_b <= length(context.runtime.cell_generations) ?
-                   @inbounds(context.runtime.cell_generations[endpoint_b]) :
-                   UInt32(0)
+        @inbounds(context.runtime.cell_generations[endpoint_b]) :
+        UInt32(0)
     return CreateRelationshipRequest(
         endpoint_a,
         endpoint_b,
@@ -243,21 +253,23 @@ end
 end
 
 @inline function descriptor_emit_requests!(
-        requests::AbstractVector{StageEvaluation{T}},
+        requests::Base.RefValue{StageEvaluation{T}},
         descriptor::CompiledStageDescriptor{
             C, V, E, AcceptedCopyStage,
         },
         context::_ProposalEvaluationContext,
     ) where {
-        T <: AbstractFloat,
+        T,
         C,
         V,
         E <: RelationshipCreateEffect,
     }
     condition = _compiled_evaluate_static(descriptor.condition, context)
-    condition isa Bool || throw(ArgumentError(
-        "accepted-copy relationship condition must return Bool"
-    ))
+    condition isa Bool || throw(
+        ArgumentError(
+            "accepted-copy relationship condition must return Bool"
+        )
+    )
     enabled = false
     if condition
         effect = descriptor.effect
@@ -269,7 +281,7 @@ end
         )
         enabled = true
     end
-    @inbounds requests[Int(descriptor.buffer_slot)] =
+    requests[] =
         StageEvaluation(enabled, zero(T))
     return requests
 end
@@ -280,41 +292,55 @@ end
             C, V, E, AfterMCSStage,
         },
         context::_SiteStageEvaluationContext,
-    ) where {T <: AbstractFloat, C, V, E}
+    ) where {T, C, V, E}
     condition = _compiled_evaluate_static(descriptor.condition, context)
-    condition isa Bool || throw(ArgumentError(
-        "after-MCS stage condition must return Bool"
-    ))
-    value = condition ? T(_compiled_evaluate_static(
-        descriptor.value, context
-    )) : T(state_value(
-        context, descriptor.effect.target, context.site
-    ))
-    isfinite(value) || throw(DomainError(
-        value, "after-MCS stage value must be finite"
-    ))
+    condition isa Bool || throw(
+        ArgumentError(
+            "after-MCS stage condition must return Bool"
+        )
+    )
+    value = condition ? convert(
+            T, _compiled_evaluate_static(
+                descriptor.value, context
+            )
+        ) : convert(
+            T, state_value(
+                context, descriptor.effect.target, context.site
+            )
+        )
+    _state_value_isfinite(value) || throw(
+        DomainError(
+            value, "after-MCS stage value must be finite"
+        )
+    )
     @inbounds scratch[context.site] = value
     return scratch
 end
 
 @inline function descriptor_emit_requests!(
-        scratch::AbstractVector{StageEvaluation{T}},
+        scratch::Base.RefValue{StageEvaluation{T}},
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
         context::_SiteStageEvaluationContext,
-    ) where {T <: AbstractFloat, C, V, E <: ModelAssignmentEffect}
+    ) where {T, C, V, E <: ModelAssignmentEffect}
     condition = _compiled_evaluate_static(descriptor.condition, context)
-    condition isa Bool || throw(ArgumentError(
-        "after-MCS model assignment condition must return Bool"
-    ))
-    value = condition ? T(_compiled_evaluate_static(
-        descriptor.value, context
-    )) : zero(T)
-    condition && !isfinite(value) && throw(DomainError(
-        value, "after-MCS model assignment value must be finite"
-    ))
-    @inbounds scratch[Int(descriptor.buffer_slot)] =
+    condition isa Bool || throw(
+        ArgumentError(
+            "after-MCS model assignment condition must return Bool"
+        )
+    )
+    value = condition ? convert(
+            T, _compiled_evaluate_static(
+                descriptor.value, context
+            )
+        ) : _state_value_zero(T)
+    condition && !_state_value_isfinite(value) && throw(
+        DomainError(
+            value, "after-MCS model assignment value must be finite"
+        )
+    )
+    scratch[] =
         StageEvaluation(condition, value)
     return scratch
 end
@@ -327,9 +353,11 @@ end
     )
     request.enabled || return state
     effect = descriptor.effect
-    effect isa SiteAssignmentEffect || throw(ArgumentError(
-        "unsupported compiled accepted-copy effect"
-    ))
+    effect isa SiteAssignmentEffect || throw(
+        ArgumentError(
+            "unsupported compiled accepted-copy effect"
+        )
+    )
     @inbounds state_block(state, effect.target).values[site] = request.value
     return state
 end
@@ -369,9 +397,11 @@ end
     )
     effect = descriptor.effect
     effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect} ||
-        throw(ArgumentError(
-        "unsupported compiled after-MCS effect"
-    ))
+        throw(
+        ArgumentError(
+            "unsupported compiled after-MCS effect"
+        )
+    )
     copyto!(state_block(state, effect.target).values, scratch)
     return state
 end
@@ -385,7 +415,7 @@ end
         context,
     )
     for descriptor in first(groups).instances
-        descriptor_emit_requests!(requests, descriptor, context)
+        descriptor_emit_requests!(requests[Int(descriptor.buffer_slot)], descriptor, context)
     end
     return _emit_accepted_copy_groups!(
         requests, Base.tail(groups), context
@@ -402,7 +432,7 @@ end
         context,
     )
     for descriptor in first(groups).instances
-        request = @inbounds requests[Int(descriptor.buffer_slot)]
+        request = @inbounds requests[Int(descriptor.buffer_slot)][]
         descriptor_apply_stage!(
             descriptor, request, runtime, context
         )
@@ -459,7 +489,7 @@ function _clear_ownership_changed_state!(
     for entry in layout.entries
         lifecycle = entry.schema.lifecycle
         declared = lifecycle isa NamedTuple && haskey(lifecycle, :declared) ?
-                   lifecycle.declared : nothing
+            lifecycle.declared : nothing
         declared === :ClearOnOwnershipChange || continue
         values = state_block(state, entry.handle).values
         @inbounds values[site] = zero(eltype(values))
@@ -481,7 +511,7 @@ function _emit_after_mcs_descriptor!(
         },
     ) where {C, V, E <: SiteAssignmentEffect}
     scratch = @inbounds runtime.stage_buffers.after_mcs[
-        Int(descriptor.buffer_slot)
+        Int(descriptor.buffer_slot),
     ]
     for site in CartesianIndices(runtime.ownership)
         descriptor_emit_requests!(
@@ -500,7 +530,7 @@ function _emit_after_mcs_descriptor!(
         },
     ) where {C, V, E <: ModelAssignmentEffect}
     descriptor_emit_requests!(
-        runtime.stage_buffers.after_mcs_model,
+        runtime.stage_buffers.after_mcs_model[Int(descriptor.buffer_slot)],
         descriptor,
         _SiteStageEvaluationContext(runtime, 1),
     )
@@ -531,9 +561,11 @@ function _emit_after_mcs_relationship_descriptor!(
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
-    ) where {C, V, E <: Union{
-        RelationshipRemoveEffect, RelationshipRetuneEffect,
-    }}
+    ) where {
+        C, V, E <: Union{
+            RelationshipRemoveEffect, RelationshipRetuneEffect,
+        },
+    }
     effect = descriptor.effect
     for edge in eachindex(state.active)
         @inbounds state.active[edge] || continue
@@ -544,12 +576,14 @@ function _emit_after_mcs_relationship_descriptor!(
             descriptor.condition,
             context,
         )
-        condition isa Bool || throw(ArgumentError(
-            "relationship lifecycle condition must return Bool"
-        ))
+        condition isa Bool || throw(
+            ArgumentError(
+                "relationship lifecycle condition must return Bool"
+            )
+        )
         condition || continue
         identity = UInt64(UInt32(descriptor.source_handle)) << 32 |
-                   UInt64(UInt32(edge))
+            UInt64(UInt32(edge))
         request = if effect isa RelationshipRemoveEffect
             RemoveRelationshipRequest(edge; identity)
         else
@@ -573,9 +607,11 @@ function _emit_after_mcs_descriptor!(
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
-    ) where {C, V, E <: Union{
-        RelationshipRemoveEffect, RelationshipRetuneEffect,
-    }}
+    ) where {
+        C, V, E <: Union{
+            RelationshipRemoveEffect, RelationshipRetuneEffect,
+        },
+    }
     return _call_relationship_slot(
         _emit_after_mcs_relationship_descriptor!,
         runtime.relationships,
@@ -601,7 +637,7 @@ function _apply_after_mcs_descriptor!(
         },
     ) where {C, V, E <: SiteAssignmentEffect}
     scratch = @inbounds runtime.stage_buffers.after_mcs[
-        Int(descriptor.buffer_slot)
+        Int(descriptor.buffer_slot),
     ]
     descriptor_apply_stage!(descriptor, scratch, runtime.descriptor_state)
     return runtime
@@ -614,13 +650,15 @@ function _apply_after_mcs_descriptor!(
         },
     ) where {C, V, E <: ModelAssignmentEffect}
     evaluation = @inbounds runtime.stage_buffers.after_mcs_model[
-        Int(descriptor.buffer_slot)
-    ]
+        Int(descriptor.buffer_slot),
+    ][]
     evaluation.enabled || return runtime
     values = state_block(runtime.descriptor_state, descriptor.effect.target).values
-    length(values) == 1 || throw(ArgumentError(
-        "compiled model assignment target is not scalar"
-    ))
+    length(values) == 1 || throw(
+        ArgumentError(
+            "compiled model assignment target is not scalar"
+        )
+    )
     @inbounds values[firstindex(values)] = evaluation.value
     return runtime
 end
@@ -630,9 +668,11 @@ function _apply_after_mcs_descriptor!(
         ::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
-    ) where {C, V, E <: Union{
-        RelationshipRemoveEffect, RelationshipRetuneEffect,
-    }}
+    ) where {
+        C, V, E <: Union{
+            RelationshipRemoveEffect, RelationshipRetuneEffect,
+        },
+    }
     return runtime
 end
 
@@ -643,7 +683,7 @@ function _apply_after_mcs_descriptor!(
         },
     ) where {C, V, E <: IteratedSiteAssignmentEffect}
     scratch = @inbounds runtime.stage_buffers.after_mcs[
-        Int(descriptor.buffer_slot)
+        Int(descriptor.buffer_slot),
     ]
     for _ in 1:Int(descriptor.effect.iterations)
         for site in CartesianIndices(runtime.ownership)

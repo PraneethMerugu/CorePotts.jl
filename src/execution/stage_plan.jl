@@ -18,15 +18,17 @@ struct ModelStageSite <: AbstractStageSiteSelector end
 
 """Read one declared state block at the site bound by a compiled stage."""
 struct BoundStateValueOperation{S <: AbstractStageSiteSelector} <:
-        AbstractContextualOperation end
+    AbstractContextualOperation end
 
 function operation_callable(
         ::Val{:proposal_bound_state_value},
         version::VersionNumber,
     )
-    version == v"1.0.0" || throw(ArgumentError(
-        "unsupported proposal-bound-state operation version $version"
-    ))
+    version == v"1.0.0" || throw(
+        ArgumentError(
+            "unsupported proposal-bound-state operation version $version"
+        )
+    )
     return BoundStateValueOperation{ProposalTargetStageSite}()
 end
 
@@ -34,9 +36,11 @@ function operation_callable(
         ::Val{:iteration_bound_state_value},
         version::VersionNumber,
     )
-    version == v"1.0.0" || throw(ArgumentError(
-        "unsupported iteration-bound-state operation version $version"
-    ))
+    version == v"1.0.0" || throw(
+        ArgumentError(
+            "unsupported iteration-bound-state operation version $version"
+        )
+    )
     return BoundStateValueOperation{IterationStageSite}()
 end
 
@@ -44,9 +48,11 @@ function operation_callable(
         ::Val{:model_bound_state_value},
         version::VersionNumber,
     )
-    version == v"1.0.0" || throw(ArgumentError(
-        "unsupported model-bound-state operation version $version"
-    ))
+    version == v"1.0.0" || throw(
+        ArgumentError(
+            "unsupported model-bound-state operation version $version"
+        )
+    )
     return BoundStateValueOperation{ModelStageSite}()
 end
 
@@ -89,15 +95,17 @@ end
 
 """Repeat a synchronous site assignment through a fixed number of substeps."""
 struct IteratedSiteAssignmentEffect{H <: StateHandle} <:
-        AbstractCompiledEffect
+    AbstractCompiledEffect
     target::H
     iterations::Int32
     function IteratedSiteAssignmentEffect(
             target::H, iterations::Integer
         ) where {H <: StateHandle}
-        iterations > 0 || throw(ArgumentError(
-            "an iterated site assignment requires a positive iteration count"
-        ))
+        iterations > 0 || throw(
+            ArgumentError(
+                "an iterated site assignment requires a positive iteration count"
+            )
+        )
         return new{H}(target, Int32(iterations))
     end
 end
@@ -115,9 +123,11 @@ struct ShiftAppendEffect{
             source::S,
             axis::Integer,
         ) where {T <: StateHandle, S <: StateHandle}
-        axis > 0 || throw(ArgumentError(
-            "a shift-append effect axis must be positive"
-        ))
+        axis > 0 || throw(
+            ArgumentError(
+                "a shift-append effect axis must be positive"
+            )
+        )
         return new{T, S}(target, source, Int32(axis))
     end
 end
@@ -142,13 +152,17 @@ function RelationshipCreateEffect(
         payload::P,
         priority::Integer = 0,
     ) where {A <: StaticEvaluator, B <: StaticEvaluator, P <: Tuple}
-    relationship_slot > 0 || throw(ArgumentError(
-        "a relationship-create effect requires a positive storage slot"
-    ))
+    relationship_slot > 0 || throw(
+        ArgumentError(
+            "a relationship-create effect requires a positive storage slot"
+        )
+    )
     all(evaluator -> evaluator isa StaticEvaluator, payload) ||
-        throw(ArgumentError(
+        throw(
+        ArgumentError(
             "relationship payload entries must be compiled evaluators"
-        ))
+        )
+    )
     return RelationshipCreateEffect{A, B, P}(
         Int32(relationship_slot),
         endpoint_a,
@@ -163,10 +177,12 @@ end
 struct RelationshipRemoveEffect <: AbstractCompiledEffect
     relationship_slot::Int32
     function RelationshipRemoveEffect(relationship_slot::Integer)
-        relationship_slot > 0 || throw(ArgumentError(
-            "a relationship-remove effect requires a positive storage slot"
-        ))
-        new(Int32(relationship_slot))
+        relationship_slot > 0 || throw(
+            ArgumentError(
+                "a relationship-remove effect requires a positive storage slot"
+            )
+        )
+        return new(Int32(relationship_slot))
     end
 end
 
@@ -178,15 +194,17 @@ struct RelationshipRetuneEffect{P <: Tuple} <: AbstractCompiledEffect
             relationship_slot::Integer,
             payload::P,
         ) where {P <: Tuple}
-        relationship_slot > 0 || throw(ArgumentError(
-            "a relationship-retune effect requires a positive storage slot"
-        ))
+        relationship_slot > 0 || throw(
+            ArgumentError(
+                "a relationship-retune effect requires a positive storage slot"
+            )
+        )
         all(evaluator -> evaluator isa StaticEvaluator, payload) || throw(
             ArgumentError(
                 "relationship-retune payload entries must be compiled evaluators"
             )
         )
-        new{P}(Int32(relationship_slot), payload)
+        return new{P}(Int32(relationship_slot), payload)
     end
 end
 
@@ -236,17 +254,23 @@ function CompiledStageDescriptor(
         A <: ResourceAccess,
         S,
     }
-    source_handle > 0 || throw(ArgumentError(
-        "a stage descriptor source handle must be positive"
-    ))
-    buffer_slot >= 0 || throw(ArgumentError(
-        "a stage descriptor buffer slot cannot be negative"
-    ))
+    source_handle > 0 || throw(
+        ArgumentError(
+            "a stage descriptor source handle must be positive"
+        )
+    )
+    buffer_slot >= 0 || throw(
+        ArgumentError(
+            "a stage descriptor buffer slot cannot be negative"
+        )
+    )
     stage_effect_buffered(effect) == (buffer_slot > 0) ||
-        throw(ArgumentError(
+        throw(
+        ArgumentError(
             "buffered stage effects require a positive slot and commit-only " *
-            "effects require slot zero"
-        ))
+                "effects require slot zero"
+        )
+    )
     return CompiledStageDescriptor{C, V, E, P, A, S}(
         condition,
         value,
@@ -318,37 +342,51 @@ function StageExecutionPlan(
             group.instances,
         ),
         (accepted_copy..., before_lifecycle..., after_lifecycle...),
-    ) || throw(ArgumentError(
-        "stage execution plans admit only compiler-owned CompiledStageDescriptor values"
-    ))
-    accepted_count >= 0 || throw(ArgumentError(
-        "accepted-copy descriptor count cannot be negative"
-    ))
-    after_mcs_scratch_count >= 0 || throw(ArgumentError(
-        "after-MCS scratch-buffer count cannot be negative"
-    ))
+    ) || throw(
+        ArgumentError(
+            "stage execution plans admit only compiler-owned CompiledStageDescriptor values"
+        )
+    )
+    accepted_count >= 0 || throw(
+        ArgumentError(
+            "accepted-copy descriptor count cannot be negative"
+        )
+    )
+    after_mcs_scratch_count >= 0 || throw(
+        ArgumentError(
+            "after-MCS scratch-buffer count cannot be negative"
+        )
+    )
     actual_accepted = sum(
         length(group.instances) for group in accepted_copy; init = 0
     )
-    actual_accepted == accepted_count || throw(ArgumentError(
-        "accepted-copy descriptor count does not match its groups"
-    ))
+    actual_accepted == accepted_count || throw(
+        ArgumentError(
+            "accepted-copy descriptor count does not match its groups"
+        )
+    )
     any(
         descriptor -> descriptor.effect isa ModelAssignmentEffect,
         (descriptor for group in accepted_copy for descriptor in group.instances),
-    ) && throw(ArgumentError(
-        "model assignments are admitted only at the after-MCS boundary"
-    ))
+    ) && throw(
+        ArgumentError(
+            "model assignments are admitted only at the after-MCS boundary"
+        )
+    )
     after_mcs = (before_lifecycle..., after_lifecycle...)
-    model_slots = sort!(Int[
-        descriptor.buffer_slot
-        for group in after_mcs
-        for descriptor in group.instances
-        if descriptor.effect isa ModelAssignmentEffect
-    ])
-    model_slots == collect(eachindex(model_slots)) || throw(ArgumentError(
-        "after-MCS model-assignment buffer slots must be dense and unique"
-    ))
+    model_slots = sort!(
+        Int[
+            descriptor.buffer_slot
+                for group in after_mcs
+                for descriptor in group.instances
+                if descriptor.effect isa ModelAssignmentEffect
+        ]
+    )
+    model_slots == collect(eachindex(model_slots)) || throw(
+        ArgumentError(
+            "after-MCS model-assignment buffer slots must be dense and unique"
+        )
+    )
     return StageExecutionPlan{A, B, L}(
         accepted_copy,
         before_lifecycle,
@@ -364,16 +402,36 @@ StageExecutionPlan() = StageExecutionPlan(
     (), (), (), 0, 0, "empty-stage-plan-v1"
 )
 
-struct StageEvaluation{T <: AbstractFloat}
+struct StageEvaluation{T}
     enabled::Bool
     value::T
 end
 
-mutable struct StageRuntimeBuffers{T <: AbstractFloat, N, R}
-    accepted_copy::Vector{StageEvaluation{T}}
-    after_mcs::Vector{Array{T, N}}
-    after_mcs_model::Vector{StageEvaluation{T}}
+mutable struct StageRuntimeBuffers{A, S, M, R}
+    accepted_copy::A
+    after_mcs::S
+    after_mcs_model::M
     relationship_transactions::R
+end
+
+function _stage_buffer_descriptors(groups, count, predicate)
+    descriptors = [descriptor for group in groups for descriptor in group.instances if predicate(descriptor.effect)]
+    sort!(descriptors; by = descriptor -> descriptor.buffer_slot)
+    [Int(descriptor.buffer_slot) for descriptor in descriptors] == collect(1:count) ||
+        throw(ArgumentError("stage buffer slots must be dense and unique within their effect domain"))
+    return Tuple(descriptors)
+end
+
+_stage_value_type(effect::RelationshipCreateEffect, ::Type{T}) where {T} = T
+_stage_value_type(effect, ::Type{T}) where {T} = _stage_handle_element_type(effect.target, T)
+
+_stage_handle_element_type(handle::StateHandle, ::Type{T}) where {T} =
+    handle_representation(handle) <: StateStorageRepresentation ?
+    _state_handle_element_type(handle) : T
+
+function _stage_evaluation_buffer(descriptor, ::Type{T}) where {T}
+    V = _stage_value_type(descriptor.effect, T)
+    return Ref(StageEvaluation(false, _state_value_zero(V)))
 end
 
 function allocate_stage_runtime_buffers(
@@ -385,51 +443,61 @@ function allocate_stage_runtime_buffers(
         accepted_batch_bound::Integer = 1,
         accepted_relationship_transactions::Bool = true,
     ) where {T <: AbstractFloat, N}
-    accepted_batch_bound > 0 || throw(ArgumentError(
-        "accepted-copy batch bound must be positive"
-    ))
-    accepted = fill(
-        StageEvaluation(false, zero(T)), Int(plan.accepted_count)
+    accepted_batch_bound > 0 || throw(
+        ArgumentError(
+            "accepted-copy batch bound must be positive"
+        )
     )
-    after = [
-        zeros(T, shape) for _ in 1:Int(plan.after_mcs_scratch_count)
-    ]
-    model_count = sum((
-        1
-        for group in _after_mcs_groups(plan)
-        for descriptor in group.instances
-        if descriptor.effect isa ModelAssignmentEffect
-    ); init = 0)
-    after_model = fill(StageEvaluation(false, zero(T)), model_count)
+    accepted_descriptors = _stage_buffer_descriptors(plan.accepted_copy, Int(plan.accepted_count), _ -> true)
+    accepted = map(descriptor -> _stage_evaluation_buffer(descriptor, T), accepted_descriptors)
+    site_descriptors = _stage_buffer_descriptors(_after_mcs_groups(plan), Int(plan.after_mcs_scratch_count), effect -> effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect})
+    after = map(site_descriptors) do descriptor
+        V = _stage_value_type(descriptor.effect, T)
+        map(_ -> _state_value_zero(V), CartesianIndices(shape))
+    end
+    model_count = sum(
+        (
+            1
+                for group in _after_mcs_groups(plan)
+                for descriptor in group.instances
+                if descriptor.effect isa ModelAssignmentEffect
+        ); init = 0
+    )
+    model_descriptors = _stage_buffer_descriptors(_after_mcs_groups(plan), model_count, effect -> effect isa ModelAssignmentEffect)
+    after_model = map(descriptor -> _stage_evaluation_buffer(descriptor, T), model_descriptors)
     transactions = Any[]
     for store_slot in eachindex(relationships)
-        accepted_bound = accepted_relationship_transactions ? sum((
-            1
-            for group in plan.accepted_copy
-            for descriptor in group.instances
-            if descriptor.effect isa RelationshipCreateEffect &&
-               descriptor.effect.relationship_slot == store_slot
-        ); init = 0) : 0
-        after_bound = sum((
-            length(relationships[store_slot].active)
-            for group in _after_mcs_groups(plan)
-            for descriptor in group.instances
-            if descriptor.effect isa Union{
-                RelationshipRemoveEffect, RelationshipRetuneEffect,
-            } &&
-               descriptor.effect.relationship_slot == store_slot
-        ); init = 0)
+        accepted_bound = accepted_relationship_transactions ? sum(
+                (
+                    1
+                    for group in plan.accepted_copy
+                    for descriptor in group.instances
+                    if descriptor.effect isa RelationshipCreateEffect &&
+                    descriptor.effect.relationship_slot == store_slot
+                ); init = 0
+            ) : 0
+        after_bound = sum(
+            (
+                length(relationships[store_slot].active)
+                    for group in _after_mcs_groups(plan)
+                    for descriptor in group.instances
+                    if descriptor.effect isa Union{
+                        RelationshipRemoveEffect, RelationshipRetuneEffect,
+                    } &&
+                    descriptor.effect.relationship_slot == store_slot
+            ); init = 0
+        )
         capacity = max(accepted_bound * accepted_batch_bound, after_bound)
         push!(
             transactions,
             iszero(capacity) ? nothing : RelationshipTransactionBuffer(
-                relationships[store_slot], capacity
-            ),
+                    relationships[store_slot], capacity
+                ),
         )
     end
     relationship_transactions = all(isnothing, transactions) ? nothing :
         RelationshipStorage(transactions)
-    return StageRuntimeBuffers{T, N, typeof(relationship_transactions)}(
+    return StageRuntimeBuffers(
         accepted, after, after_model, relationship_transactions
     )
 end
