@@ -20,7 +20,10 @@ The principal source owners are:
 - `gathered_proposal_evaluation.jl`: warm bounded proposal contexts and the
   evaluation of compiled terms over gathered values;
 - `checkerboard_science.jl`: proposal geometry, topology declarations, and
-  Core scientific evaluator callables;
+  Core scientific evaluator callables. Cold named read groups produce both
+  the LocalMath accesses and their compile-time decoder offsets; optional
+  groups do not have a separately maintained positional layout. Warm contexts
+  remain concrete bounded values, not stored compiler plans;
 - `checkerboard_transaction.jl`: accepted tracker and relationship scratch,
   packed shadow-state settlement, and terminal transaction fragments;
 - `checkerboard_law.jl`: composition, storage binding, and preparation of the
