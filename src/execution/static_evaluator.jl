@@ -263,6 +263,10 @@ struct NumericComparison{F}
     operation::F
 end
 
+# Arity fixes the vector length; the kernel captures no constructor type value.
+struct FixedVectorConstruction end
+@inline (::FixedVectorConstruction)(arguments...) = StaticArrays.SVector(arguments)
+
 @inline function (comparison::NumericComparison)(left, right)
     if left isa Integer && right isa AbstractFloat
         return comparison.operation(typeof(right)(left), right)
@@ -429,6 +433,8 @@ for (identity, operation) in (
         :exponential => exp,
         :logarithm => log,
         :square_root => sqrt,
+        :fixed_vector => FixedVectorConstruction(),
+        :fixed_index => getindex,
     )
     @eval operation_callable(
         ::Val{$(QuoteNode(identity))}, version::VersionNumber

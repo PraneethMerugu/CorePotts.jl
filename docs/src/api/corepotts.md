@@ -92,6 +92,13 @@ snapshots and checkpoints; its model-domain execution view shares that storage.
 whole block. Unsupported operations or storage still require explicit
 admission; these contracts do not imply support for every value type or device.
 
+The existing operation lookup supplies `operation_callable(Val(:fixed_vector),
+v"1.0.0")` for immutable vector construction and
+`operation_callable(Val(:fixed_index), v"1.0.0")` for element access. These are
+ordinary concrete callables used inside `OperationExpression`; construction
+preserves the promoted element type. Authoring compilers own shape and index
+admission, including proving literal indices in bounds before device execution.
+
 ## Diagnosing a settled failure
 
 `program_failure_report(runtime)` is passive: it returns the cached immutable

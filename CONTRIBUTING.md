@@ -77,6 +77,12 @@ Resolve any affirmative answer as part of the same change.
 
 ## Scheduled publication ownership
 
+`src/execution/static_evaluator.jl` owns the versioned operation-callable catalog,
+including immutable fixed-vector construction and indexing. Authoring compilers
+validate expression shapes and indices before lowering; Core evaluates those
+concrete operations through the existing expression path. The owning numerical
+and inference checks are in `test/test_fixed_vector_operations.jl`.
+
 Compiler extensions declare scheduled effects in `src/execution/stage_plan.jl`.
 `stage_runtime.jl` owns sequential boundary evaluation and application;
 `checkerboard_stage_compiler.jl` lowers the same boundary-entry reads and
