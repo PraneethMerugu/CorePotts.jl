@@ -27,6 +27,36 @@ lifecycle selection, rollback, and bank authorization. Lifecycle selection is
 therefore reported as a Core KernelAbstractions operation followed by a genuine
 LocalMath compacted-request publication, rather than as one LocalMath law.
 
+## Qualified semantic randomness
+
+The active RNG contract is `Philox4x64x10V3`, version `3.0.0`. Its 128-bit
+operation key and 256-bit counter keep component identity, cell generation,
+scientific invocation and sampler retry separate. Existing stream families
+retain their scientific meanings, but this contract intentionally changes their
+random words. Older RNG checkpoints cannot resume exactly in this runtime;
+reproducing them requires their released environment, not a compatibility mode.
+
+Compiler authors submit the complete operation declaration batch through
+`CompilerSPI.rng_operation_keys`. Each declaration contains an owner
+`CompilerSPI.RNGNamespace` and a canonical identity string for the component
+instance, process/boundary and lexical draw label. The returned keys follow
+input order without depending on that order. Duplicate identities, derived-key
+collisions and collisions with Core's reserved operations are rejected. The
+compiler retains the mapping in its existing executable/provenance authority;
+Core maintains no mutable RNG registry. `RNGOperationKey()` denotes an absent
+draw in an inactive descriptor policy and cannot form an executable address.
+
+The contributor path is `rng/operations.jl` (cold identity derivation),
+`rng/semantic.jl` (packing, Philox and numerical transforms),
+`execution/program_rng.jl` (scientific context addressing), and ordinary
+`test_rng_operations.jl`, `test_rng_contract.jl`,
+`test_rng_program_continuation.jl` and `metal/corepotts_rng_contract.jl` tests.
+Address-family availability does not itself admit a scheduled evaluator or a
+new distribution; those require their owning execution and numerical contracts.
+Gathered lowering specializes a declared literal distribution family so a
+Bernoulli constraint retains a Boolean result while numerical draws retain the
+scientific scalar type. It uses the same draw consumer and runtime validation.
+
 ## Logical auxiliary-state values
 
 `CompilerSPI.StateBlockSchema.element_type` describes one logical value;

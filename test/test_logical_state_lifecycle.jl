@@ -27,7 +27,7 @@ function _logical_lifecycle_runtime(last_value)
         CorePotts.ErrorLifecycleInadmissible, 3, 1, CorePotts.NoLifecyclePlacement, 0,
         1, 0, 0, 0, CorePotts.NoLifecyclePartition,
         0, false, (0.0f0, 0.0f0), (0.0f0, 0.0f0), CorePotts.CanonicalLifecycleSide,
-        0, 0, 0, 0, 1,
+        CorePotts.RNGOperationKey(), CorePotts.RNGOperationKey(), 0, 0, 1,
         2, 1, 0, 0, 0,
         0, 0, false,
     )
@@ -43,7 +43,8 @@ function _logical_lifecycle_runtime(last_value)
         CorePotts.LifecycleStateRule(
             handle, UInt64(index), CorePotts.TransformLifecycleState,
             Int32(index + 1), Int32(0), Int32(0), Int32(0), 0.5f0,
-            CorePotts.ExactLifecycleRounding, UInt8(0), UInt8(0), UInt16(0), UInt16(0),
+            CorePotts.ExactLifecycleRounding, UInt8(0), UInt8(0),
+            CorePotts.RNGOperationKey(), CorePotts.RNGOperationKey(),
         )
     end
     lifecycle_plan = CorePotts.LifecycleExecutionPlan(

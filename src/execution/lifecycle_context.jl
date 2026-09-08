@@ -12,7 +12,6 @@ struct _LifecycleTriggerContext{R, I} <:
     generation::UInt32
     site::I
     occurrence::Int32
-    operation::UInt16
 end
 
 struct _LifecyclePlacementContext{R, I} <:
@@ -27,7 +26,6 @@ struct _LifecyclePlacementContext{R, I} <:
     generation::UInt32
     site::I
     occurrence::Int32
-    operation::UInt16
 end
 
 struct _LifecyclePartitionContext{R, I} <:
@@ -42,7 +40,6 @@ struct _LifecyclePartitionContext{R, I} <:
     generation::UInt32
     site::I
     occurrence::Int32
-    operation::UInt16
 end
 
 struct _LifecycleStateContext{R, P, I, H} <:
@@ -65,7 +62,6 @@ struct _LifecycleStateContext{R, P, I, H} <:
     state_handle::H
     site::I
     occurrence::Int32
-    operation::UInt16
 end
 
 """Read-only request-local planned view over one common lifecycle snapshot."""
@@ -170,7 +166,6 @@ function _lifecycle_workspace_slice(
         context.generation,
         context.site,
         context.occurrence,
-        context.operation,
     )
 end
 
@@ -188,7 +183,6 @@ function _lifecycle_workspace_slice(
         context.generation,
         context.site,
         context.occurrence,
-        context.operation,
     )
 end
 
@@ -207,7 +201,6 @@ function _lifecycle_workspace_slice(
         context.generation,
         context.site,
         context.occurrence,
-        context.operation,
     )
 end
 
@@ -233,7 +226,6 @@ function _lifecycle_workspace_slice(
         context.state_handle,
         context.site,
         context.occurrence,
-        context.operation,
     )
 end
 
@@ -770,10 +762,10 @@ end
         ::ResourceOperation{:draw}, arguments, context::_LifecycleContext
     )
     T = eltype(context.runtime.parameters)
-    family = Int(arguments[1])
+    family = _rng_draw_family(arguments[1])
     first_parameter = T(arguments[2])
     second_parameter = T(arguments[3])
-    operation = UInt16(arguments[4])
+    operation = arguments[4]
     stream = context isa _LifecycleTriggerContext ? LifecycleTriggerStream :
         context isa _LifecyclePlacementContext ? LifecyclePlacementStream :
         context isa _LifecyclePartitionContext ? LifecyclePartitionStream :

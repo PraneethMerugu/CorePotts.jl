@@ -183,7 +183,6 @@ end
         rule.handle,
         _lifecycle_context_site(runtime, workspace, anchor),
         Int32(0),
-        UInt16(descriptor.source_handle),
     )
     return _evaluate_lifecycle_checked(
         mode, plan, evaluator, context, descriptor, workspace
@@ -197,7 +196,7 @@ end
         family::UInt8,
         first_parameter::T,
         second_parameter::T,
-        operation::UInt16,
+        operation::RNGOperationKey,
         destination::Int32,
         generation::UInt32,
         daughter::Bool,

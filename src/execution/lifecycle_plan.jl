@@ -348,8 +348,8 @@ struct LifecycleStateRule{H <: StateHandle, T <: AbstractFloat}
     rounding::LifecycleRoundingCode
     parent_distribution::UInt8
     daughter_distribution::UInt8
-    parent_draw::UInt16
-    daughter_draw::UInt16
+    parent_draw::RNGOperationKey
+    daughter_draw::RNGOperationKey
 end
 
 struct LifecycleStateRuleSlot
@@ -476,8 +476,8 @@ struct LifecycleDescriptor{N, T <: AbstractFloat}
     point::NTuple{N, T}
     normal::NTuple{N, T}
     side::LifecycleSideCode
-    geometry_draw::UInt16
-    side_draw::UInt16
+    geometry_draw::RNGOperationKey
+    side_draw::RNGOperationKey
     parent_kind::Int16
     daughter_kind::Int16
     state_rule_offset::Int32

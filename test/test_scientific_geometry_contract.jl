@@ -30,7 +30,7 @@ function geometry_gathered_proposal(runtime, target, new_owner::Int32, ::Type{T}
         old_kind = CorePotts.owner_kind(runtime, old_owner),
         new_kind = CorePotts.owner_kind(runtime, new_owner),
         volumes, semantic = Int32(1), mcs = Int64(1), color = Int32(1),
-        trajectory_seed = UInt64(1), scalar_zero = zero(T), parameters = (),
+        trajectory_key = (UInt64(1), UInt64(0)), scalar_zero = zero(T), parameters = (),
         state_values = (), contact_sites = (), contact_owners = (), contact_kinds = (),
         reverse_contact_sites = (), reverse_contact_owners = (), reverse_contact_kinds = (),
         contact_ranges = ((), ()), tracker_values = (), bounded_tracker_samples = (),

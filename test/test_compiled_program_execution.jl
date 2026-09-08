@@ -150,9 +150,9 @@ end
     @test @allocated(CorePotts._checkerboard_color_order!(
         first_workspace.color_order, state, 1
     )) == 0
-    @test CorePotts.RNG_CONTRACT_VERSION == v"2.0.0"
+    @test CorePotts.RNG_CONTRACT_VERSION == v"3.0.0"
     @test CorePotts.RNG_LOWERING_IDENTITY ===
-          :philox4x32x10_semantic_address_fisher_yates_v2
+        :philox4x64x10_qualified_address_fisher_yates_v3
 end
 
 @testset "sequential and checkerboard share units, not trajectories" begin

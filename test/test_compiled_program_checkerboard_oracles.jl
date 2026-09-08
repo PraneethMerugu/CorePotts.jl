@@ -11,15 +11,15 @@ function _reference_checkerboard_proposal(state, color, attempt_round, item)
         stream = CorePotts.ProposalDirectionStream,
         mcs = state.mcs + 1,
         subround = color,
-        operation = 2,
+        operation = CorePotts._CORE_RNG_OPERATIONS.proposal_direction,
         entity_kind = CorePotts.SiteEntity,
         entity = semantic_id,
         draw = 0,
     )
     direction = Int(
         CorePotts.bounded_uint(
-            CorePotts.Philox4x32x10V2(),
-            CorePotts._trajectory_seed(state.seed, state.replica, state.repeat),
+            CorePotts.Philox4x64x10V3(),
+            CorePotts._trajectory_key(state.seed, state.replica, state.repeat),
             direction_address,
             UInt32(size(state.program.proposal_offsets, 2)),
         )
@@ -43,16 +43,18 @@ function _reference_checkerboard_proposal(state, color, attempt_round, item)
             stream = CorePotts.CheckerboardPriorityStream,
             mcs = state.mcs + 1,
             subround = color,
-            operation = 4,
+            operation = CorePotts._CORE_RNG_OPERATIONS.checkerboard_priority,
             entity_kind = CorePotts.SiteEntity,
             entity = semantic_id,
             draw = 0,
         )
-        CorePotts._rng_word(
-            CorePotts.Philox4x32x10V2(),
-            CorePotts._trajectory_seed(state.seed, state.replica, state.repeat),
-            priority_address,
-        )
+        (
+            CorePotts._rng_word(
+                CorePotts.Philox4x64x10V3(),
+                CorePotts._trajectory_key(state.seed, state.replica, state.repeat),
+                priority_address,
+            ) >> 32
+        ) % UInt32
     else
         UInt32(0)
     end
@@ -124,15 +126,15 @@ function _reference_checkerboard_disposition(
             stream = CorePotts.AcceptanceStream,
             mcs = state.mcs + 1,
             subround = color,
-            operation = 3,
+            operation = CorePotts._CORE_RNG_OPERATIONS.acceptance,
             entity_kind = CorePotts.SiteEntity,
             entity = proposal.semantic_id,
             draw = 0,
         )
         draw = CorePotts.uniform_open01(
             Float64,
-            CorePotts.Philox4x32x10V2(),
-            CorePotts._trajectory_seed(state.seed, state.replica, state.repeat),
+            CorePotts.Philox4x64x10V3(),
+            CorePotts._trajectory_key(state.seed, state.replica, state.repeat),
             address,
         )
         accepted = log(draw) < result.log_ratio

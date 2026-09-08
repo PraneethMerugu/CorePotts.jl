@@ -53,15 +53,38 @@ contract uses its released package or archived environment; the current runtime
 does not retain a historical RNG selector. A package version alone is not an
 adequate RNG identity inside a checkpoint or report.
 
-`Philox4x32x10V2` is the accepted default generator and address-packing
-contract. The current RNG contract version is `2.0.0`, with lowering identity
-`philox4x32x10_semantic_address_fisher_yates_v2`. V2 closes the complete
-trajectory address—replica, repeat, stream, bounded MCS/subround, operation,
-entity kind and generation, invocation, and draw—and uses the fixed unbiased
-Fisher--Yates lowering. Known-answer, open-uniform endpoint, and raw-word tests
-cover each qualified profile. A changed mapped word, stream encoding, address
-layout, or permutation lowering requires a new contract version or lowering
-identity; V1 is not a selectable live compatibility path.
+`Philox4x64x10V3` is the accepted generator and address-packing contract,
+version `3.0.0`, with lowering identity
+`philox4x64x10_qualified_address_fisher_yates_v3`. The direct cutover changes
+random words and exact trajectories. Named scientific stream meanings and the
+unbiased Fisher--Yates algorithm remain; there is no selectable older executor
+or generator alias. An older RNG checkpoint fails exact-configuration validation
+even when its checksum is valid. Historical reproduction uses its released
+environment. A changed mapped word, stream encoding, address layout, numerical
+transform or permutation lowering requires a corresponding versioned cutover.
+
+The current four UInt64 counter words are:
+
+| Word | Least significant to most significant fields |
+|---|---|
+| 0 | MCS:48, scientific subround:16 |
+| 1 | canonical entity:32, numerical draw index:32 |
+| 2 | generation:64 |
+| 3 | semantic invocation:32, sampler retry:16, stream:8, entity kind:8 |
+
+The trajectory tuple packs without truncation as `(seed64, replica32 | repeat32
+<< 32)`. Both words are XOR-combined with the resolved 128-bit operation key.
+Within a fixed trajectory, distinct admitted operation keys remain distinct,
+and within an operation each supported coordinate occupies independent counter
+bits. This is injectivity of semantic encoding into key/counter pairs, not a
+promise of disjoint output values or global injectivity across simultaneous
+changes to both trajectory and operation identities. Seed derivation for an
+external ensemble interface is a separate named contract.
+
+Generation is never mixed into the operation key. Model and global addresses
+require generation zero; site, cell and destination addresses can carry a
+generation when their declared scientific address uses it. Coordinate overflow
+and absent operation keys are rejected, never wrapped.
 
 ## Counter-Based Addressing
 
@@ -69,7 +92,8 @@ Model randomness MUST be counter based. A draw is conceptually a pure function o
 
 ```text
 (master seed, RNG version, stream, MCS, semantic subround,
- entity identity, operation identity, invocation, draw index)
+ entity identity and generation, operation identity, invocation, draw index,
+ sampler retry)
 ```
 
 The concrete key and counter packing is an implementation contract belonging to the RNG version.
@@ -143,10 +167,24 @@ quality guarantees of the selected counter-based generator.
 
 ### Extension RNG Namespaces
 
-The built-in numeric stream encoding is closed within one RNG contract version. An extension gains
-randomness through a stable 128-bit semantic namespace identity and domain-separated key derivation,
-combined with its instance identity, operation label, entity identity, and contract version. It MUST
-NOT select an undocumented raw numeric stream offset.
+The built-in numeric stream encoding is closed within one RNG contract version.
+The current contract explicitly adds `ScheduledProcessDrawStream`; extending an
+enum in an older contract is not an admissible substitute. An extension gains
+randomness through a stable 128-bit owner namespace and domain-separated key
+derivation, combined with qualified instance/process/boundary/draw identity. It
+MUST NOT select an undocumented numeric stream offset.
+
+`CompilerSPI.RNGNamespace` stores two UInt64 words in textual UUID order.
+`rng_operation_keys` receives the complete batch of `(namespace, identity)`
+declarations, where identity is the scientific compiler's canonical string.
+The exact cold encoding is UTF-8 `CorePotts/RNGOperationKey/3` followed by a zero
+byte, the two big-endian namespace words, a big-endian UInt64 identity byte
+count, then the identity's UTF-8 bytes. The first sixteen SHA-256 digest bytes
+form two big-endian UInt64 key words. Different full identities mapping to the
+same key are rejected, including conflicts with reserved Core operations; the
+all-zero key is reserved for absent descriptor draws. Hashing by itself is not
+claimed injective. Batch validation establishes the accepted model's mapping,
+and no mutable registry is retained.
 
 The compiler-assigned mapping MUST be injective over the supported model domain and recorded in the
 model fingerprint or provenance. Adding, removing, or reordering an unrelated extension MUST NOT
@@ -154,9 +192,11 @@ change an existing component's complete address. If the accepted address represe
 express a collision-free mapping, the RNG contract MUST be revised rather than silently aliasing
 streams.
 
-Duplicate namespace identities within one compiled model are a compilation error. The stable
-identity, derivation contract, and resolved namespace mapping are included in provenance so extension
-draws remain auditable.
+Conflicting ownership of a namespace and duplicate qualified operation identities
+are compilation errors. Several component instances may legitimately refer to
+the same extension-owner namespace when their qualified identities differ.
+The stable identity, derivation contract and resolved mapping are included in
+the executable's existing provenance so extension draws remain auditable.
 
 A stochastic lifecycle trigger or division geometry declares its operation labels before lowering.
 Its device result remains a pure function of the pre-lifecycle snapshot and addressed draws; branch
@@ -204,8 +244,16 @@ Normal, Poisson, categorical, permutation, and other higher-level transforms rem
 counterpart. In particular, a Poisson sampler MUST NOT silently switch to a normal approximation as
 its parameter changes.
 
-Variable-length rejection algorithms MUST address retries by a local invocation or attempt index.
+Variable-length rejection algorithms MUST address retries by the independent
+local sampler-retry coordinate, not by changing scientific invocation identity.
 Their execution MUST NOT consume or shift draws belonging to other entities or operations.
+
+Scheduled stochastic iterations use fresh addressed draws at each scientifically
+declared zero-based substep invocation. Held noise is an explicitly sampled
+logical state updated by another scheduled process; it is not implicit reuse
+of an address across substeps. Cadence uses absolute MCS, not invocation counts
+compressed across skipped ticks. Supporting these address meanings does not by
+itself admit a new execution scope or distribution.
 
 ## Reproducibility Vocabulary
 
@@ -387,7 +435,8 @@ publish a stronger validated device scope.
 
 Patch releases MUST preserve trajectories promised by an existing strict RNG, algorithm, and
 numerical contract. Intentional changes require incrementing the affected contract version.
-Historical contracts SHOULD remain selectable when needed for published work.
+Historical contracts are reproduced through released environments, not live
+compatibility selectors.
 
 Fully integer-defined uniform, Bernoulli, bounded-integer, categorical, and permutation operations
 MUST match across supported backends once their transforms are accepted. Transcendental distribution
@@ -410,8 +459,9 @@ Paper-facing supported algorithms default to strict reproducibility. Statistical
 execution requires an explicit request. If the backend cannot honor the requested profile, execution
 MUST throw an informative error and MUST NOT continue under a weaker profile.
 
-Seeds SHOULD be displayed as fixed-width hexadecimal. Advanced users MAY select a retained RNG
-contract version. Replicate seeds MUST use versioned derivation rather than naive seed addition.
+Seeds SHOULD be displayed as fixed-width hexadecimal. The active runtime has
+one RNG contract. Replicate seeds MUST use versioned derivation rather than
+naive seed addition.
 
 Potts.jl SHOULD provide a `reproducibility_report(prob, alg, backend)` preflight operation. It reports
 the promised level, contract versions, unsupported components, reasons for limitations, numerical

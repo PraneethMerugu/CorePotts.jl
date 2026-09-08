@@ -14,9 +14,9 @@ import StructArrays
 using KernelAbstractions: @index, @kernel
 import LocalMath
 
-const RNG_CONTRACT_VERSION = v"2.0.0"
+const RNG_CONTRACT_VERSION = v"3.0.0"
 const RNG_LOWERING_IDENTITY =
-    :philox4x32x10_semantic_address_fisher_yates_v2
+    :philox4x64x10_qualified_address_fisher_yates_v3
 
 """Return the exact RNG contract and lowering identity admitted by this Core build."""
 rng_contract_identity() = (
@@ -30,6 +30,7 @@ rng_contract_identity() = (
 abstract type AbstractLifecycleExecutionPlan end
 """Marker for compiled programs with no lifecycle processes."""
 struct NoLifecycleExecutionPlan <: AbstractLifecycleExecutionPlan end
+include("rng/operations.jl")
 include("rng/semantic.jl")
 include("execution/static_evaluator.jl")
 include("execution/storage_schema.jl")

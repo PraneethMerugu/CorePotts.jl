@@ -567,10 +567,10 @@ end
         context::_ProposalEvaluationContext,
     )
     T = eltype(context.runtime.parameters)
-    family = Int(arguments[1])
+    family = _rng_draw_family(arguments[1])
     first_parameter = T(arguments[2])
     second_parameter = T(arguments[3])
-    operation = UInt16(arguments[4])
+    operation = arguments[4]
     first_uniform = _program_uniform(
         T,
         context.runtime,

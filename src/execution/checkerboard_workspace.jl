@@ -286,7 +286,7 @@ function _checkerboard_color_sizes(plan::CheckerboardPlan)
     ]
 end
 
-const _CHECKERBOARD_COLOR_ORDER_OPERATION = UInt16(5)
+const _CHECKERBOARD_COLOR_ORDER_OPERATION = _CORE_RNG_OPERATIONS.checkerboard_color_order
 
 """Fill one preallocated unbiased semantic-RNG permutation of realized colors."""
 function _checkerboard_color_order!(
@@ -305,7 +305,7 @@ function _checkerboard_color_order!(
     for color in 1:color_count
         @inbounds order[color] = Int32(color)
     end
-    seed = _trajectory_seed(state.seed, state.replica, state.repeat)
+    seed = _trajectory_key(state.seed, state.replica, state.repeat)
     for position in color_count:-1:2
         address = RNGAddress(
             stream = CheckerboardColorOrderStream,
@@ -316,7 +316,7 @@ function _checkerboard_color_order!(
             entity = position,
         )
         selected = Int(bounded_uint(
-            Philox4x32x10V2(), seed, address, UInt32(position)
+                Philox4x64x10V3(), seed, address, UInt32(position)
         )) + 1
         @inbounds order[position], order[selected] =
             order[selected], order[position]

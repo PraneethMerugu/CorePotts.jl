@@ -193,7 +193,6 @@ end
             generation,
             _lifecycle_context_site(runtime, workspace, anchor),
             Int32(0),
-            UInt16(descriptor.source_handle),
         )
         enabled = evaluate_lifecycle(
             runtime.program.lifecycle_plan.evaluators,

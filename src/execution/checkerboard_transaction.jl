@@ -15,7 +15,7 @@ _acceptance_temperature(scalar::CompiledScalar{T}) where {T} =
 ) where {Index} = getfield(parameters, Index)
 
 struct _CompiledProposalAcceptanceEvaluator{HasParameters,Constraint,T,F,R}
-    trajectory_seed::UInt64
+    trajectory_key::NTuple{2, UInt64}
     temperature::T
     forbid_extinction::F
     retire_at_zero::R
@@ -23,11 +23,12 @@ end
 
 
 _compiled_proposal_acceptance_evaluator(
-    ::Val{HasParameters}, ::Val{Constraint}, trajectory_seed,
+    ::Val{HasParameters}, ::Val{Constraint}, trajectory_key,
     temperature, forbid, retire,
 ) where {HasParameters,Constraint} = _CompiledProposalAcceptanceEvaluator{
     HasParameters,Constraint,typeof(temperature),typeof(forbid),typeof(retire)}(
-        trajectory_seed, temperature, forbid, retire)
+    trajectory_key, temperature, forbid, retire
+)
 
 @inline _compiled_acceptance_parameters(reads, ::Val{false}) = ()
 @inline _compiled_acceptance_parameters(reads, ::Val{true}) =
@@ -97,11 +98,12 @@ end
                     mcs = getfield(parameters, 1)
                     color = getfield(parameters, 2)
                     address = _program_address(
-                        AcceptanceStream, mcs, 3, semantic;
+                        AcceptanceStream, mcs, _CORE_RNG_OPERATIONS.acceptance, semantic;
                         subround = color)
                     draw = uniform_open01(
-                        typeof(temperature), Philox4x32x10V2(),
-                        evaluator.trajectory_seed, address)
+                        typeof(temperature), Philox4x64x10V3(),
+                        evaluator.trajectory_key, address
+                    )
                     accepted = log(draw) < log_ratio
                 end
                 disposition = accepted ? _PROGRAM_CHECKERBOARD_ACCEPTED :
@@ -143,7 +145,7 @@ function _checkerboard_acceptance_declaration(
         Val(!iszero(scientific.parameter_count)),
         Val(scientific.literal_constraint === nothing ? nothing :
             something(scientific.literal_constraint)),
-        _trajectory_seed(seed, replica, repeat),
+        _trajectory_key(seed, replica, repeat),
         _acceptance_temperature(temperature),
         forbid_extinction,
         retire_at_zero)

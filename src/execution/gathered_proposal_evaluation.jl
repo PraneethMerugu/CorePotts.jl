@@ -4,6 +4,8 @@
 
 @inline _execute_proposal_scalar(value::_ExecutableLiteral, context) =
     value.value
+@inline _execute_proposal_scalar(::_ExecutableDrawFamily{Family}, context) where {Family} =
+    Val(Family)
 @inline _execute_proposal_scalar(value::_ExecutableDefaultParameter, context) =
     value.value
 @inline _execute_proposal_scalar(
@@ -180,7 +182,7 @@ Base.@kwdef struct _GatheredProposalContext{
     semantic::Int32
     mcs::Int64
     color::Int32
-    trajectory_seed::UInt64
+    trajectory_key::NTuple{2, UInt64}
     scalar_zero::T
     parameters::P
     state_values::V
@@ -404,16 +406,16 @@ end
         context::_GatheredProposalContext
     )
     T = typeof(context.scalar_zero)
-    family = Int(first(arguments))
+    family = _rng_draw_family(first(arguments))
     first_parameter = T(arguments[2])
     second_parameter = T(arguments[3])
-    operation = UInt16(arguments[4])
+    operation = arguments[4]
     first_address = _program_address(
         ExplicitProposalDrawStream, context.mcs, operation,
         context.semantic; subround = context.color, draw = 0
     )
     first_uniform = uniform_open01(
-        T, Philox4x32x10V2(), context.trajectory_seed, first_address
+        T, Philox4x64x10V3(), context.trajectory_key, first_address
     )
     family == 1 && return first_uniform < first_parameter
     family == 2 && return muladd(
@@ -426,7 +428,7 @@ end
             context.semantic; subround = context.color, draw = 1
         )
         second_uniform = uniform_open01(
-            T, Philox4x32x10V2(), context.trajectory_seed, second_address
+            T, Philox4x64x10V3(), context.trajectory_key, second_address
         )
         normal = sqrt(-T(2) * log(first_uniform)) *
             cos(T(2pi) * second_uniform)

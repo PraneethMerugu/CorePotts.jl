@@ -222,7 +222,7 @@ end
         T,
         runtime,
         AcceptanceStream,
-        3,
+        _CORE_RNG_OPERATIONS.acceptance,
         attempt_identity;
         subround,
     )
@@ -324,7 +324,7 @@ function _attempt!(
     direction = _program_bounded(
         runtime,
         ProposalDirectionStream,
-        2,
+        _CORE_RNG_OPERATIONS.proposal_direction,
         attempt_identity,
         size(program.proposal_offsets, 2);
         subround,
@@ -348,7 +348,7 @@ function _advance_sequential!(runtime::ProgramRuntime)
     indices = CartesianIndices(runtime.ownership)
     for attempt in 1:attempts
         target_linear = _program_bounded(
-            runtime, ProposalRecipientStream, 1, attempt, site_count
+            runtime, ProposalRecipientStream, _CORE_RNG_OPERATIONS.proposal_recipient, attempt, site_count
         )
         _attempt!(runtime, indices[target_linear], attempt, 0)
         program_failed(runtime) && return nothing

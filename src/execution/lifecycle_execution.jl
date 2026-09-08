@@ -1,5 +1,11 @@
 # Engine-status orchestration and the single host exception boundary.
 
+@inline function _lifecycle_identity_mix64(value::UInt64)
+    value = xor(value, value >> 30) * UInt64(0xbf58476d1ce4e5b9)
+    value = xor(value, value >> 27) * UInt64(0x94d049bb133111eb)
+    return xor(value, value >> 31)
+end
+
 _execute_lifecycle_status!(
     runtime, ::NoLifecycleExecutionPlan, ::NoLifecycleWorkspace
 ) = true
@@ -13,8 +19,10 @@ _execute_lifecycle_status!(
     completed_mcs > 0 || throw(ArgumentError(
         "a published lifecycle transaction requires a positive completed MCS"
     ))
-    identity = _rng_mix64(xor(
-        _trajectory_seed(seed, replica, repeat),
+    trajectory = _trajectory_key(seed, replica, repeat)
+    identity = _lifecycle_identity_mix64(
+        xor(
+            trajectory[1] ⊻ _lifecycle_identity_mix64(trajectory[2]),
         UInt64(completed_mcs) * UInt64(0x94d049bb133111eb),
     ))
     return iszero(identity) ? typemax(UInt64) : identity

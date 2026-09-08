@@ -415,7 +415,7 @@ function program_execution_report(program::CompiledPottsProgram)
         shape = program.shape,
         attempts_per_site = program.attempts_per_site,
         trackers = tracker_plan_report(program.tracker_plan),
-        rng = :Philox4x32x10V2,
+        rng = :Philox4x64x10V3,
         numerical_policy = (
             math = :accurate,
             reductions = :deterministic,

@@ -302,8 +302,8 @@ function _physical_descriptor(index, request)
         (0.0, 0.0),
         (0.0, 0.0),
         CorePotts.CanonicalLifecycleSide,
-        UInt16(0),
-        UInt16(0),
+        CorePotts.RNGOperationKey(),
+        CorePotts.RNGOperationKey(),
         Int16(1),
         Int16(2),
         Int32(1),
@@ -608,4 +608,3 @@ function _oracle_request(
     )
     return (; key, priority = Int32(priority), active, effect)
 end
-

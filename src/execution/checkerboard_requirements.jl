@@ -241,6 +241,8 @@ struct _ExecutableLiteral{T}
     value::T
 end
 
+struct _ExecutableDrawFamily{Family} end
+
 struct _ExecutableDefaultParameter{T}
     value::T
 end
@@ -1025,6 +1027,12 @@ function _compile_proposal_expression(
     operation = expression.operation
     arguments = ntuple(length(expression.arguments)) do index
         argument = getfield(expression.arguments, index)
+        if operation isa ResourceOperation{:draw} && index == 1 &&
+                argument isa LiteralExpression && argument.value isa Integer
+            # A Bernoulli constraint returns Bool; a numerical draw returns T.
+            # Preserve this declared distinction in the gathered callable type.
+            return _ExecutableDrawFamily{Int(argument.value)}()
+        end
         if operation isa ResourceOperation{:bounded_fold} && index == 2 &&
                 argument isa LiteralExpression
             key = argument.value

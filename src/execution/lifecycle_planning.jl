@@ -89,7 +89,6 @@ function _plan_creation!(
         generation,
         site,
         Int32(0),
-        UInt16(descriptor.source_handle),
     )
     result = _evaluate_lifecycle_checked(
         mode, plan, descriptor.placement_evaluator, context, descriptor, workspace
@@ -262,7 +261,6 @@ function _label_division_sites!(
             generation,
             site,
             Int32(0),
-            UInt16(descriptor.source_handle),
         )
         value = _evaluate_lifecycle_checked(
             mode,

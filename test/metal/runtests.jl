@@ -7,6 +7,7 @@ Metal.functional() || error("the selected Metal witness is not functional")
 Metal.allowscalar(false)
 
 const COREPOTTS_METAL_WITNESSES = (
+    "corepotts_rng_contract.jl",
     "corepotts_feasibility.jl",
     "corepotts_stage_boundaries.jl",
     "corepotts_structured_transactions.jl",

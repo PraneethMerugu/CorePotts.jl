@@ -8,7 +8,7 @@ struct _CheckerboardGeometryEvaluator{N,O}
     shape::NTuple{N,Int}
     periodic::NTuple{N,Bool}
     offsets::O
-    trajectory_seed::UInt64
+    trajectory_key::NTuple{2, UInt64}
     site_count::Int32
 end
 
@@ -39,17 +39,22 @@ end
     target = @inbounds target_options[color]
     semantic = (attempt_round - Int32(1)) * evaluator.site_count + target
     direction_address = _program_address(
-        ProposalDirectionStream, Int(mcs), 2, semantic; subround = color)
+        ProposalDirectionStream, Int(mcs), _CORE_RNG_OPERATIONS.proposal_direction, semantic; subround = color
+    )
     direction = Int(bounded_uint(
-        Philox4x32x10V2(), evaluator.trajectory_seed,
+            Philox4x64x10V3(), evaluator.trajectory_key,
         direction_address, UInt32(length(evaluator.offsets)))) + 1
     source = _checkerboard_neighbor_linear(
         evaluator.shape, evaluator.periodic, target,
         getfield(evaluator.offsets, direction))
     priority_address = _program_address(
-        CheckerboardPriorityStream, Int(mcs), 4, semantic; subround = color)
-    priority = _rng_word(
-        Philox4x32x10V2(), evaluator.trajectory_seed, priority_address)
+        CheckerboardPriorityStream, Int(mcs), _CORE_RNG_OPERATIONS.checkerboard_priority, semantic; subround = color
+    )
+    priority = (
+        _rng_word(
+            Philox4x64x10V3(), evaluator.trajectory_key, priority_address
+        ) >> 32
+    ) % UInt32
     return (
         target = LocalMath.UniqueValue(target),
         sites = LocalMath.UniqueValue((target, source)),
@@ -128,7 +133,7 @@ function _checkerboard_geometry_declaration(
         plan.shape,
         plan.periodic,
         _proposal_offsets_tuple(proposal_offsets, length(plan.shape)),
-        _trajectory_seed(seed, replica, repeat),
+        _trajectory_key(seed, replica, repeat),
         Int32(prod(plan.shape; init = 1)),
     )
     stage = LocalMath.Stage(
@@ -332,7 +337,7 @@ struct _CheckerboardProposalContextPlan{
         RelationshipSchemas, ReadLayout,
     }
     shape::NTuple{N, Int}
-    trajectory_seed::UInt64
+    trajectory_key::NTuple{2, UInt64}
     state_handles::Handles
     contact_ranges::Ranges
     tracker_descriptors::TrackerDescriptors
@@ -1042,7 +1047,7 @@ end
         semantic,
         mcs = getfield(parameters, 1),
         color = getfield(parameters, 2),
-        trajectory_seed = plan.trajectory_seed,
+        trajectory_key = plan.trajectory_key,
         scalar_zero = zero(T),
         parameters = science_parameters,
         state_values,
@@ -1493,7 +1498,7 @@ function _checkerboard_scientific_declaration(
     )
     proposal_context = _CheckerboardProposalContextPlan(
         checkerboard.shape,
-        _trajectory_seed(seed, replica, repeat),
+        _trajectory_key(seed, replica, repeat),
         state_handles,
         contact_ranges,
         tracker_descriptors,
