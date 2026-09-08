@@ -135,7 +135,7 @@ end
         call.operation, arguments, context, Val(Quantity), call.source_handle)
 end
 
-struct _GatheredProposalContext{
+Base.@kwdef struct _GatheredProposalContext{
         I,T,P,V,S,O,K,RS,RO,RK,R,TV,TC,TD,TCD,MF,MS,MD,RR,
     }
     source::I
@@ -168,15 +168,6 @@ struct _GatheredProposalContext{
     moment_second::MS
     moment_descriptor::MD
     relationship_resources::RR
-end
-
-@generated function _gathered_proposal_context(arguments...)
-    length(arguments) == 30 || error(
-        "gathered proposal context construction schema changed")
-    context_type = _GatheredProposalContext{
-        arguments[1],arguments[13:30]...}
-    values = (:(getfield(arguments, $index)) for index in 1:30)
-    return :($context_type($(values...)))
 end
 
 struct _GatheredAnchorEnergyContext{C,I}
@@ -698,29 +689,6 @@ end
     )
 end
 
-@inline _gathered_scale_tuple(::Tuple{}, inverse) = ()
-@inline function _gathered_scale_tuple(values::Tuple, inverse)
-    return (
-        first(values) * inverse,
-        _gathered_scale_tuple(Base.tail(values), inverse)...,
-    )
-end
-
-@inline _gathered_covariance_tuple(
-    ::Tuple{}, center::Tuple, inverse, slot::Int,
-) = ()
-@inline function _gathered_covariance_tuple(
-        second::Tuple, center::Tuple, inverse, slot::Int = 1)
-    dimensions = length(center)
-    row = rem(slot - 1, dimensions) + 1
-    column = div(slot - 1, dimensions) + 1
-    return (
-        first(second) * inverse - center[row] * center[column],
-        _gathered_covariance_tuple(
-            Base.tail(second), center, inverse, slot + 1)...,
-    )
-end
-
 @inline function _gathered_moment_totals(
         context::_GatheredAnchorEnergyContext,
         owner::Int32,
@@ -763,7 +731,7 @@ end
     count > 0 || return nothing
     T = eltype(first)
     inverse = inv(T(count))
-    return _gathered_scale_tuple(first, inverse)
+    return _moment_center(first, inverse)
 end
 
 @inline function _gathered_cell_elongation(
@@ -779,10 +747,9 @@ end
     T = eltype(first)
     N = length(first)
     inverse = inv(T(count))
-    center = _gathered_scale_tuple(first, inverse)
-    covariance = _gathered_covariance_tuple(second, center, inverse)
-    maximum_variance = _maximum_covariance_eigenvalue(Val(N), covariance)
-    return T(4) * sqrt(max(zero(T), maximum_variance))
+    center = _moment_center(first, inverse)
+    covariance = _moment_covariance(second, center, inverse)
+    return _covariance_length(Val(N), covariance, T)
 end
 
 @inline function _gathered_tracker_slot(

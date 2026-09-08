@@ -18,7 +18,12 @@ The principal source owners are:
 - `checkerboard_requirements.jl`: cold inventory, footprint validation, access
   deduction, and compilation into concrete executable terms;
 - `gathered_proposal_evaluation.jl`: warm bounded proposal contexts and the
-  evaluation of compiled terms over gathered values;
+  evaluation of compiled terms over gathered values. Context construction uses
+  named fields and retains concrete hot value types;
+- `proposal_context.jl`: runtime proposal overlays and the shared pure
+  center, covariance, and length arithmetic. Gathered evaluation and
+  `lifecycle_context.jl` reuse those formulas while retaining their own bounded
+  reads, third-endpoint lookup, and staged-versus-live tracker selection;
 - `checkerboard_science.jl`: proposal geometry, topology declarations, and
   Core scientific evaluator callables. Cold named read groups produce both
   the LocalMath accesses and their compile-time decoder offsets; optional

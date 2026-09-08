@@ -1019,21 +1019,21 @@ end
     target = _checkerboard_cartesian_site(plan.shape, target_linear)
     source = source_linear > 0 ?
         _checkerboard_cartesian_site(plan.shape, source_linear) : target
-    context = _gathered_proposal_context(
+    context = _GatheredProposalContext(;
         source,
         target,
         target_linear,
-        owners[1],
-        owners[2],
-        kinds[1],
-        kinds[2],
+        old_owner = owners[1],
+        new_owner = owners[2],
+        old_kind = kinds[1],
+        new_kind = kinds[2],
         volumes,
         semantic,
-        getfield(parameters, 1),
-        getfield(parameters, 2),
-        plan.trajectory_seed,
-        zero(T),
-        science_parameters,
+        mcs = getfield(parameters, 1),
+        color = getfield(parameters, 2),
+        trajectory_seed = plan.trajectory_seed,
+        scalar_zero = zero(T),
+        parameters = science_parameters,
         state_values,
         contact_sites,
         contact_owners,
@@ -1041,10 +1041,11 @@ end
         reverse_contact_sites,
         reverse_contact_owners,
         reverse_contact_kinds,
-        plan.contact_ranges,
-        tracker_values, bounded_tracker_samples, plan.tracker_descriptors,
-        plan.bounded_tracker_descriptors,
-        moment_first, moment_second, plan.moment_descriptor,
+        contact_ranges = plan.contact_ranges,
+        tracker_values, bounded_tracker_samples,
+        tracker_descriptors = plan.tracker_descriptors,
+        bounded_tracker_descriptors = plan.bounded_tracker_descriptors,
+        moment_first, moment_second, moment_descriptor = plan.moment_descriptor,
         relationship_resources,
     )
     return actionable, context

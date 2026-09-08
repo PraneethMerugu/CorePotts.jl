@@ -677,6 +677,42 @@ function receipt_program(plan)
     )
 end
 
+@testset "request geometry reads only its own staged tracker state" begin
+    plan = receipt_lifecycle_plan()
+    program = receipt_program(plan)
+    ownership = zeros(Int32, 6, 6)
+    ownership[1:2, 1] .= 1
+    ownership[6, 6] = 2
+    runtime = CorePotts.initialize_program(
+        program,
+        CorePotts.ProgramInitialState(ownership, Int16[2, 4]; scalar_type = Float64),
+        Float64[], UInt64(0x5152), UInt32(1)
+    )
+    workspace = runtime.lifecycle_workspace
+    workspace.anchor[1] = 1
+    view = CorePotts._LifecycleRequestView(runtime, workspace, plan.descriptors[2], Int32(1))
+    staged = zeros(Int32, 6, 6)
+    staged[1, 2] = staged[3, 4] = 1
+    staged[2, 5] = staged[5, 3] = 2
+    staged_trackers = CorePotts.initialize_tracker_state(
+        program.tracker_plan, staged, runtime.cell_kinds, program
+    )
+    CorePotts._copyto_tracker_state!(workspace.staged_trackers.values, staged_trackers.values, identity)
+    @test CorePotts._cell_center(view, Int32(1)) == (1.5, 2.5)
+    @test CorePotts._cell_length(view, Int32(1)) ≈ 4sqrt(2.0)
+    @test CorePotts._cell_center(view, Int32(2)) == (5.5, 5.5)
+    @test CorePotts._cell_length(view, Int32(2)) == 0.0
+    staged[staged .== 1] .= 0
+    empty_trackers = CorePotts.initialize_tracker_state(
+        program.tracker_plan, staged, runtime.cell_kinds, program
+    )
+    CorePotts._copyto_tracker_state!(workspace.staged_trackers.values, empty_trackers.values, identity)
+    @test CorePotts._cell_center(view, Int32(1)) === nothing
+    @test CorePotts._cell_length(view, Int32(1)) == 0.0
+    @test CorePotts._cell_center(runtime, Int32(1)) == (1.0, 0.5)
+    @test runtime.ownership == ownership
+end
+
 function CorePotts.validate_component_state(
         ::TestBulkComponentPolicy, state::Vector{Int}, capacity::Integer
     )

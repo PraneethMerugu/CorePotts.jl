@@ -617,15 +617,14 @@ function _lifecycle_planned_shape_statistics(
     iszero(count) && return nothing
     moments = tracker_values(plan, trackers, Val(:cell_moments))
     inverse = inv(T(count))
-    center = ntuple(N) do dimension
-        @inbounds(moments.first[dimension, Int(cell)]) * inverse
+    first = ntuple(N) do dimension
+        @inbounds(moments.first[dimension, Int(cell)])
     end
-    covariance = ntuple(N * N) do slot
-        row = rem(slot - 1, N) + 1
-        column = div(slot - 1, N) + 1
-        @inbounds(moments.second[slot, Int(cell)]) * inverse -
-            center[row] * center[column]
+    second = ntuple(N * N) do slot
+        @inbounds(moments.second[slot, Int(cell)])
     end
+    center = _moment_center(first, inverse)
+    covariance = _moment_covariance(second, center, inverse)
     return count, center, covariance
 end
 
@@ -639,10 +638,7 @@ end
     statistics = _lifecycle_planned_shape_statistics(view, cell)
     statistics === nothing && return zero(T)
     covariance = statistics[3]
-    maximum_variance = _maximum_covariance_eigenvalue(
-        Val(length(view.runtime.program.shape)), covariance
-    )
-    return T(4) * sqrt(max(zero(T), maximum_variance))
+    return _covariance_length(Val(length(view.runtime.program.shape)), covariance, T)
 end
 
 @inline function _compiled_qualified_tracker_operation(

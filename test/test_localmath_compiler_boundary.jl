@@ -257,17 +257,19 @@ function _compiler_test_gathered_context(;
     tracker_descriptors = (),
     bounded_tracker_descriptors = (),
 )
-    return CorePotts._gathered_proposal_context(
+    return CorePotts._GatheredProposalContext(;
         source, target, target_linear,
         old_owner, new_owner, old_kind, new_kind,
-        volumes, Int32(1), Int64(1), Int32(1), UInt64(1), 0.0,
-        (), (),
+        volumes, semantic = Int32(1), mcs = Int64(1), color = Int32(1),
+        trajectory_seed = UInt64(1), scalar_zero = 0.0,
+        parameters = (), state_values = (),
         contact_sites, contact_owners, contact_kinds,
         reverse_contact_sites, reverse_contact_owners, reverse_contact_kinds,
         contact_ranges,
         tracker_values, bounded_tracker_samples,
         tracker_descriptors, bounded_tracker_descriptors,
-        (), (), nothing, (),
+        moment_first = (), moment_second = (), moment_descriptor = nothing,
+        relationship_resources = (),
     )
 end
 

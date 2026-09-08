@@ -35,6 +35,34 @@ end
     )
 end
 
+# Pure moment arithmetic shared by runtime, gathered, and lifecycle views.
+# Contexts retain ownership of storage selection and before/after overlays.
+@inline _moment_center(::Tuple{}, inverse) = ()
+@inline function _moment_center(totals::Tuple, inverse)
+    return (
+        first(totals) * inverse,
+        _moment_center(Base.tail(totals), inverse)...,
+    )
+end
+
+@inline _moment_covariance(::Tuple{}, center::Tuple, inverse, slot::Int) = ()
+@inline function _moment_covariance(
+        second::Tuple, center::Tuple, inverse, slot::Int = 1
+    )
+    dimensions = length(center)
+    row = rem(slot - 1, dimensions) + 1
+    column = div(slot - 1, dimensions) + 1
+    return (
+        first(second) * inverse - center[row] * center[column],
+        _moment_covariance(Base.tail(second), center, inverse, slot + 1)...,
+    )
+end
+
+@inline function _covariance_length(dimensions::Val, covariance, ::Type{T}) where {T}
+    maximum_variance = _maximum_covariance_eigenvalue(dimensions, covariance)
+    return T(4) * sqrt(max(zero(T), maximum_variance))
+end
+
 function _cell_center(
         runtime,
         cell::Int32;
@@ -54,15 +82,16 @@ function _cell_center(
     )
     count > 0 || return nothing
     inverse = inv(T(count))
-    return ntuple(N) do dimension
+    totals = ntuple(N) do dimension
         total = @inbounds moments.first[dimension, Int(cell)]
         if changed
             coordinate = T(replaced_site[dimension]) - T(0.5)
             cell == old_owner && (total -= coordinate)
             cell == replacement_owner && (total += coordinate)
         end
-        total * inverse
+        total
     end
+    return _moment_center(totals, inverse)
 end
 
 @inline function _cell_moment_overlay(
@@ -111,8 +140,8 @@ function _cell_shape_statistics(
         end
         total
     end
-    center = ntuple(dimension -> totals[dimension] * inverse, N)
-    covariance = ntuple(N * N) do slot
+    center = _moment_center(totals, inverse)
+    second = ntuple(N * N) do slot
         row = rem(slot - 1, N) + 1
         column = div(slot - 1, N) + 1
         quadratic = @inbounds moments.second[slot, Int(cell)]
@@ -123,8 +152,9 @@ function _cell_shape_statistics(
             cell == old_owner && (quadratic -= product)
             cell == replacement_owner && (quadratic += product)
         end
-        quadratic * inverse - center[row] * center[column]
+        quadratic
     end
+    covariance = _moment_covariance(second, center, inverse)
     return count, center, covariance
 end
 
@@ -163,8 +193,7 @@ function _cell_length(
     )
     statistics === nothing && return zero(T)
     covariance = statistics[3]
-    maximum_variance = _maximum_covariance_eigenvalue(Val(N), covariance)
-    return T(4) * sqrt(max(zero(T), maximum_variance))
+    return _covariance_length(Val(N), covariance, T)
 end
 
 @inline function _center_distance(
