@@ -328,10 +328,10 @@ end
 end
 
 struct _CheckerboardProposalContextPlan{
-        N,Handles,Ranges,TrackerDescriptors,BoundedTrackerDescriptors,MomentDescriptor,
-        RelationshipSchemas,
+        N, Handles, Ranges, TrackerDescriptors, BoundedTrackerDescriptors, MomentDescriptor,
+        RelationshipSchemas, ReadLayout,
     }
-    shape::NTuple{N,Int}
+    shape::NTuple{N, Int}
     trajectory_seed::UInt64
     state_handles::Handles
     contact_ranges::Ranges
@@ -339,6 +339,33 @@ struct _CheckerboardProposalContextPlan{
     bounded_tracker_descriptors::BoundedTrackerDescriptors
     moment_descriptor::MomentDescriptor
     relationship_schemas::RelationshipSchemas
+    read_layout::ReadLayout
+end
+
+# Only group identity and tuple arity enter the concrete callable. Actual
+# accesses remain in the LocalMath declaration, never captured by execution.
+struct _CheckerboardReadLayout{Names, Groups} end
+
+# The declaration order also owns decoder offsets. This runs only when the
+# LocalMath law is declared; the layout has no runtime storage.
+function _checkerboard_scientific_read_groups(groups::NamedTuple)
+    reads = merge(values(groups)...)
+    length(reads) == sum(length, values(groups)) || throw(
+        ArgumentError(
+            "checkerboard scientific read groups must have distinct names"
+        )
+    )
+    widths = Tuple{map(group -> NTuple{length(group), Nothing}, values(groups))...}
+    return reads, _CheckerboardReadLayout{keys(groups), widths}()
+end
+
+@generated function _checkerboard_read_offset(
+        ::_CheckerboardReadLayout{Names, Groups}, ::Val{Group}
+    ) where {Names, Groups, Group}
+    index = findfirst(==(Group), Names)
+    index === nothing && error("unknown checkerboard scientific read group")
+    offset = sum(fieldcount, Groups.parameters[1:(index - 1)]; init = 0)
+    return :(Val($offset))
 end
 
 struct _CheckerboardScientificEvaluator{
@@ -715,15 +742,6 @@ function _checkerboard_relationship_science_reads(declarations::Tuple)
     return NamedTuple{Tuple(names)}(Tuple(reads))
 end
 
-@generated function _checkerboard_relationship_read_count(
-        ::Schemas) where {Schemas<:Tuple}
-    count = sum(begin
-            payload_count, _, dimensions = schema_type.parameters
-            4 + payload_count + dimensions + dimensions * dimensions
-        end for schema_type in Schemas.parameters; init = 0)
-    return :($count)
-end
-
 @inline _checkerboard_materialize_read(read, ::Val{0}, lane::Int) = ()
 @inline function _checkerboard_materialize_read(
         read, ::Val{N}, lane::Int = 1) where {N}
@@ -926,28 +944,22 @@ end
     return :(_checkerboard_split_moment_values($values, descriptor))
 end
 
-_checkerboard_moment_component_count(::Nothing) = 0
-_checkerboard_moment_component_count(::CellMomentsTracker{N}) where {N} =
-    N + N * N
-
-
-@inline _checkerboard_scientific_parameters(reads, ::Val{false}) = ()
-@inline _checkerboard_scientific_parameters(reads, ::Val{true}) =
-    something(@inbounds getfield(reads, 7)[1].value)
+@inline _checkerboard_scientific_parameters(reads, ::Val{false}, ::Val) = ()
+@inline _checkerboard_scientific_parameters(reads, ::Val{true}, ::Val{Offset}) where {Offset} =
+    something(@inbounds getfield(reads, Offset + 1)[1].value)
 
 @generated function _checkerboard_scientific_contact(
-        reads, ::Val{Degree}, ::Val{HasParameters},
-    ) where {Degree,HasParameters}
+        reads, ::Val{Degree}, ::Val{Offset},
+    ) where {Degree, Offset}
     iszero(Degree) && return :(((), (), (), (), (), ()))
-    offset = HasParameters ? 1 : 0
     return quote
         (
-            something(@inbounds getfield(reads, $(7 + offset))[1].value),
-            something(@inbounds getfield(reads, $(8 + offset))[1].value),
-            something(@inbounds getfield(reads, $(9 + offset))[1].value),
-            something(@inbounds getfield(reads, $(10 + offset))[1].value),
-            something(@inbounds getfield(reads, $(11 + offset))[1].value),
-            something(@inbounds getfield(reads, $(12 + offset))[1].value),
+            something(@inbounds getfield(reads, $(1 + Offset))[1].value),
+            something(@inbounds getfield(reads, $(2 + Offset))[1].value),
+            something(@inbounds getfield(reads, $(3 + Offset))[1].value),
+            something(@inbounds getfield(reads, $(4 + Offset))[1].value),
+            something(@inbounds getfield(reads, $(5 + Offset))[1].value),
+            something(@inbounds getfield(reads, $(6 + Offset))[1].value),
         )
     end
 end
@@ -955,68 +967,64 @@ end
 @inline function _checkerboard_proposal_context(
         plan::_CheckerboardProposalContextPlan, reads, parameters,
         ::Type{T}, ::Val{Degree}, ::Val{HasParameters},
-    ) where {T,Degree,HasParameters}
+    ) where {T, Degree, HasParameters}
     sites = something(@inbounds getfield(reads, 1)[1].value)
     owners = something(@inbounds getfield(reads, 2)[1].value)
     kinds = something(@inbounds getfield(reads, 3)[1].value)
     volumes = something(@inbounds getfield(reads, 4)[1].value)
     actionable = something(@inbounds getfield(reads, 5)[1].value)
     semantic = something(@inbounds getfield(reads, 6)[1].value)
+    offsets = plan.read_layout
     science_parameters = _checkerboard_scientific_parameters(
-        reads, Val(HasParameters))
+        reads, Val(HasParameters), _checkerboard_read_offset(offsets, Val(:parameters))
+    )
     contact_sites, contact_owners, contact_kinds,
-    reverse_contact_sites, reverse_contact_owners, reverse_contact_kinds =
+        reverse_contact_sites, reverse_contact_owners, reverse_contact_kinds =
         _checkerboard_scientific_contact(
-            reads, Val(Degree), Val(HasParameters))
+        reads, Val(Degree), _checkerboard_read_offset(offsets, Val(:contact))
+    )
     tracker_values = _checkerboard_scientific_tracker_values(
         reads, Val(length(plan.tracker_descriptors)),
-        Val(6 + (HasParameters ? 1 : 0) + (iszero(Degree) ? 0 : 6)))
-    tracker_offset = 6 + (HasParameters ? 1 : 0) +
-        (iszero(Degree) ? 0 : 6)
+        _checkerboard_read_offset(offsets, Val(:trackers))
+    )
     bounded_tracker_count = iszero(Degree) ? 0 :
         length(plan.bounded_tracker_descriptors)
     bounded_tracker_samples = _checkerboard_scientific_tracker_gathers(
         reads, Val(bounded_tracker_count),
-        Val(tracker_offset + length(plan.tracker_descriptors)))
+        _checkerboard_read_offset(offsets, Val(:bounded_trackers))
+    )
     moment_first, moment_second = _checkerboard_scientific_moments(
         reads, plan.moment_descriptor,
-        Val(tracker_offset + length(plan.tracker_descriptors) +
-            bounded_tracker_count))
-    relationship_offset = tracker_offset +
-        length(plan.tracker_descriptors) + bounded_tracker_count +
-        _checkerboard_moment_component_count(plan.moment_descriptor)
+        _checkerboard_read_offset(offsets, Val(:moments))
+    )
     relationship_resources = _checkerboard_scientific_relationships(
         reads, plan.relationship_schemas, plan.moment_descriptor,
-        Val(relationship_offset))
+        _checkerboard_read_offset(offsets, Val(:relationships))
+    )
     state_values = _checkerboard_scientific_gathers(
         reads, Val(length(plan.state_handles)),
-        Val(6 + (HasParameters ? 1 : 0) + (iszero(Degree) ? 0 : 6) +
-            length(plan.tracker_descriptors) +
-            bounded_tracker_count +
-            _checkerboard_moment_component_count(
-                plan.moment_descriptor) +
-            _checkerboard_relationship_read_count(
-                plan.relationship_schemas)),
-        Val(Degree))
+        _checkerboard_read_offset(offsets, Val(:state)),
+        Val(Degree)
+    )
     target_linear, source_linear = sites
     target = _checkerboard_cartesian_site(plan.shape, target_linear)
     source = source_linear > 0 ?
         _checkerboard_cartesian_site(plan.shape, source_linear) : target
-    context = _gathered_proposal_context(
+    context = _GatheredProposalContext(;
         source,
         target,
         target_linear,
-        owners[1],
-        owners[2],
-        kinds[1],
-        kinds[2],
+        old_owner = owners[1],
+        new_owner = owners[2],
+        old_kind = kinds[1],
+        new_kind = kinds[2],
         volumes,
         semantic,
-        getfield(parameters, 1),
-        getfield(parameters, 2),
-        plan.trajectory_seed,
-        zero(T),
-        science_parameters,
+        mcs = getfield(parameters, 1),
+        color = getfield(parameters, 2),
+        trajectory_seed = plan.trajectory_seed,
+        scalar_zero = zero(T),
+        parameters = science_parameters,
         state_values,
         contact_sites,
         contact_owners,
@@ -1024,10 +1032,11 @@ end
         reverse_contact_sites,
         reverse_contact_owners,
         reverse_contact_kinds,
-        plan.contact_ranges,
-        tracker_values, bounded_tracker_samples, plan.tracker_descriptors,
-        plan.bounded_tracker_descriptors,
-        moment_first, moment_second, plan.moment_descriptor,
+        contact_ranges = plan.contact_ranges,
+        tracker_values, bounded_tracker_samples,
+        tracker_descriptors = plan.tracker_descriptors,
+        bounded_tracker_descriptors = plan.bounded_tracker_descriptors,
+        moment_first, moment_second, moment_descriptor = plan.moment_descriptor,
         relationship_resources,
     )
     return actionable, context
@@ -1366,6 +1375,102 @@ function _checkerboard_scientific_declaration(
         topology.source_space, accepted_site_terms, T)
     site_port_names = keys(accepted_site_fields)
     relationship_port_names = keys(accepted_relationship_fields)
+    core_reads = (
+        sites = LocalMath.Access(
+            topology.sites, topology.identity; required = true
+        ),
+        owners = LocalMath.Access(
+            topology.owners, topology.identity; required = true
+        ),
+        kinds = LocalMath.Access(kinds, topology.identity; required = true),
+        volumes = LocalMath.Access(volumes, topology.identity; required = true),
+        actionable = LocalMath.Access(
+            topology.actionable, topology.identity; required = true
+        ),
+        semantic = LocalMath.Access(
+            topology.semantic, topology.identity; required = true
+        ),
+    )
+    parameter_reads = science_parameters === nothing ? NamedTuple() : (
+            science_parameters = LocalMath.Access(
+                science_parameters, topology.identity; required = true
+            ),
+        )
+    contact_reads = contact === nothing ? NamedTuple() : (
+            contact_sites = LocalMath.Access(
+                contact.sites, topology.identity; required = true
+            ),
+            contact_owners = LocalMath.Access(
+                contact.owners, topology.identity; required = true
+            ),
+            contact_kinds = LocalMath.Access(
+                contact.kinds, topology.identity; required = true
+            ),
+            reverse_contact_sites = LocalMath.Access(
+                contact.reverse_sites, topology.identity; required = true
+            ),
+            reverse_contact_owners = LocalMath.Access(
+                contact.reverse_owners, topology.identity; required = true
+            ),
+            reverse_contact_kinds = LocalMath.Access(
+                contact.reverse_kinds, topology.identity; required = true
+            ),
+        )
+    tracker_reads = NamedTuple{tracker_names}(
+        map(
+            field -> LocalMath.Access(
+                field, topology.identity; required = true
+            ),
+            tracker_pair_fields
+        )
+    )
+    bounded_tracker_source_fields = map(bounded_tracker_descriptors) do descriptor
+        index = findfirst(==(descriptor), tracker_descriptors)
+        index === nothing && error("bounded tracker was not inventoried")
+        tracker_source_fields[index]
+    end
+    bounded_tracker_reads = contact === nothing ? NamedTuple() :
+        NamedTuple{bounded_tracker_names}(
+            map(
+                field -> LocalMath.Access(
+                    field, contact.kind_selection; required = false
+                ),
+                bounded_tracker_source_fields
+            )
+        )
+    moment_reads = NamedTuple{moment_names}(
+        map(
+            field -> LocalMath.Access(field, kind_relation; required = false),
+            moment_source_fields
+        )
+    )
+    relationship_reads = _checkerboard_relationship_science_reads(
+        relationship_science
+    )
+    state_reads = NamedTuple{
+        (
+            state_names..., contact_state_names..., reverse_contact_state_names...,
+            affected_contact_state_names...,
+        ),
+    }(
+        (
+            state_accesses..., contact_state_accesses...,
+            reverse_contact_state_accesses...,
+            affected_contact_state_accesses...,
+        )
+    )
+    scientific_reads, read_layout = _checkerboard_scientific_read_groups(
+        (
+            core = core_reads,
+            parameters = parameter_reads,
+            contact = contact_reads,
+            trackers = tracker_reads,
+            bounded_trackers = bounded_tracker_reads,
+            moments = moment_reads,
+            relationships = relationship_reads,
+            state = state_reads,
+        )
+    )
     proposal_context = _CheckerboardProposalContextPlan(
         checkerboard.shape,
         _trajectory_seed(seed, replica, repeat),
@@ -1375,6 +1480,7 @@ function _checkerboard_scientific_declaration(
         bounded_tracker_descriptors,
         moment_descriptor,
         relationship_schemas_compiled,
+        read_layout,
     )
     scientific_evaluator = _CheckerboardScientificEvaluator{
         T, contact_degree, !iszero(parameter_count),
@@ -1382,80 +1488,23 @@ function _checkerboard_scientific_declaration(
         typeof(accepted_relationship_terms),
         site_port_names,
         relationship_port_names,
-        typeof(proposal_context)}(
-            proposal_context, numeric_terms,
-            accepted_site_terms, accepted_relationship_terms)
+        typeof(proposal_context),
+    }(
+        proposal_context, numeric_terms,
+        accepted_site_terms, accepted_relationship_terms
+    )
     constraint_evaluator = if literal_constraint === nothing
         _CheckerboardConstraintEvaluator{
             T, contact_degree, !iszero(parameter_count),
-            typeof(constraint_terms), typeof(proposal_context)}(
-                proposal_context, constraint_terms)
+            typeof(constraint_terms), typeof(proposal_context),
+        }(
+            proposal_context, constraint_terms
+        )
     else
         _CheckerboardLiteralConstraintEvaluator{
-            something(literal_constraint)}()
+            something(literal_constraint),
+        }()
     end
-    core_reads = (
-        sites = LocalMath.Access(
-            topology.sites, topology.identity; required = true),
-        owners = LocalMath.Access(
-            topology.owners, topology.identity; required = true),
-        kinds = LocalMath.Access(kinds, topology.identity; required = true),
-        volumes = LocalMath.Access(volumes, topology.identity; required = true),
-        actionable = LocalMath.Access(
-            topology.actionable, topology.identity; required = true),
-        semantic = LocalMath.Access(
-            topology.semantic, topology.identity; required = true),
-    )
-    parameter_reads = science_parameters === nothing ? NamedTuple() : (
-        science_parameters = LocalMath.Access(
-            science_parameters, topology.identity; required = true),)
-    base_reads = merge(core_reads, parameter_reads)
-    contact_reads = contact === nothing ? NamedTuple() : (
-        contact_sites = LocalMath.Access(
-            contact.sites, topology.identity; required = true),
-        contact_owners = LocalMath.Access(
-            contact.owners, topology.identity; required = true),
-        contact_kinds = LocalMath.Access(
-            contact.kinds, topology.identity; required = true),
-        reverse_contact_sites = LocalMath.Access(
-            contact.reverse_sites, topology.identity; required = true),
-        reverse_contact_owners = LocalMath.Access(
-            contact.reverse_owners, topology.identity; required = true),
-        reverse_contact_kinds = LocalMath.Access(
-            contact.reverse_kinds, topology.identity; required = true),
-    )
-    tracker_reads = NamedTuple{tracker_names}(map(
-        field -> LocalMath.Access(
-            field, topology.identity; required = true),
-        tracker_pair_fields))
-    bounded_tracker_source_fields = map(bounded_tracker_descriptors) do descriptor
-        index = findfirst(==(descriptor), tracker_descriptors)
-        index === nothing && error("bounded tracker was not inventoried")
-        tracker_source_fields[index]
-    end
-    bounded_tracker_reads = contact === nothing ? NamedTuple() :
-        NamedTuple{bounded_tracker_names}(map(
-            field -> LocalMath.Access(
-                field, contact.kind_selection; required = false),
-            bounded_tracker_source_fields))
-    moment_reads = NamedTuple{moment_names}(map(
-        field -> LocalMath.Access(field, kind_relation; required = false),
-        moment_source_fields))
-    relationship_reads = _checkerboard_relationship_science_reads(
-        relationship_science)
-    scientific_reads = NamedTuple{(
-        keys(base_reads)..., keys(contact_reads)..., keys(tracker_reads)...,
-        keys(bounded_tracker_reads)..., keys(moment_reads)...,
-        keys(relationship_reads)...,
-        state_names..., contact_state_names..., reverse_contact_state_names...,
-        affected_contact_state_names...)}((
-            values(base_reads)..., values(contact_reads)...,
-            values(tracker_reads)..., values(bounded_tracker_reads)...,
-            values(moment_reads)...,
-            values(relationship_reads)...,
-            state_accesses..., contact_state_accesses...,
-            reverse_contact_state_accesses...,
-            affected_contact_state_accesses...))
     base_publications = (
         _checkerboard_scratch_publication(evaluation.delta_h, :delta_h),
         _checkerboard_scratch_publication(

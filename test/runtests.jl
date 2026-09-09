@@ -25,6 +25,7 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_lifecycle_selection_decisions.jl",
     "test_lifecycle_receipts.jl",
     "test_localmath_compiler_boundary.jl",
+    "test_checkerboard_read_groups.jl",
     "test_compiler_flagship_benchmark.jl",
 )
 const _COREPOTTS_TEST_HELPER_EXCLUSIONS = ()
