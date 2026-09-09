@@ -1,9 +1,12 @@
-empty_descriptor_plan() = CorePotts.DescriptorExecutionPlan(
+empty_descriptor_plan(;
+    source_table = Any[],
+    state_layout = CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
+) = CorePotts.DescriptorExecutionPlan(
     (),
-    CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
+    state_layout,
     CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]),
     (),
-    Any[],
+    source_table,
     Int32(0),
     "empty-descriptor-plan-v1",
     CorePotts.HamiltonianDomainResources(0, 0),
@@ -134,15 +137,18 @@ function cpu_only_descriptor_plan()
     )
 end
 
-function cpu_only_stage_plan()
+function cpu_only_stage_plan(target)
     descriptor = CorePotts.CompiledStageDescriptor(
         CorePotts.StaticEvaluator(CorePotts.LiteralExpression(true)),
         CorePotts.StaticEvaluator(CorePotts.LiteralExpression(0.0)),
-        CorePotts.SiteAssignmentEffect(CorePotts.StateHandle(1, 1)),
+        CorePotts.SiteAssignmentEffect(target),
         CorePotts.AcceptedCopyStage(),
         CorePotts.ResourceAccess(
-            (), (), CorePotts.EmptyFootprint(), CorePotts.EmptyFootprint(),
-            CorePotts.NoWriteAccess(),
+            (), (target,), CorePotts.EmptyFootprint(),
+            CorePotts.FiniteSpatialFootprint(
+                CorePotts.ProposalTargetFootprintAnchor(), ((0, 0),),
+            ),
+            CorePotts.ExclusiveWriteAccess(),
         ),
         CorePotts.DescriptorSupport(true, true, true, false),
         1, 1,

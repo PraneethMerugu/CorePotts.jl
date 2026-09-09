@@ -486,6 +486,7 @@ end
 @testset "unexpected staged-program failures restore a settled boundary" begin
     program = test_program(
         CorePotts.SequentialProgramEngine();
+        descriptor_plan = empty_descriptor_plan(; source_table = Any[:injected_failure]),
         stage_plan = injected_failure_stage_plan(),
         parameter_defaults = [2.0],
     )

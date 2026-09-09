@@ -218,6 +218,20 @@ function _reference_conjunctive_dispositions(
     return result
 end
 
+function _reference_color_dispositions(state, descriptor_plan, proposals, color)
+    dispositions = [
+        _reference_checkerboard_disposition(state, descriptor_plan, proposal, color)
+            for proposal in proposals
+    ]
+    return _reference_conjunctive_dispositions(
+        getproperty.(proposals, :old_owner),
+        getproperty.(proposals, :new_owner),
+        getproperty.(proposals, :priority),
+        getproperty.(proposals, :semantic_id),
+        dispositions,
+    )
+end
+
 @testset "proposal records and deterministic folds match an independent scalar oracle" begin
     program = test_program(
         CorePotts.CheckerboardProgramEngine();
@@ -278,6 +292,11 @@ end
         contributions[3].drive_energy +
         contributions[2].drive_energy == 0.0
 
+    # A complete color includes arbitration and publication. Evaluate the
+    # independent oracle before that publication changes its scientific input.
+    expected_dispositions = _reference_color_dispositions(
+        state, program.descriptor_plan, expected_proposals, color
+    )
     wait(CorePotts._clear_checkerboard_bulk!(execution, state))
     receipt = _run_test_proposal_segment!(
         execution,
@@ -298,13 +317,7 @@ end
         )
     end
     @test published_proposals == expected_proposals
-    published_dispositions = [
-        _reference_checkerboard_disposition(
-                state, program.descriptor_plan, proposal, color
-            )
-            for proposal in published_proposals
-    ]
-    @test workspace.dispositions[1:active_count] == published_dispositions
+    @test workspace.dispositions[1:active_count] == expected_dispositions
 end
 
 @testset "conjunctive arbitration applies two-key all-wins selection" begin
@@ -334,30 +347,17 @@ end
                 execution.color_laws.declaration.winners,
             )
         ) == length(workspace.state.cell_kinds) == 4
+    proposals = map(1:active_count) do item
+        _reference_checkerboard_proposal(workspace.state, color, 1, item)
+    end
+    expected = _reference_color_dispositions(
+        workspace.state, program.descriptor_plan, proposals, color
+    )
     wait(CorePotts._clear_checkerboard_bulk!(execution, workspace.state))
     receipt = CorePotts._execute_compiled_checkerboard_color!(
         execution, workspace.state, color, 1, active_count
     )
     wait(receipt)
-    initial = map(1:active_count) do item
-        proposal = (;
-            target_site = workspace.target_sites[item],
-            source_site = workspace.source_sites[item],
-            old_owner = workspace.old_owners[item],
-            new_owner = workspace.new_owners[item],
-            priority = workspace.priorities[item],
-            semantic_id = workspace.semantic_ids[item],
-        )
-        _reference_checkerboard_disposition(
-            workspace.state, program.descriptor_plan, proposal, color
-        )
-    end
-    expected = _reference_conjunctive_dispositions(
-        workspace.old_owners[1:active_count],
-        workspace.new_owners[1:active_count],
-        workspace.priorities[1:active_count],
-        workspace.semantic_ids[1:active_count], initial
-    )
     @test workspace.dispositions[1:active_count] == expected
 end
 
@@ -829,9 +829,11 @@ end
 end
 
 @testset "checkerboard rejects undeclared host stage callbacks" begin
+    count = Ref(0)
     program = test_program(
         CorePotts.CheckerboardProgramEngine();
-        stage_plan = unsupported_host_callback_stage_plan(Ref(0)),
+        descriptor_plan = empty_descriptor_plan(; source_table = Any[:host_callback]),
+        stage_plan = unsupported_host_callback_stage_plan(count),
     )
     error = try
         CorePotts.initialize_program(
@@ -846,6 +848,7 @@ end
         "does not support UnsupportedHostCallbackEffect",
         sprint(showerror, error)
     )
+    @test count[] == 0
 end
 
 @testset "checkerboard configuration preflight is atomic" begin

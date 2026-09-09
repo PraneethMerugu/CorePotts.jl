@@ -220,6 +220,17 @@ end
     @test cpu_only_report.key.mechanisms.support_family === :unsupported
     @test cpu_only_report.status === CorePotts.Unsupported
 
+    site_layout = CorePotts.StateLayout(
+        [
+            CorePotts.StateBlockSchema(
+                CorePotts.QualifiedResourceIdentity((), :cpu_only_site),
+                v"1.0.0", :site, Float64, (6, 6), 36,
+                :structure_of_arrays, :provided_or_zero, :shape_and_finite,
+                :logical, :preserve, :declared, :bounded_write, :adapt_storage,
+                :copy, :logical_copy, :qualified, true,
+            ),
+        ]
+    )
     for candidate in (
             capability_test_program(
                 test_program(CorePotts.CheckerboardProgramEngine());
@@ -229,7 +240,10 @@ end
             capability_test_program(
                 test_program(CorePotts.CheckerboardProgramEngine());
                 backend = CorePotts.AdaptedProgramBackend{:UnknownTestDevice}(),
-                stage_plan = cpu_only_stage_plan(),
+                descriptor_plan = empty_descriptor_plan(;
+                    source_table = Any[:cpu_only_stage], state_layout = site_layout,
+                ),
+                stage_plan = cpu_only_stage_plan(only(site_layout.entries).handle),
             ),
         )
         candidate_report = CorePotts.program_capability_report(candidate)

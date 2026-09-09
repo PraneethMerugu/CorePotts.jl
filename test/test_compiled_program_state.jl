@@ -383,7 +383,7 @@ end
         layout,
         CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]),
         (),
-        Any[],
+        Any[:signal_memory],
         0,
         "history-descriptor-plan-v1",
         CorePotts.HamiltonianDomainResources(0, 0),
