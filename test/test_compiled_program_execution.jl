@@ -481,6 +481,45 @@ end
     @test collect(CorePotts.CompilerSPI.state_block(
         CorePotts.program_snapshot(runtime).descriptor_state, handle
     ).values) == [31, 32]
+
+    @testset "repeated staged publication: $(nameof(typeof(engine)))" for engine in (
+            CorePotts.SequentialProgramEngine(), CorePotts.CheckerboardProgramEngine(),
+        )
+        C = CorePotts
+        repeated = C.initialize_program(
+            test_program(engine; descriptor_plan, parameter_defaults = [2.0]),
+            initial, [2.0], UInt64(0xc0a2), UInt32(1),
+        )
+        for gain in (3.0, 4.0, 5.0, 6.0)
+            before = C.program_snapshot(repeated)
+            parameters_before = copy(repeated.parameters)
+            staged = C.stage_program_mcs!(repeated)
+            state = C.copy_auxiliary_state(C.program_step_snapshot(staged).descriptor_state)
+            fill!(C.state_block(state, handle).values, gain)
+            C.stage_program_descriptor_state!(staged, state)
+            C.stage_program_parameters!(staged, [gain])
+            C.prevalidate_program_step_transaction(staged)
+            @test repeated.parameters == parameters_before
+            @test repeated.ownership == before.ownership
+            @test repeated.cell_kinds == before.cell_kinds
+            @test repeated.cell_generations == before.cell_generations
+            @test repeated.trackers.values == before.trackers.values
+            @test C.state_block(repeated.descriptor_state, handle).values == C.state_block(before.descriptor_state, handle).values
+            C.abort_program_step!(staged)
+            after = C.program_snapshot(repeated)
+            @test after.mcs == before.mcs
+            @test after.ownership == before.ownership
+            @test after.trackers.values == before.trackers.values
+            @test C.state_block(after.descriptor_state, handle).values == C.state_block(before.descriptor_state, handle).values
+            committed = C.stage_program_mcs!(repeated)
+            C.stage_program_descriptor_state!(committed, state)
+            C.stage_program_parameters!(committed, [gain])
+            C.commit_program_step!(committed)
+            @test repeated.mcs == before.mcs + 1
+            @test repeated.parameters == [gain]
+            @test all(==(gain), C.state_block(C.program_snapshot(repeated).descriptor_state, handle).values)
+        end
+    end
 end
 
 @testset "unexpected staged-program failures restore a settled boundary" begin

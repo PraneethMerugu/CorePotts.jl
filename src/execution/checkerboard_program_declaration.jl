@@ -598,6 +598,7 @@ function _program_state_copy_schema(state)
         _program_state_copy_leaf(:ownership, state.ownership),
         _program_state_copy_leaf(:cell_kinds, state.cell_kinds),
         _program_state_copy_leaf(:cell_generations, state.cell_generations),
+        _program_state_copy_leaf(:parameters, state.parameters),
     ]
     for (index, tracker) in enumerate(state.trackers.values)
         if tracker isa CellMomentsState
@@ -1074,6 +1075,7 @@ end
         relationships,
         descriptor_state,
         lifecycle_workspace,
+        parameters = state.parameters,
     )
     program_status = lifecycle_workspace isa LifecycleWorkspace ?
                      lifecycle_workspace.status : state.program_status
@@ -1088,7 +1090,7 @@ end
         lifecycle_workspace,
         state.lifecycle_control,
         program_status,
-        state.parameters,
+        parameters,
         state.seed,
         state.replica,
         state.repeat,

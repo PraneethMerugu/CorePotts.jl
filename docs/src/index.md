@@ -27,6 +27,19 @@ lifecycle selection, rollback, and bank authorization. Lifecycle selection is
 therefore reported as a Core KernelAbstractions operation followed by a genuine
 LocalMath compacted-request publication, rather than as one LocalMath law.
 
+Staged native stepping uses `BackendSPI.stage_program_mcs!`, input staging,
+prevalidation, and commit/abort in `execution/sequential_program.jl`. Both
+checkerboard scientific banks own storage independently of the published host
+state. `execution/checkerboard_workspace.jl` constructs and adapts these banks;
+the copy schema in `execution/checkerboard_program_declaration.jl` carries
+scientific values and parameters between them. Commit publishes a settled
+snapshot; abort restores the execution position through the existing
+KernelAbstractions control kernel. `program_snapshot` exposes only settled
+state. Repeated staged publication and abort across both bank parities are
+defended by `test_compiled_program_execution.jl`; schema and lifecycle-bank
+ownership are covered by `test_lifecycle_receipts.jl`. Device guarantees require
+the corresponding actual-backend execution tests, not CPU tests alone.
+
 ## Qualified semantic randomness
 
 The active RNG contract is `Philox4x64x10V3`, version `3.0.0`. Its 128-bit

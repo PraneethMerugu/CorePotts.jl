@@ -646,7 +646,8 @@ end
         constraint_rejections::UInt64, energy_rejections::UInt64,
         retired::UInt64,
     )
-    if @index(Global, Linear) == 1
+    index = @index(Global, Linear)
+    if index == 1
         @inbounds begin
             control.counters[_LIFECYCLE_CONTROL_ACTIVE_BANK] = bank
             control.counters[_LIFECYCLE_CONTROL_COMMITTED_MCS] = committed

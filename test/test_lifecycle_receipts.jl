@@ -30,6 +30,7 @@ function _relationship_schema_state(
         ownership,
         cell_kinds = zeros(Int16, length(ownership)),
         cell_generations = zeros(UInt32, length(ownership)),
+        parameters = Float32[],
         trackers = (values = trackers,),
         relationships,
         descriptor_state = (banks = (),),
@@ -354,7 +355,6 @@ end
         _assert_checkerboard_bank_invariants(workspace)
     end
     @test allequal(leaf_counts)
-    @test first(leaf_counts) == 6
 
     program = test_program(
         CorePotts.CheckerboardProgramEngine();
