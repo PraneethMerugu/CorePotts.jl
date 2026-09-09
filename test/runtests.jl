@@ -27,6 +27,7 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_program_input_publication.jl",
     "test_program_step_inputs.jl",
     "test_source_aware_trackers.jl",
+    "test_scheduled_source_sums.jl",
     "test_logical_state_values.jl",
     "test_history_sample_storage.jl",
     "test_history_lifecycle.jl",

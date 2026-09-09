@@ -693,7 +693,7 @@ function allocate_stage_runtime_buffers(
     site_descriptors = _stage_buffer_descriptors(_after_mcs_groups(plan), Int(plan.after_mcs_scratch_count), effect -> effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect})
     after = map(site_descriptors) do descriptor
         V = _stage_value_type(descriptor.effect, T)
-        map(_ -> _state_value_zero(V), CartesianIndices(shape))
+        map(_ -> _state_value_zero(StageEvaluation{V}), CartesianIndices(shape))
     end
     model_count = sum(
         (
