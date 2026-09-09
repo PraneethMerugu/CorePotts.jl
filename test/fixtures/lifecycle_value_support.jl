@@ -86,7 +86,10 @@ function test_different_length_lifecycle_values(engine; adapt_to = identity)
     return
 end
 
-function test_lifecycle_value_conversion(engine; adapt_to, values, invalid, initial_values, expected_values)
+function test_lifecycle_value_conversion(
+        engine; adapt_to, values, invalid, initial_values, expected_values,
+        expected_detail = CorePotts.LifecycleDetailStateValueInvalid,
+    )
     host, handles = heterogeneous_lifecycle_runtime(engine; values, initial_values)
     runtime = adapt_to === identity ? host : CorePotts.adapt_program_runtime(adapt_to, host)
     before = CorePotts.program_snapshot(runtime)
@@ -110,10 +113,84 @@ function test_lifecycle_value_conversion(engine; adapt_to, values, invalid, init
         @test CorePotts.program_lifecycle_receipt(runtime) === nothing
         failure = CorePotts.program_failure_report(runtime)
         @test failure.code === CorePotts.ProgramStatusEvaluator
-        @test failure.detail === CorePotts.LifecycleDetailStateValueInvalid
+        @test failure.detail === expected_detail
         @test failure.source == 1
     else
         @test count(event -> event isa CorePotts.RemoveCellLifecycleEvent, CorePotts.program_lifecycle_receipt(runtime)) == 1
+    end
+    return
+end
+
+function test_lifecycle_small_numeric_values(engine; adapt_to = identity)
+    for target_type in (Int32, UInt32, Bool), value in (0.0f0, -0.0f0, nextfloat(0.0f0), prevfloat(0.0f0), 0.5f0)
+        invalid = !(value === 0.0f0 || value === -0.0f0)
+        @testset "$target_type small value $(repr(value))" begin
+            for vector in (false, true)
+                initial = vector ? StaticArrays.SVector(one(target_type), one(target_type)) : one(target_type)
+                evaluated = vector ? StaticArrays.SVector(1.0f0, value) : value
+                expected = vector ? StaticArrays.SVector(one(target_type), zero(target_type)) : zero(target_type)
+                test_lifecycle_value_conversion(
+                    engine; adapt_to, invalid, initial_values = (initial, false),
+                    values = (evaluated, 1.0f0), expected_values = (expected, true),
+                )
+            end
+        end
+    end
+    return
+end
+
+function test_numeric_lifecycle_values(engine; adapt_to = identity)
+    scalar_initial = (Int32(1), false)
+    scalar_expected = (Int32(2), true)
+    vector_initial = (StaticArrays.SVector(Int32(1), Int32(2)), StaticArrays.SVector(false, true))
+    vector_expected = (StaticArrays.SVector(Int32(2), Int32(3)), StaticArrays.SVector(true, false))
+    cases = (
+        ("matched integer and Boolean", scalar_initial, scalar_expected, scalar_expected, false),
+        ("exact floating conversions", scalar_initial, (2.0f0, 1.0f0), scalar_expected, false),
+        ("exact floating Boolean false", scalar_initial, (2.0f0, 0.0f0), (Int32(2), false), false),
+        ("integer lower bound", scalar_initial, (Float32(-2^31), 1.0f0), (typemin(Int32), true), false),
+        (
+            "last representable integer below upper bound", scalar_initial,
+            (prevfloat(Float32(2^31)), 1.0f0), (Int32(2147483520), true), false,
+        ),
+        ("fractional integer", scalar_initial, (2.5f0, 1.0f0), scalar_expected, true),
+        ("integer below lower bound", scalar_initial, (prevfloat(Float32(-2^31)), 1.0f0), scalar_expected, true),
+        ("integer upper bound", scalar_initial, (Float32(2^31), 1.0f0), scalar_expected, true),
+        ("integer infinity", scalar_initial, (Inf32, 1.0f0), scalar_expected, true),
+        ("late Boolean range", scalar_initial, (2.0f0, 2.0f0), scalar_expected, true),
+        ("late negative Boolean", scalar_initial, (2.0f0, -1.0f0), scalar_expected, true),
+        ("late Boolean NaN", scalar_initial, (2.0f0, NaN32), scalar_expected, true),
+        (
+            "exact fixed-vector leaves", vector_initial,
+            (StaticArrays.SVector(2.0f0, 3.0f0), StaticArrays.SVector(1.0f0, 0.0f0)), vector_expected, false,
+        ),
+        (
+            "fractional fixed-vector integer leaf", vector_initial,
+            (StaticArrays.SVector(2.0f0, 3.5f0), StaticArrays.SVector(1.0f0, 0.0f0)), vector_expected, true,
+        ),
+        (
+            "fixed-vector integer upper bound", vector_initial,
+            (StaticArrays.SVector(2.0f0, Float32(2^31)), StaticArrays.SVector(1.0f0, 0.0f0)), vector_expected, true,
+        ),
+        (
+            "late fixed-vector Boolean range", vector_initial,
+            (StaticArrays.SVector(2.0f0, 3.0f0), StaticArrays.SVector(1.0f0, 2.0f0)), vector_expected, true,
+        ),
+        (
+            "late fixed-vector Boolean NaN", vector_initial,
+            (StaticArrays.SVector(2.0f0, 3.0f0), StaticArrays.SVector(1.0f0, NaN32)), vector_expected, true,
+        ),
+    )
+    for (name, initial_values, values, expected_values, invalid) in cases
+        @testset "$name" begin
+            # Scalar nonfinite evaluator results fail before logical conversion;
+            # invalid vector components reach the declared-value conversion owner.
+            expected_detail = any(value -> value isa AbstractFloat && !isfinite(value), values) ?
+                CorePotts.LifecycleDetailNonfiniteResult : CorePotts.LifecycleDetailStateValueInvalid
+            test_lifecycle_value_conversion(
+                engine; adapt_to, values, invalid, initial_values, expected_values, expected_detail,
+            )
+        end
     end
     return
 end

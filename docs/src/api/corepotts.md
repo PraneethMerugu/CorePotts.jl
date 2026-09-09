@@ -82,10 +82,14 @@ creation can initialize a new destination but cannot reset a source; removal,
 retirement, and transition can update their source but have no new destination.
 Daughter-state policies require division. `ResetLifecycleState` writes the existing
 source, whereas `InitializeLifecycleState` writes the allocated destination.
-Lifecycle value policies convert to the declared logical type. Inapplicable
-conversion methods and mismatched static-array lengths fail the transaction;
-equal-length static-array reshapes are preserved. Inexact integer and Boolean
-conversion failures are not yet covered by this checked lifecycle contract.
+Scalar and fixed-vector lifecycle value policies convert to the declared logical type; incompatible
+values fail the transaction. Static-array conversions may reshape equal-length
+values, but cannot change their element count. Integer conversions require an
+exact, in-range value; Boolean conversions require zero or one. Both signed
+floating zeros convert to zero, but nonzero subnormals are not integers, even
+on devices that flush floating-point comparisons near zero. Invalid values
+report the existing lifecycle evaluator failure and preserve the whole MCS
+transaction. These conversion rules do not extend backend state-bank admission.
 Disabled model and cell assignments do not publish: a later disabled assignment cannot
 undo an earlier enabled write to the same logical value. Site assignments retain
 their entry-value fallback when disabled.

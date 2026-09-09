@@ -32,6 +32,8 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_cell_stage_domain_boundaries.jl",
     "test_logical_state_lifecycle.jl",
     "test_lifecycle_value_conversion.jl",
+    "test_lifecycle_numeric_conversion.jl",
+    "test_lifecycle_integer_conversion_bounds.jl",
     "test_logical_ownership_change.jl",
     "test_structured_stage_transactions.jl",
     "test_site_assignment_conversion.jl",

@@ -80,6 +80,44 @@ end
     return true
 end
 
+@inline _lifecycle_value_convertible(::Type{T}, value) where {T} =
+    applicable(convert, T, value)
+
+@inline function _lifecycle_value_convertible(::Type{T}, value::Real) where {T <: Integer}
+    return applicable(convert, T, value) && isinteger(value) &&
+        typemin(T) <= value <= typemax(T)
+end
+
+@inline _lifecycle_value_convertible(::Type{Bool}, value::Real) =
+    applicable(convert, Bool, value) && (iszero(value) || isone(value))
+
+@inline _lifecycle_value_convertible(::Type{Bool}, value::Union{Float32, Float64}) =
+    applicable(convert, Bool, value) && !issubnormal(value) && (iszero(value) || isone(value))
+
+@inline function _lifecycle_value_convertible(
+        ::Type{T}, value::F,
+    ) where {T <: Union{Signed, Unsigned}, F <: Union{Float32, Float64}}
+    # Preserve convert's exact interval without promoting Float32 comparisons
+    # to Float64 on devices. The upper endpoint is exclusive: typemax(T)
+    # itself can round up when represented by the source floating-point type.
+    lower = F(typemin(T))
+    upper = F(typemax(T))
+    if T <: Unsigned || sizeof(T) < sizeof(F)
+        upper += one(F)
+    end
+    # Floating comparisons can flush subnormals to zero on devices. Base's
+    # bit classification rejects these nonintegers while preserving both zeros.
+    return applicable(convert, T, value) && !issubnormal(value) &&
+        lower <= value < upper && isinteger(value)
+end
+
+@inline function _lifecycle_value_convertible(
+        ::Type{T}, value::StaticArrays.StaticArray,
+    ) where {T <: StaticArrays.StaticArray}
+    return applicable(convert, T, value) && length(T) == length(value) &&
+        all(component -> _lifecycle_value_convertible(eltype(T), component), value)
+end
+
 @inline function _coerce_lifecycle_state_value(
         ::HostLifecycleExecution,
         workspace, descriptor, anchor, values, value
@@ -120,13 +158,9 @@ end
     )
     # Heterogeneous evaluator banks can expose impossible conversion branches
     # to device inference even when each selected policy has the correct type.
-    # StaticArrays conversion permits equal-length reshapes, but differing
-    # lengths throw even when the conversion method is applicable.
-    if !applicable(convert, eltype(values), value) ||
-            (
-            eltype(values) <: StaticArrays.StaticArray && value isa StaticArrays.StaticArray &&
-                length(eltype(values)) != length(value)
-        )
+    # Validate exact numeric conversions and static-array lengths before
+    # calling convert; equally sized static arrays may still reshape.
+    if !_lifecycle_value_convertible(eltype(values), value)
         _set_lifecycle_status!(
             workspace,
             ProgramStatusEvaluator;

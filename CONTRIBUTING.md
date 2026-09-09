@@ -132,9 +132,13 @@ view binding; model values are neither copied per cell nor published early.
 Lifecycle value conversion remains owned by `lifecycle_commit_state.jl`;
 `test_lifecycle_value_conversion.jl` and its Metal counterpart cover heterogeneous
 evaluator banks, legitimate scalar/vector conversions and equal-length reshapes,
-and inapplicable-method or static-length rollback through the same lifecycle
-transaction. Inexact integer and Boolean conversions need additional owning
-coverage before stronger conversion claims.
+and incompatible-value or length rollback through the same lifecycle transaction.
+`test_lifecycle_numeric_conversion.jl` covers integer/Boolean exactness, range,
+signed zero and subnormal behavior for scalar and fixed-vector values.
+`test_lifecycle_integer_conversion_bounds.jl` compares boundary admission with
+ordinary Julia conversion; its Metal counterpart also exercises the owning
+predicate directly. A primitive conversion check is not a state-bank support
+claim: Int8 and Int64 banks are currently outside checkerboard admission.
 
 The ordinary behavioral tests are `test_structured_stage_transactions.jl`
 (simultaneous assignments, ordered history and substeps, failure rollback),
