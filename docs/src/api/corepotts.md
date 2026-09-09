@@ -160,6 +160,13 @@ retain their state. The `:cell_bound_state_value` operation reads the current
 cell's declared state through `AbstractCellStageEvaluationContext`, without
 converting a cell identity into a site.
 
+The existing `:energy_anchor_cell` contextual operation identifies that selected
+finite-cell slot in a cell-stage evaluator. The corresponding
+`:energy_anchor_site` operation identifies the canonical one-based linear
+lattice index in a site-stage evaluator. These anchors do not change the
+effect's iteration domain; a cell anchor is not admitted in a site context, or
+vice versa.
+
 Scheduled model, cell, and site evaluators can use the existing `:draw`
 operation with a compiler-declared `RNGOperationKey`. Bernoulli, uniform, and
 normal draws use the same distribution transforms as proposal and lifecycle

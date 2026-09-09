@@ -26,6 +26,9 @@ end
 ) = apply_resource_operation(operation, arguments, context)
 
 @inline stage_cell(context::_CellStageEvaluationContext) = context.cell
+@inline context_value(::ContextOperation{:energy_anchor_cell}, context::_CellStageEvaluationContext) = stage_cell(context)
+@inline _compiled_context_value(operation::ContextOperation{:energy_anchor_cell}, context::_CellStageEvaluationContext) = context_value(operation, context)
+operation_context_supported(::ContextOperation{:energy_anchor_cell}, ::Type{AbstractCellStageEvaluationContext}) = true
 @inline stage_site(::ModelStageSite, ::_CellStageEvaluationContext) = Int32(1)
 @inline _compiled_evaluator_parameters(context::_CellStageEvaluationContext) = context.runtime.parameters
 @inline evaluator_parameters(context::_CellStageEvaluationContext) = context.runtime.parameters
@@ -212,6 +215,10 @@ end
     ::ModelStageSite,
     ::_SiteStageEvaluationContext,
 ) = 1
+@inline context_value(::ContextOperation{:energy_anchor_site}, context::_SiteStageEvaluationContext) =
+    _stage_linear_index(size(context.runtime.ownership), stage_site(IterationStageSite(), context))
+@inline _compiled_context_value(operation::ContextOperation{:energy_anchor_site}, context::_SiteStageEvaluationContext) = context_value(operation, context)
+operation_context_supported(::ContextOperation{:energy_anchor_site}, ::Type{AbstractSiteStageEvaluationContext}) = true
 @inline function state_value(
         context::_SiteStageEvaluationContext,
         handle::StateHandle,

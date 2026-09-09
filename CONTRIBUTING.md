@@ -146,6 +146,12 @@ provide their execution-domain shapes without expanding parameter storage.
 Cell effects use the same boundary emission/application transaction and the
 same identity-domain publication builder as singleton model effects. Their
 distinct evaluation context reads finite-cell slots, not lattice sites.
+Scheduled cell/site anchor operations use those same selected identities:
+`stage_runtime.jl` bridges the host evaluator context and
+`checkerboard_stage_compiler.jl` bridges the gathered compiled context. Site
+anchors use the canonical linear lattice index; cell anchors use the eligible
+finite-cell slot. `test_stage_anchor_contexts.jl` and its shared Metal fixture
+defend the numerical identity and inactive-slot behavior.
 The cell-domain validator derives expression requirements using the sole
 walker in `static_evaluator.jl`; the descriptor's kind and the runtime
 kind/generation tables remain the eligibility authorities.

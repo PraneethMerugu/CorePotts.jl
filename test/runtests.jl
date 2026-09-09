@@ -32,6 +32,7 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_model_state_energy.jl",
     "test_empty_logical_storage.jl",
     "test_cell_stage_execution.jl",
+    "test_stage_anchor_contexts.jl",
     "test_cell_stage_lifecycle.jl",
     "test_cell_stage_transactions.jl",
     "test_cell_stage_domain_boundaries.jl",

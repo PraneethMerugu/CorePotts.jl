@@ -54,6 +54,7 @@ end
 end
 
 @inline stage_cell(context::_GatheredCellStageContext) = context.cell
+@inline _execute_proposal_scalar(::_ExecutableProposalContext{:energy_anchor_cell}, context::_GatheredCellStageContext) = stage_cell(context)
 @inline stage_site(::ModelStageSite, ::_GatheredCellStageContext) = Int32(1)
 @inline _proposal_parameters(context::_GatheredCellStageContext) = context.parameters
 @inline function state_value(context::_GatheredCellStageContext, ::_ExecutableStateReference{Index}, slot) where {Index}
@@ -200,6 +201,8 @@ end
     _checkerboard_cartesian_site(context.shape, context.item)
 @inline stage_site(::ModelStageSite, ::_GatheredModelStageContext) = 1
 @inline stage_site(::ModelStageSite, ::_GatheredSiteStageContext) = 1
+@inline _execute_proposal_scalar(::_ExecutableProposalContext{:energy_anchor_site}, context::_GatheredSiteStageContext) =
+    _stage_linear_index(context.shape, stage_site(IterationStageSite(), context))
 
 @inline _stage_linear_index(shape, site::Int32) = site
 @inline _stage_linear_index(shape, site::Integer) = Int32(site)
