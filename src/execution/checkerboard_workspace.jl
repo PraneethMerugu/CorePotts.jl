@@ -147,34 +147,37 @@ function _checkerboard_compiled_relationship_layout(program)
     return _CheckerboardRelationshipLayout(Tuple(storage.slots), banks)
 end
 
-function _checkerboard_kernel_program(program, to)
+function _checkerboard_kernel_program(
+        program, to;
+        backend,
+        topology_epoch = _checkerboard_logical_topology_epoch(
+            program.checkerboard_plan, program.proposal_offsets
+        ),
+    )
     ownership_change_handles = program.ownership_change_handles
     tracker_kernel = to === nothing ?
-                     tracker_kernel_plan(program.tracker_plan) :
-                     adapt_tracker_kernel_plan(to, program.tracker_plan)
-    topology_epoch = _checkerboard_logical_topology_epoch(
-        program.checkerboard_plan, program.proposal_offsets
-    )
+        tracker_kernel_plan(program.tracker_plan) :
+        adapt_tracker_kernel_plan(to, program.tracker_plan, backend)
     extinction_policies = _checkerboard_compiled_extinction_policies(program)
     relationship_layout = _checkerboard_compiled_relationship_layout(program)
     return CheckerboardKernelProgram(
         program.shape,
         program.periodic,
         to === nothing ? program.proposal_offsets :
-        Adapt.adapt(to, program.proposal_offsets),
+            Adapt.adapt(to, program.proposal_offsets),
         program.medium_kind,
         program.temperature,
         program.attempts_per_site,
         to === nothing ? program.relationships :
-        Adapt.adapt(to, program.relationships),
+            Adapt.adapt(to, program.relationships),
         tracker_kernel,
         _checkerboard_adapt(to, _checkerboard_domain_resources(program)),
         to === nothing ? program.lifecycle_plan :
-        Adapt.adapt(to, program.lifecycle_plan),
+            Adapt.adapt(to, program.lifecycle_plan),
         to === nothing ? ownership_change_handles :
-        Adapt.adapt(to, ownership_change_handles),
+            Adapt.adapt(to, ownership_change_handles),
         to === nothing ? program.checkerboard_plan :
-        Adapt.adapt(to, program.checkerboard_plan),
+            Adapt.adapt(to, program.checkerboard_plan),
         extinction_policies,
         relationship_layout,
         topology_epoch,
@@ -217,7 +220,7 @@ function _checkerboard_execution_state(
         initial_mcs = 0,
         to = nothing,
     )
-    kernel_program = _checkerboard_kernel_program(program, to)
+    kernel_program = _checkerboard_kernel_program(program, to; backend = CPUBackend)
     # Neither alternating execution bank may borrow the published host state.
     ownership = copy(ownership)
     cell_kinds = copy(cell_kinds)
@@ -545,7 +548,10 @@ function _adapt_checkerboard_workspace(
         alternate_source = workspace.alternate_state
         program_status = Adapt.adapt(to, state.program_status)
         adapted = CheckerboardExecutionState(
-            _checkerboard_kernel_program(state.program, to),
+            _checkerboard_kernel_program(
+                state.program, to; topology_epoch = state.program.topology_epoch,
+                backend = capability_report.key.backend,
+            ),
             primary_science.ownership,
             primary_science.cell_kinds,
             primary_science.cell_generations,
@@ -603,7 +609,10 @@ function _adapt_checkerboard_workspace(
         shared_workspace, secondary_science
     )
     adapted = CheckerboardExecutionState(
-        _checkerboard_kernel_program(state.program, to),
+        _checkerboard_kernel_program(
+            state.program, to; topology_epoch = state.program.topology_epoch,
+            backend = capability_report.key.backend,
+        ),
         primary_science.ownership,
         primary_science.cell_kinds,
         primary_science.cell_generations,

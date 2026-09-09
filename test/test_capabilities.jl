@@ -178,6 +178,62 @@ end
     @test typed_array.key.scalar_type === Float64
 end
 
+CorePotts.tracker_rebuild(::CPUOnlyCapabilityTracker, source, cell_kinds) =
+    CorePotts.tracker_rebuild(CorePotts.OwnershipCountTracker(), source, cell_kinds)
+CorePotts.tracker_recompute(::CPUOnlyCapabilityTracker, source, cell_kinds) =
+    CorePotts.tracker_recompute(CorePotts.OwnershipCountTracker(), source, cell_kinds)
+@inline CorePotts.tracker_ownership_delta(
+    ::CPUOnlyCapabilityTracker, target, old_owner::Int32, new_owner::Int32,
+) = CorePotts.OwnerScalarDelta(Int32(1))
+
+const CPU_ONLY_TRACKER_ADAPTATIONS = Ref(0)
+function CorePotts.tracker_adapt(to, descriptor::CPUOnlyCapabilityTracker)
+    CPU_ONLY_TRACKER_ADAPTATIONS[] += 1
+    return descriptor
+end
+
+@testset "CPU-only tracker executes after independent Array adaptation" begin
+    C = CorePotts
+    tracker_plan = C.TrackerExecutionPlan(
+        (C.OwnershipCountTracker(), CPUOnlyCapabilityTracker()),
+        "cpu-only-ownership-adaptation",
+    )
+    program = test_program(C.CheckerboardProgramEngine(); tracker_plan)
+    source = C.initialize_program(program, test_initial(), Float64[], UInt64(0x070a), UInt32(1))
+    original = C.program_snapshot(source)
+    calls_before = CPU_ONLY_TRACKER_ADAPTATIONS[]
+    adapted = C.adapt_program_runtime(Array, source)
+    @test CPU_ONLY_TRACKER_ADAPTATIONS[] > calls_before
+    calls_before = CPU_ONLY_TRACKER_ADAPTATIONS[]
+    sibling = C.adapt_program_runtime(Array, adapted)
+    @test CPU_ONLY_TRACKER_ADAPTATIONS[] > calls_before
+    for runtime in (adapted, sibling)
+        @test runtime.capability_report.key.backend === C.CPUBackend
+        @test runtime.capability_report.status === C.Supported
+        @test C.program_snapshot(runtime).ownership == original.ownership
+    end
+    for boundary in 1:2
+        C.advance_mcs!(adapted)
+        snapshot = C.program_snapshot(adapted)
+        @test snapshot.mcs == boundary
+        for owner in eachindex(snapshot.cell_kinds)
+            @test C.program_tracker_value(adapted, Val(:cpu_only_capability_tracker), owner) ==
+                count(==(owner), snapshot.ownership)
+        end
+        for unchanged in (source, sibling)
+            snapshot = C.program_snapshot(unchanged)
+            @test snapshot.mcs == original.mcs
+            @test snapshot.ownership == original.ownership
+            @test snapshot.trackers.values == original.trackers.values
+        end
+    end
+    C.advance_mcs!(source)
+    C.advance_mcs!(sibling)
+    @test C.program_snapshot(source).ownership == C.program_snapshot(sibling).ownership
+    @test C.program_snapshot(source).trackers.values == C.program_snapshot(sibling).trackers.values
+    @test C.program_snapshot(adapted).mcs == 2
+end
+
 @testset "exact checkpoints compare explicit execution contracts" begin
     program = test_program(CorePotts.SequentialProgramEngine())
     ownership = zeros(Int32, 6, 6)
