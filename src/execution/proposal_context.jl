@@ -284,6 +284,8 @@ struct _ProposalEvaluationContext{R, I} <:
     subround::Int
 end
 
+@inline stage_site(::ModelStageSite, ::_ProposalEvaluationContext) = Int32(1)
+
 @inline evaluator_parameters(context::_ProposalEvaluationContext) =
     _proposal_science_parameters(context.runtime)
 @inline _compiled_evaluator_parameters(context::_ProposalEvaluationContext) =

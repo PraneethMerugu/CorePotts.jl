@@ -168,6 +168,7 @@ function _prepare_checkerboard_execution(
         canonical_plan = runtime.program.checkerboard_plan,
         canonical_proposal_offsets = runtime.program.proposal_offsets,
         canonical_stage_plan = runtime.program.stage_plan,
+        state_layout = runtime.program.descriptor_plan.state_layout,
     )
     identity = _checkerboard_execution_identity(
         workspace,

@@ -172,6 +172,7 @@ end
 ) =
     _checkerboard_cartesian_site(context.shape, context.item)
 @inline stage_site(::ModelStageSite, ::_GatheredModelStageContext) = 1
+@inline stage_site(::ModelStageSite, ::_GatheredSiteStageContext) = 1
 
 @inline _stage_linear_index(shape, site::Int32) = site
 @inline _stage_linear_index(shape, site::Integer) = Int32(site)
@@ -865,7 +866,7 @@ end
 
 _stage_selector_matches(
     ::BoundStateValueOperation{S}, selector::Type
-) where {S} = S === selector
+) where {S} = S === selector || (S === ModelStageSite && selector === IterationStageSite)
 
 function _compile_stage_expression(
         expression::Union{LiteralExpression, ParameterExpression, StateExpression},
@@ -979,23 +980,33 @@ function _stage_contact_tables(resources::HamiltonianDomainResources, dimensions
     return offsets, Tuple(resources.contact_starts), Tuple(resources.contact_counts)
 end
 
-function _stage_state_fields(space, handles::Tuple, ::Type{T}) where {T}
+function _stage_state_fields(space, handles::Tuple, ::Type{T}; layout = nothing) where {T}
+    model = LocalMath.Space(_CheckerboardStageModelDomain, 1)
     return map(handles) do handle
+        domain = if layout === nothing
+            space
+        else
+            entry = only(entry for entry in layout.entries if entry.handle == handle)
+            entry.schema.domain === :model ? model :
+                entry.schema.domain === :site ? space :
+                throw(ArgumentError("site assignment reads require site-owned or model-owned state"))
+        end
         shape = Tuple(Int.(handle_shape(handle)))
-        shape_matches = space isa LocalMath.Space{_CheckerboardStageModelDomain} ?
-            prod(shape) == 1 : shape == Tuple(size(space))
+        shape_matches = domain isa LocalMath.Space{_CheckerboardStageModelDomain} ?
+            prod(shape) == 1 : shape == Tuple(size(domain))
         shape_matches || throw(
             ArgumentError("after-MCS state handle shape does not match its source domain")
         )
-        LocalMath.Field(space, _stage_handle_element_type(handle, T))
+        LocalMath.Field(domain, _stage_handle_element_type(handle, T))
     end
 end
 
-function _stage_access_tuple(fields::Tuple, relation)
+function _stage_access_tuple(fields::Tuple, relation, model_relation = nothing)
     names = ntuple(index -> Symbol(:state_, index), length(fields))
     values = map(
         field -> LocalMath.Access(
-            field, relation; required = false
+            field, model_relation !== nothing && field.space isa LocalMath.Space{_CheckerboardStageModelDomain} ?
+                model_relation : relation; required = false
         ), fields
     )
     return NamedTuple{names}(values)
@@ -1010,14 +1021,18 @@ end
 
 function _stage_state_bindings(fields::Tuple, handles::Tuple, state)
     return map(fields, handles) do field, handle
-        field => state_block(state.descriptor_state, handle).values
+        field => (
+            field.space isa LocalMath.Space{_CheckerboardStageModelDomain} ?
+                _model_stage_state_storage(field.space, handle, state) :
+                state_block(state.descriptor_state, handle).values
+        )
     end
 end
 
 function _compile_site_assignment_law(
         descriptor::CompiledStageDescriptor,
         source_table, shape, periodic, medium_kind,
-        resources, ownership, cell_kinds, status, gate,
+        resources, ownership, cell_kinds, status, gate, state_layout,
         ::Type{T}
     ) where {T}
     handles = _stage_descriptor_handles(descriptor)
@@ -1037,7 +1052,11 @@ function _compile_site_assignment_law(
     lattice = LocalMath.Space(_CheckerboardStageSiteDomain, Tuple(shape))
     cells = LocalMath.Space(_CheckerboardStageCellDomain, length(cell_kinds))
     status_space = LocalMath.Space(_CheckerboardStageStatusDomain, 1)
-    fields = _stage_state_fields(lattice, handles, T)
+    fields = _stage_state_fields(lattice, handles, T; layout = state_layout)
+    first(fields).space == lattice || throw(ArgumentError("site assignment target requires site-owned storage"))
+    model_index = findfirst(field -> field.space isa LocalMath.Space{_CheckerboardStageModelDomain}, fields)
+    model_relation = model_index === nothing ? nothing :
+        LocalMath.FixedRelation(lattice => fields[model_index].space; degree = 1)
     identity = LocalMath.IdentityRelation(lattice)
     affine = LocalMath.AffineRelation(lattice => lattice; offsets)
     relation = LocalMath.BoundaryRelation(
@@ -1080,7 +1099,7 @@ function _compile_site_assignment_law(
         descriptor.source_handle
     )
     core_reads = merge(
-        _stage_access_tuple(fields, relation), (
+        _stage_access_tuple(fields, relation, model_relation), (
             ownership = LocalMath.Access(
                 ownership_field, relation; required = false
             ),
@@ -1160,7 +1179,7 @@ function _compile_site_assignment_law(
     return (;
         evaluation, publication, fields, handles, parameter_field, scratch,
         ownership_field, cell_kind_field, status_field,
-        initial_gate, refreshed_gate,
+        initial_gate, refreshed_gate, model_relation,
     )
 end
 
@@ -1804,7 +1823,15 @@ end
 function _site_stage_bindings(
         declaration, bank, gate
     )
+    model_bindings = if declaration.model_relation === nothing
+        ()
+    else
+        endpoints = _checkerboard_similar(bank.parameters, Int32, 1, prod(bank.program.shape))
+        fill!(endpoints, Int32(1))
+        (declaration.model_relation => endpoints,)
+    end
     bindings = (
+        model_bindings...,
         _stage_state_bindings(
             declaration.fields, declaration.handles, bank
         )...,
@@ -1986,7 +2013,7 @@ function _stage_boundary_entry(prepared, source_handle, effect; repetitions = 1)
 end
 
 function _compile_checkerboard_stage_boundary(
-        workspace, groups::Tuple, backend, queue_mcs_capacity::Integer
+        workspace, groups::Tuple, backend, queue_mcs_capacity::Integer, state_layout
     )
     descriptors = _stage_descriptors(groups)
     isempty(descriptors) && return ()
@@ -2052,7 +2079,8 @@ function _compile_checkerboard_stage_boundary(
                 _compile_site_assignment_law(
                     descriptor, workspace.source_table, shape, periodic,
                     state.program.medium_kind, resources, state.ownership,
-                    state.cell_kinds, state.program_status, external_gate, T
+                    state.cell_kinds, state.program_status, external_gate,
+                    state_layout, T
                 ), (; external_gate)
             )
         elseif effect isa ModelAssignmentEffect
@@ -2136,13 +2164,13 @@ end
 
 function _prepare_checkerboard_stage_boundaries(
         workspace, stage_plan::StageExecutionPlan, backend,
-        queue_mcs_capacity::Integer
+        queue_mcs_capacity::Integer, state_layout
     )
     before = _compile_checkerboard_stage_boundary(
-        workspace, stage_plan.before_lifecycle, backend, queue_mcs_capacity
+        workspace, stage_plan.before_lifecycle, backend, queue_mcs_capacity, state_layout
     )
     after = _compile_checkerboard_stage_boundary(
-        workspace, stage_plan.after_lifecycle, backend, queue_mcs_capacity
+        workspace, stage_plan.after_lifecycle, backend, queue_mcs_capacity, state_layout
     )
     return (; before, after)
 end

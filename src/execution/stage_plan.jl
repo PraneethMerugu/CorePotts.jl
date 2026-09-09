@@ -81,6 +81,16 @@ operation_context_supported(
     ::Type{AbstractSiteStageEvaluationContext},
 ) = true
 
+operation_context_supported(
+    ::BoundStateValueOperation{ModelStageSite},
+    ::Type{AbstractProposalEvaluationContext},
+) = true
+
+operation_context_supported(
+    ::BoundStateValueOperation{ModelStageSite},
+    ::Type{AbstractHamiltonianEvaluationContext},
+) = true
+
 abstract type AbstractCompiledEffect end
 
 """Assign one logical value to one site in a declared auxiliary-state block."""
@@ -401,6 +411,31 @@ end
 StageExecutionPlan() = StageExecutionPlan(
     (), (), (), 0, 0, "empty-stage-plan-v1"
 )
+
+function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources)
+    for group in (plan.accepted_copy..., plan.before_lifecycle..., plan.after_lifecycle...),
+            descriptor in group.instances
+        source = _descriptor_source(
+            sources, descriptor.source_handle;
+            descriptor, context = :stage_state_domains
+        )
+        _validate_model_read_domain(descriptor.condition.expression, layout, nothing, source)
+        _validate_model_read_domain(descriptor.value.expression, layout, nothing, source)
+        effect = descriptor.effect
+        if effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ModelAssignmentEffect}
+            index = findfirst(entry -> entry.handle == effect.target, layout.entries)
+            entry = index === nothing ? nothing : layout.entries[index]
+            domain = effect isa ModelAssignmentEffect ? :model : :site
+            entry !== nothing && entry.schema.domain === domain ||
+                throw(ArgumentError("stage target at $source requires $domain-owned storage"))
+            if domain === :model
+                prod(handle_shape(effect.target); init = 1) == 1 ||
+                    throw(ArgumentError("model-owned stage target at $source requires one logical value"))
+            end
+        end
+    end
+    return nothing
+end
 
 struct StageEvaluation{T}
     enabled::Bool

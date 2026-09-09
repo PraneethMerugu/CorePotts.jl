@@ -282,6 +282,8 @@ end
 @inline stage_site(
     ::ProposalTargetStageSite, context::_GatheredProposalContext,
 ) = context.target
+@inline stage_site(::ModelStageSite, ::_GatheredProposalContext) = Int32(1)
+@inline stage_site(::ModelStageSite, ::_GatheredAnchorEnergyContext) = Int32(1)
 @inline _proposal_parameters(context::_GatheredAnchorEnergyContext) =
     context.proposal.parameters
 

@@ -86,6 +86,17 @@ and inference checks are in `test/test_fixed_vector_operations.jl` and
 `test/test_product_field_operations.jl`.
 
 Compiler extensions declare scheduled effects in `src/execution/stage_plan.jl`.
+Model-owned proposal reads use the existing `model_bound_state_value` operation.
+`descriptor_plan.jl` validates its declared storage domain before execution;
+`proposal_context.jl` selects the sole value for sequential evaluation.
+`checkerboard_science.jl` gathers that same bank region through a repeated-address
+relation, with bindings in `checkerboard_law.jl`. Model state is not a spatial
+fold input. `test_model_state_proposal_reads.jl` exercises actionable proposal
+rejection, continuation, and malformed domain declarations on both CPU engines.
+Scheduled model reads reuse this validation in `_validate_stage_state_domains`
+at the `CompiledPottsProgram` construction boundary in `program/types.jl`, where
+the stage plan and sole descriptor state layout meet. The same owner tests
+cover wrong read domains in conditions and values and wrong assignment targets.
 `stage_runtime.jl` owns sequential boundary evaluation and application;
 `checkerboard_stage_compiler.jl` lowers the same boundary-entry reads and
 ordered publications into LocalMath plans. Its evaluation and publication

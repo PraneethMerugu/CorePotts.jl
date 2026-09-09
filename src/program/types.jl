@@ -351,6 +351,7 @@ function CompiledPottsProgram(
         !(resolved_checkerboard_plan isa NoCheckerboardPlan) && throw(
             ArgumentError("sequential programs cannot carry a checkerboard plan")
         )
+    _validate_stage_state_domains(stage_plan, descriptor_plan.state_layout, descriptor_plan.source_table)
     owned_proposal_offsets = copy(proposal_offsets)
     owned_medium_mask = copy(medium_mask)
     owned_parameter_defaults = copy(parameter_defaults)

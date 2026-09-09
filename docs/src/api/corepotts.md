@@ -88,6 +88,28 @@ scalar. Supported fixed-size products retain their declared type through
 assignment, logical checkpoint storage, and ownership-change clearing.
 A zero-dimensional singleton model block retains its declared shape in
 snapshots and checkpoints; its model-domain execution view shares that storage.
+
+Proposal predicates can read that sole model value with
+`operation_callable(Val(:model_bound_state_value), v"1.0.0")` applied to a
+`StateExpression(handle)`. Declare the handle in the descriptor's state and
+read inventories. Both CPU engines read the same model-owned bank region;
+checkerboard gathers repeat its address, not its storage. Descriptor validation
+rejects a non-model handle passed to this operation and a model handle used as
+a spatial `field_value` or bounded-fold resource. The ordinary model-predicate
+tests cover actual rejected attempts and checkpoint continuation.
+`test_model_state_energy.jl` additionally checks model coefficients in
+conservative cell-volume energy against an independent energy-difference
+formula, using sequential and gathered anchor evaluation. These bounded
+witnesses do not establish every Hamiltonian/contact combination or device
+execution.
+
+Stage read scope belongs to each operand, not to the assignment target. A
+site assignment may combine an iteration-bound site value with a model-bound
+singleton. `CompiledPottsProgram` validates these bindings against the descriptor
+state layout before either engine executes; `StageExecutionPlan` does not keep
+another layout. Site assignment targets remain site-owned, and model assignment
+targets remain singleton model-owned blocks.
+
 `ClearOnOwnershipChange` clears the registered value at a changed site, not the
 whole block. Unsupported operations or storage still require explicit
 admission; these contracts do not imply support for every value type or device.

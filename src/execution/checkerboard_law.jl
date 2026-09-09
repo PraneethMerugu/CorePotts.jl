@@ -322,9 +322,12 @@ end
 
 _checkerboard_state_field_bindings(::Tuple{}, ::Tuple{}, state) = ()
 function _checkerboard_state_field_bindings(fields::Tuple, handles::Tuple, state)
+    field = first(fields)
+    values = state_block(state.descriptor_state, first(handles)).values
+    storage = field.space isa LocalMath.Space{_CheckerboardModelDomain} ?
+        BlockView(values.storage, values.offset, (1,)) : values
     return (
-        first(fields) => state_block(
-            state.descriptor_state, first(handles)).values,
+        field => storage,
         _checkerboard_state_field_bindings(
             Base.tail(fields), Base.tail(handles), state)...,
     )
@@ -559,6 +562,13 @@ function _checkerboard_color_bindings(
         declaration.science_parameters, state, (maximum_batch,))
     state_bindings = _checkerboard_state_field_bindings(
         declaration.state_fields, declaration.state_handles, state)
+    model_state_binding = if declaration.model_state_relation === nothing
+        ()
+    else
+        endpoints = _checkerboard_similar(state.parameters, Int32, 2, maximum_batch)
+        fill!(endpoints, Int32(1))
+        (declaration.model_state_relation => endpoints,)
+    end
     contact_bindings = _checkerboard_contact_bindings(declaration.contact)
     tracker_source_bindings = Tuple(pair for pair in
         _checkerboard_tracker_source_bindings(
@@ -608,6 +618,7 @@ function _checkerboard_color_bindings(
             _checkerboard_storage_zero(declaration.volumes)),
         parameter_binding...,
         state_bindings...,
+        model_state_binding...,
         contact_bindings...,
         tracker_source_bindings...,
         moment_source_bindings...,

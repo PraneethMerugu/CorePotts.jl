@@ -74,6 +74,28 @@ function _contains_tracker_fold(expression::OperationExpression)
     return any(_contains_tracker_fold, expression.arguments)
 end
 
+function _validate_model_read_domain(expression::StateExpression, layout, operation, source)
+    entry_index = findfirst(entry -> entry.handle == expression.handle, layout.entries)
+    entry = entry_index === nothing ? nothing : layout.entries[entry_index]
+    if operation isa BoundStateValueOperation{ModelStageSite}
+        entry !== nothing && entry.schema.domain === :model &&
+            prod(handle_shape(expression.handle); init = 1) == 1 ||
+            throw(ArgumentError("model-bound read at $source requires one declared model-owned value"))
+    elseif entry !== nothing && entry.schema.domain === :model
+        throw(ArgumentError("model-owned state at $source requires an explicit model-bound read, not a spatial resource read"))
+    end
+    return nothing
+end
+
+function _validate_model_read_domain(expression::OperationExpression, layout, operation, source)
+    for argument in expression.arguments
+        _validate_model_read_domain(argument, layout, expression.operation, source)
+    end
+    return nothing
+end
+
+_validate_model_read_domain(::AbstractStaticExpression, layout, operation, source) = nothing
+
 """Validated ordered proposal descriptor plan and its storage requirements."""
 struct DescriptorExecutionPlan{
         G <: Tuple,
@@ -128,6 +150,7 @@ struct DescriptorExecutionPlan{
                     descriptor.role, handle; source),
             ))
             push!(seen_sources, handle)
+            _validate_model_read_domain(descriptor.evaluator.expression, state_layout, nothing, source)
         end
         for group in constraints, constraint in group.instances
             _descriptor_source(

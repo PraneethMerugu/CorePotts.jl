@@ -1,3 +1,5 @@
+struct _CheckerboardModelDomain end
+
 # LocalMath topology, bounded gathers, and scientific proposal evaluation.
 
 struct _CheckerboardProposalDomain end
@@ -1199,21 +1201,34 @@ function _checkerboard_scientific_declaration(
         kinetic_modifier = LocalMath.Field(topology.source_space, T),
         constraints_allowed = LocalMath.Field(topology.source_space, Bool),
     )
-    all(handle -> Tuple(Int.(handle_shape(handle))) == checkerboard.shape,
-        state_handles) || throw(ArgumentError(
-            "checkerboard proposal state fields must match the lattice shape"))
+    model_space = LocalMath.Space(_CheckerboardModelDomain, 1)
     state_fields = map(state_handles) do handle
-        LocalMath.Field(topology.lattice_space,
-            _state_handle_element_type(handle))
+        entry = only(entry for entry in descriptor_plan.state_layout.entries if entry.handle == handle)
+        shape = Tuple(Int.(handle_shape(handle)))
+        domain = if entry.schema.domain === :model
+            prod(shape; init = 1) == 1 || throw(ArgumentError("model proposal state requires one logical value"))
+            model_space
+        else
+            entry.schema.domain === :site && shape == checkerboard.shape ||
+                throw(ArgumentError("checkerboard proposal state requires a declared model value or lattice-shaped site state"))
+            topology.lattice_space
+        end
+        LocalMath.Field(domain, _state_handle_element_type(handle))
     end
     accepted_state_handles = requirements.accepted_state_handles
     accepted_state_fields = map(accepted_state_handles) do handle
         slot = findfirst(==(handle), state_handles)
         slot === nothing && error("accepted state handle was not gathered")
+        getfield(state_fields, slot).space == topology.lattice_space ||
+            throw(ArgumentError("accepted-copy state publication requires site-owned storage"))
         getfield(state_fields, slot)
     end
     proposal_site_relation = LocalMath.IndexRelation(
         topology.sites => topology.lattice_space; optional = true)
+    # Both proposal endpoints see the same sole model value. The relation
+    # repeats an address, not the scientific state or its ownership.
+    model_state_relation = any(field -> field.space == model_space, state_fields) ?
+        LocalMath.FixedRelation(topology.source_space => model_space; degree = 2) : nothing
     parameter_count = max(
         requirements.parameter_count, Int(minimum_parameter_count))
     science_parameters = iszero(parameter_count) ? nothing :
@@ -1338,16 +1353,16 @@ function _checkerboard_scientific_declaration(
                 LocalMath.LocalLaw(reverse_kind_stage)))
     end
     state_accesses = map(state_fields) do field
-        LocalMath.Access(field, proposal_site_relation; required = false)
+        LocalMath.Access(field, field.space == model_space ? model_state_relation : proposal_site_relation; required = false)
     end
     contact_state_accesses = contact === nothing ? () : map(state_fields) do field
-        LocalMath.Access(field, contact.relation; required = false)
+        LocalMath.Access(field, field.space == model_space ? model_state_relation : contact.relation; required = false)
     end
     reverse_contact_state_accesses = contact === nothing ? () : map(state_fields) do field
-        LocalMath.Access(field, contact.reverse_relation; required = false)
+        LocalMath.Access(field, field.space == model_space ? model_state_relation : contact.reverse_relation; required = false)
     end
     affected_contact_state_accesses = contact === nothing ? () : map(state_fields) do field
-        LocalMath.Access(field, contact.affected_relation; required = false)
+        LocalMath.Access(field, field.space == model_space ? model_state_relation : contact.affected_relation; required = false)
     end
     state_names = ntuple(
         index -> Symbol(:proposal_state_, index), length(state_fields))
@@ -1602,7 +1617,7 @@ function _checkerboard_scientific_declaration(
         state_handles, state_fields,
         accepted_state_handles, accepted_state_fields,
         ownership_change_handles,
-        proposal_site_relation, science_parameters, parameter_count, contact,
+        proposal_site_relation, model_state_relation, science_parameters, parameter_count, contact,
         contact_ranges, tracker_keys, tracker_descriptors,
         tracker_source_fields, tracker_pair_fields,
         moment_descriptor, moment_source_fields,
