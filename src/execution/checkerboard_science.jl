@@ -742,15 +742,6 @@ function _checkerboard_relationship_science_reads(declarations::Tuple)
     return NamedTuple{Tuple(names)}(Tuple(reads))
 end
 
-@generated function _checkerboard_relationship_read_count(
-        ::Schemas) where {Schemas<:Tuple}
-    count = sum(begin
-            payload_count, _, dimensions = schema_type.parameters
-            4 + payload_count + dimensions + dimensions * dimensions
-        end for schema_type in Schemas.parameters; init = 0)
-    return :($count)
-end
-
 @inline _checkerboard_materialize_read(read, ::Val{0}, lane::Int) = ()
 @inline function _checkerboard_materialize_read(
         read, ::Val{N}, lane::Int = 1) where {N}
