@@ -63,14 +63,14 @@ struct BlockLocation{N}
     function BlockLocation(
             offset::Integer, shape::NTuple{N, <:Integer}
         ) where {N}
-        offset > 0 || throw(
+        0 < offset <= typemax(Int32) || throw(
             ArgumentError(
-                "a block location offset must be positive"
+                "a block location offset must be positive and fit Int32"
             )
         )
-        all(>=(0), shape) || throw(
+        all(dimension -> 0 <= dimension <= typemax(Int32), shape) || throw(
             ArgumentError(
-                "block location dimensions must be nonnegative"
+                "block location dimensions must be nonnegative and fit Int32"
             )
         )
         return new{N}(Int32(offset), Int32.(shape))

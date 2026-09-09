@@ -114,6 +114,13 @@ whole-sample projection. These read views do not create layout entries and are
 never valid write targets. Assignment, ownership-change, and lifecycle targets
 continue to require exact canonical layout identity. The same owner tests
 cover wrong read domains in conditions and values and wrong assignment targets.
+Cell history lifecycle rules retain the full canonical target. Complete-program
+admission proves its sampled source is cell-owned; `lifecycle_commit_state.jl`
+applies the existing state-policy body to each dense sample. The canonical
+`lifecycle_occurrence` in `lifecycle_context.jl` identifies the retained lag;
+Before reads the immutable bank and Planned reads the request-local candidate.
+`test_history_lifecycle.jl` defends corresponding-sample reads, real identity,
+and late-sample rollback alongside ordinary cell-state behavior.
 `stage_runtime.jl` owns sequential boundary evaluation and application;
 `checkerboard_stage_compiler.jl` lowers the same boundary-entry reads and
 ordered publications into LocalMath plans. Its evaluation and publication

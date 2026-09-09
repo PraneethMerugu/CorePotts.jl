@@ -107,6 +107,13 @@ floating zeros convert to zero, but nonzero subnormals are not integers, even
 on devices that flush floating-point comparisons near zero. Invalid values
 report the existing lifecycle evaluator failure and preserve the whole MCS
 transaction. These conversion rules do not extend backend state-bank admission.
+Cell-owned histories use these same policies for every retained sample. The
+state-policy `lifecycle_occurrence` is its newest-relative lag (ordinary cell
+state uses zero); it does not replace the cell slot or generation.
+`lifecycle_before_state_value` reads the immutable transaction-entry sample,
+whereas `lifecycle_planned_state_value` reads the corresponding participant's
+sample from the existing request-local staged state. A late sample failure
+abandons the entire transaction, including earlier sample writes.
 Disabled model and cell assignments do not publish: a later disabled assignment cannot
 undo an earlier enabled write to the same logical value. Site assignments retain
 their entry-value fallback when disabled.

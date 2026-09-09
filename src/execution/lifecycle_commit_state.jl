@@ -196,6 +196,7 @@ end
         source,
         destination,
         role,
+        sample,
     )
     source_generation = source > 0 ?
         @inbounds(runtime.cell_generations[source]) : UInt32(0)
@@ -234,7 +235,7 @@ end
         rule.source_identity,
         rule.handle,
         _lifecycle_context_site(runtime, workspace, anchor),
-        Int32(0),
+        Int32(size(state_block(runtime.descriptor_state, rule.handle).values, 2) - sample),
     )
     return _evaluate_lifecycle_checked(
         mode, plan, evaluator, context, descriptor, workspace
@@ -325,6 +326,32 @@ function _apply_lifecycle_state_rule_action!(
     values = state_block(
         workspace.staged_descriptor_state, rule.handle
     ).values
+    for sample in 1:size(values, 2)
+        succeeded = _apply_lifecycle_state_sample!(
+            rule, mode, runtime, plan, workspace, descriptor, request,
+            source, destination, action_plan, sample,
+            _lifecycle_state_sample_values(values, sample),
+        )
+        succeeded || return false
+    end
+    return true
+end
+
+function _apply_lifecycle_state_sample!(
+        rule,
+        mode::AbstractLifecycleExecutionMode,
+        runtime,
+        plan,
+        workspace,
+        descriptor,
+        request::Int,
+        source::Int32,
+        destination::Int32,
+        action_plan::Val,
+        sample::Int,
+        values,
+    )
+    action = _lifecycle_state_action_value(action_plan)
     source_generation = source > 0 ?
         @inbounds(runtime.cell_generations[source]) : UInt32(0)
     destination_generation = destination > 0 ?
@@ -332,7 +359,7 @@ function _apply_lifecycle_state_rule_action!(
     if action === InitializeLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, DestinationLifecycleStateRole,
+            source, destination, DestinationLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -343,7 +370,7 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === RetireToLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, SourceLifecycleStateRole,
+            source, destination, SourceLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -356,7 +383,7 @@ function _apply_lifecycle_state_rule_action!(
     elseif action in (ResetLifecycleState, TransformLifecycleState)
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, SourceLifecycleStateRole,
+            source, destination, SourceLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -369,7 +396,7 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === PreserveParentResetDaughterLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, DaughterLifecycleStateRole,
+            source, destination, DaughterLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -380,12 +407,12 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === ResetBothLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, ParentLifecycleStateRole,
+            source, destination, ParentLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_b = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_b, request,
-            source, destination, DaughterLifecycleStateRole,
+            source, destination, DaughterLifecycleStateRole, sample,
         )
         value_b isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -403,7 +430,7 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === SplitConservativelyLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, ParentLifecycleStateRole,
+            source, destination, ParentLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         fraction_valid = _lifecycle_fraction_valid(mode, value_a)
@@ -441,12 +468,12 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === TransformDaughtersLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, ParentLifecycleStateRole,
+            source, destination, ParentLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_b = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_b, request,
-            source, destination, DaughterLifecycleStateRole,
+            source, destination, DaughterLifecycleStateRole, sample,
         )
         value_b isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -464,22 +491,22 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === RedrawDaughtersLifecycleState
         first_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, ParentLifecycleStateRole,
+            source, destination, ParentLifecycleStateRole, sample,
         )
         first_a isa LifecycleEvaluationFailed && return false
         second_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_b, request,
-            source, destination, ParentLifecycleStateRole,
+            source, destination, ParentLifecycleStateRole, sample,
         )
         second_a isa LifecycleEvaluationFailed && return false
         first_b = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_c, request,
-            source, destination, DaughterLifecycleStateRole,
+            source, destination, DaughterLifecycleStateRole, sample,
         )
         first_b isa LifecycleEvaluationFailed && return false
         second_b = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_d, request,
-            source, destination, DaughterLifecycleStateRole,
+            source, destination, DaughterLifecycleStateRole, sample,
         )
         second_b isa LifecycleEvaluationFailed && return false
         T = eltype(runtime.parameters)

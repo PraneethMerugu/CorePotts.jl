@@ -147,6 +147,7 @@ function _history_sample_fixture(domain, source_shape, depth)
 end
 
 @testset "history reads select bounded whole samples without copying" begin
+    @test_throws r"history.*dimensions.*Int32" _history_sample_fixture(:cell, (0,), Int64(typemax(Int32)) + 1)
     for (domain, shape) in ((:model, ()), (:cell, (3,)), (:site, (2, 3)), (:cell, (0,)))
         fixture = _history_sample_fixture(domain, shape, 257)
         (; layout, source, history, descriptor) = fixture

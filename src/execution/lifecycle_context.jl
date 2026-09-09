@@ -83,7 +83,7 @@ const _LifecycleContext = Union{
 @inline lifecycle_anchor(context::_LifecycleContext) = context.anchor
 """Return the lifecycle evaluation's selected site value."""
 @inline lifecycle_site(context::_LifecycleContext) = context.site
-"""Return the canonical occurrence ordinal for a lifecycle evaluation."""
+"""Return the canonical occurrence ordinal for a lifecycle evaluation. State policies use the retained lag ordinal (zero is newest); ordinary cell state uses zero."""
 @inline lifecycle_occurrence(context::_LifecycleContext) = context.occurrence
 """Return the stable descriptor source identity."""
 @inline lifecycle_source_identity(context::_LifecycleContext) =
@@ -256,30 +256,32 @@ end
 @inline lifecycle_state_identity(context::_LifecycleStateContext) =
     context.state_identity
 
+@inline _lifecycle_state_sample_values(values::AbstractVector, sample::Integer) = values
+@inline _lifecycle_state_sample_values(values::AbstractMatrix, sample::Integer) =
+    view(values, :, sample)
+
 """Read the immutable pre-transaction value for the current state participant."""
 @inline function lifecycle_before_state_value(context::_LifecycleStateContext)
     index = context.source > 0 ? context.source : context.destination
-    index > 0 || return zero(eltype(state_block(
+    block = state_block(
         context.runtime.descriptor_state, context.state_handle
-    ).values))
-    return @inbounds state_block(
-        context.runtime.descriptor_state, context.state_handle
-    ).values[index]
+    ).values
+    values = _lifecycle_state_sample_values(block, size(block, 2) - context.occurrence)
+    index > 0 || return _state_value_zero(eltype(values))
+    return @inbounds values[index]
 end
 
 """Read the value planned earlier in the current lifecycle transaction."""
 @inline function lifecycle_planned_state_value(context::_LifecycleStateContext)
     index = context.role in (
-        DestinationLifecycleStateRole, DaughterLifecycleStateRole,
-    ) ? context.destination : context.source
-    values = state_block(
-        context.runtime.descriptor_state, context.state_handle
+            DestinationLifecycleStateRole, DaughterLifecycleStateRole,
+        ) ? context.destination : context.source
+    block = state_block(
+        context.planned.workspace.staged_descriptor_state, context.state_handle
     ).values
-    index > 0 || return zero(eltype(values))
-    return @inbounds state_block(
-        context.runtime.descriptor_state,
-        context.state_handle,
-    ).values[index]
+    values = _lifecycle_state_sample_values(block, size(block, 2) - context.occurrence)
+    index > 0 || return _state_value_zero(eltype(values))
+    return @inbounds values[index]
 end
 @inline _lifecycle_value_runtime(context::_LifecycleContext) = context.runtime
 @inline _lifecycle_value_runtime(context::_LifecycleStateContext) = context.planned

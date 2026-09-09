@@ -44,6 +44,12 @@ end
     end
     @test_throws ArgumentError CorePotts.BlockLocation(0, (0,))
     @test_throws ArgumentError CorePotts.BlockLocation(1, (-1,))
+    maximum_index = Int64(typemax(Int32))
+    @test CorePotts.BlockLocation(maximum_index, (0, maximum_index)).offset == maximum_index
+    @test CorePotts.BlockLocation(1, (0, maximum_index)).shape == (0, maximum_index)
+    @test CorePotts.BlockLocation(1, ()).shape == ()
+    @test_throws r"offset.*Int32" CorePotts.BlockLocation(maximum_index + 1, (0,))
+    @test_throws r"dimensions.*Int32" CorePotts.BlockLocation(1, (0, maximum_index + 1))
     @test_throws ArgumentError CorePotts.StateLayout([empty_logical_schema(:negative, (-1,))])
     @test_throws ArgumentError CorePotts.allocate_state_block(empty_logical_schema(:negative, (-1,)))
 end

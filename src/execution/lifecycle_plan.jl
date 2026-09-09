@@ -360,6 +360,20 @@ struct LifecycleStateRule{H <: StateHandle, T <: AbstractFloat}
     daughter_draw::RNGOperationKey
 end
 
+_contains_lifecycle_draw(::AbstractStaticExpression) = false
+_contains_lifecycle_draw(expression::OperationExpression) =
+    expression.operation isa ResourceOperation{:draw} || any(_contains_lifecycle_draw, expression.arguments)
+
+function _lifecycle_rule_contains_draw(evaluators::LifecycleEvaluatorStorage, rule::LifecycleStateRule)
+    for index in (rule.evaluator_a, rule.evaluator_b, rule.evaluator_c, rule.evaluator_d)
+        iszero(index) && continue
+        slot = evaluators.slots[index]
+        evaluator = evaluators.banks[slot.bank].values[slot.slot]
+        _contains_lifecycle_draw(evaluator.expression) && return true
+    end
+    return false
+end
+
 struct LifecycleStateRuleSlot
     bank::Int32
     slot::Int32

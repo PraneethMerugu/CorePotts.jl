@@ -357,6 +357,15 @@ function CompiledPottsProgram(
     if lifecycle_plan isa LifecycleExecutionPlan
         for bank in lifecycle_plan.state_rules.banks, rule in bank
             _validate_state_write_handles(descriptor_plan.state_layout, (rule.handle,), :lifecycle_state_policy)
+            entry = state_read_source(stage_plan, descriptor_plan.state_layout, rule.handle)
+            source = entry.schema.domain === :history ?
+                history_source(stage_plan, descriptor_plan.state_layout, rule.handle) : entry
+            source.schema.domain === :cell && length(source.schema.shape) == 1 ||
+                throw(ArgumentError("cell lifecycle state policies require cell-owned state or retained cell samples"))
+            entry.schema.domain === :history && (
+                rule.action === RedrawDaughtersLifecycleState ||
+                    _lifecycle_rule_contains_draw(lifecycle_plan.evaluators, rule)
+            ) && throw(ArgumentError("stochastic history lifecycle policies require explicit retained-sample correlation semantics"))
         end
         for rule in lifecycle_plan.ownership_rules
             _validate_state_write_handles(descriptor_plan.state_layout, (rule.handle,), :lifecycle_ownership)
