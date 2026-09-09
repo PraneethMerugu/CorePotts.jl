@@ -1,6 +1,7 @@
 isdefined(@__MODULE__, :test_program) || include("fixtures/compiled_program_support.jl")
 include("fixtures/site_sum_support.jl")
 import LocalMath
+import StaticArrays: SMatrix, SVector
 
 function test_site_sum_numerical_rejection(f)
     failure = try
@@ -12,6 +13,79 @@ function test_site_sum_numerical_rejection(f)
     @test failure isa LocalMath.LocalMathValidationError
     @test occursin("contract: :runtime_stage_validation", sprint(showerror, failure))
     return nothing
+end
+
+@testset "structured site sums preserve value shape across publication" begin
+    C = CorePotts
+    for value in (
+                SVector(1.0f0, -2.0f0),
+                SMatrix{2, 2}(1.0f0, -2.0f0, 3.0f0, 4.0f0),
+            ), engine in (C.SequentialProgramEngine(), C.CheckerboardProgramEngine())
+        signal = fill(value, 6, 6)
+        runtime, handle, key = site_sum_runtime(engine; signal)
+        expected = site_sum_oracle(
+            runtime.ownership, signal, 2.0f0, length(runtime.cell_kinds)
+        )
+        @test C.program_tracker_values(runtime, key) == expected
+        @test eltype(C.program_tracker_values(runtime, key)) === typeof(value)
+
+        state = C.copy_auxiliary_state(runtime.descriptor_state)
+        replacement = fill(3.0f0 .* value, 6, 6)
+        C.state_block(state, handle).values .= replacement
+        C.update_program_inputs!(
+            runtime; parameters = Float32[-0.5], descriptor_state = state
+        )
+        expected = site_sum_oracle(
+            runtime.ownership, replacement, -0.5f0, length(runtime.cell_kinds)
+        )
+        @test C.program_tracker_values(runtime, key) == expected
+
+        descriptor = runtime.program.tracker_plan.descriptors[2]
+        converted = typeof(descriptor)(
+            descriptor.quantity, descriptor.expression, 0.25, 0.5
+        )
+        @test converted.absolute_tolerance === 0.25f0
+        @test converted.relative_tolerance === 0.5f0
+        descriptor_type = typeof(descriptor)
+        value_type, quantity_type, expression_type, _ =
+            descriptor_type.parameters
+        @test_throws ArgumentError C.SiteSumTracker{
+            value_type, quantity_type, expression_type, Float64,
+        }(descriptor.quantity, descriptor.expression, 0.25, 0.5)
+
+        before_failure = C.program_snapshot(runtime)
+        before_parameters = copy(runtime.parameters)
+        invalid_state = C.copy_auxiliary_state(runtime.descriptor_state)
+        invalid_values = C.state_block(invalid_state, handle).values
+        invalid_values[1] = Base.setindex(
+            invalid_values[1], floatmax(Float32), 1
+        )
+        test_site_sum_numerical_rejection() do
+            C.update_program_inputs!(
+                runtime;
+                parameters = Float32[2], descriptor_state = invalid_state,
+            )
+        end
+        @test runtime.parameters == before_parameters
+        @test C.program_tracker_values(runtime, key) == expected
+        @test C.state_block(runtime.descriptor_state, handle).values ==
+            C.state_block(before_failure.descriptor_state, handle).values
+        @test runtime.mcs == before_failure.mcs
+
+        restored = C.restore_program_checkpoint(
+            runtime.program, C.program_checkpoint(runtime)
+        )
+        for continued in (runtime, restored)
+            C.advance_mcs!(continued)
+            values = C.state_block(continued.descriptor_state, handle).values
+            @test C.program_tracker_values(continued, key) == site_sum_oracle(
+                continued.ownership, values, -0.5f0, length(continued.cell_kinds)
+            )
+        end
+        @test C.program_snapshot(restored).trackers.values ==
+            C.program_snapshot(runtime).trackers.values
+        @test restored.ownership == runtime.ownership
+    end
 end
 
 @testset "site sum initialization and combined input publication" begin
@@ -146,6 +220,35 @@ end
             end
             @test C.program_tracker_values(restored, key) == C.program_tracker_values(runtime, key)
             @test restored.ownership == runtime.ownership
+        end
+    end
+    vector_signal = fill(zero(SVector{2, Float32}), 6, 6)
+    vector_signal[1] = SVector(1.0f0, 1.0f0)
+    vector_signal[2] = SVector(small, 2small)
+    for tolerance in (small, 2small)
+        vector_runtime, _, vector_key = site_sum_runtime(
+            C.SequentialProgramEngine();
+            gain = 1.0f0, signal = vector_signal,
+            absolute_tolerance = tolerance
+        )
+        @test C._attempt_selected!(
+            vector_runtime, CartesianIndex(3, 1), CartesianIndex(1, 1),
+            1, 1, Val(:scripted), 0.5f0
+        )
+        @test C.program_tracker_value(vector_runtime, vector_key, 1) ==
+            zero(SVector{2, Float32})
+        expected = site_sum_oracle(
+            vector_runtime.ownership, vector_signal, 1.0f0, 3
+        )[1]
+        @test expected == SVector(small, 2small)
+        if tolerance == small
+            @test_throws r"differs from its independent recomputation oracle" C.program_checkpoint(vector_runtime)
+        else
+            restored = C.restore_program_checkpoint(
+                vector_runtime.program, C.program_checkpoint(vector_runtime)
+            )
+            @test C.program_tracker_value(restored, vector_key, 1) ==
+                zero(SVector{2, Float32})
         end
     end
     runtime, _, _ = site_sum_runtime(C.SequentialProgramEngine())

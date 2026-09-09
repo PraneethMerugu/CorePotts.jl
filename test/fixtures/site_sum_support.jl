@@ -3,7 +3,8 @@ function site_sum_runtime(
         tracker_descriptors = descriptor -> (descriptor,),
         stage_builder = handle -> CorePotts.StageExecutionPlan(), lifecycle = :preserve,
         absolute_tolerance = 0.0f0, relative_tolerance = 0.0f0, attempts_per_site = 1,
-        constraint = nothing
+        constraint = nothing,
+        backend = CorePotts.CPUProgramBackend(),
     )
     C = CorePotts
     schema = C.StateBlockSchema(
@@ -39,7 +40,8 @@ function site_sum_runtime(
     end
     program = test_program(
         engine; descriptor_plan, tracker_plan,
-        stage_plan = stage_builder(handle), scalar_type = Float32, parameter_defaults = Float32[gain], attempts_per_site
+        stage_plan = stage_builder(handle), scalar_type = Float32,
+        parameter_defaults = Float32[gain], attempts_per_site, backend,
     )
     ownership = fill(Int32(-1), 6, 6)
     ownership[1:2] .= 1

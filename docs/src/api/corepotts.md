@@ -251,6 +251,15 @@ and maintained values. The returned snapshot owns its storage independently.
 An ordinary transaction with no staged input replacement does not rebuild
 maintained sums merely to normalize their floating-point accumulation.
 
+`SiteSumTracker(T, quantity, expression)` accepts a floating scalar or a
+floating `StaticArrays.SArray` value type `T`, including `SVector` and
+`SMatrix`. Optional absolute and relative
+tolerances use `T`'s scalar leaf type and are applied componentwise. They admit
+checkpoint validation differences; they never replace the persisted value
+with an independently recomputed one. Nonfinite contributions, deltas, or
+results reject the containing transaction. Scalar and fixed-value sums share
+the canonical LocalMath execution path on every supported backend.
+
 Call `BackendSPI.prevalidate_program_step_transaction` for every participating
 token before coordinated publication. `BackendSPI.publish_program_step_transaction!`
 is only the publication half of that protocol, not a substitute for validation.

@@ -51,6 +51,10 @@ struct QualifiedTrackerKey{Q <: Val}
     end
 end
 _tracker_fold_source(::QualifiedTrackerKey) = true
+
+_site_sum_scalar_type(::Type{T}) where {T <: AbstractFloat} = T
+_site_sum_scalar_type(::Type{<:StaticArrays.SArray{S, T}}) where {S, T <: AbstractFloat} = T
+
 """
 Sum one site-local expression over the sites belonging to each finite cell.
 
@@ -59,31 +63,41 @@ sum against independent recomputation; they are not numerical error bounds.
 Both default to exact comparison, must be finite and nonnegative, and never
 authorize replacement of a persisted value during checkpoint restoration.
 """
-struct SiteSumTracker{T, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression} <: AbstractTrackerDescriptor
+struct SiteSumTracker{T, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression, F <: AbstractFloat} <: AbstractTrackerDescriptor
     quantity::Q
     expression::E
-    absolute_tolerance::T
-    relative_tolerance::T
+    absolute_tolerance::F
+    relative_tolerance::F
 
-    function SiteSumTracker{T, Q, E}(
+    function SiteSumTracker{T, Q, E, F}(
             quantity::Q, expression::E, absolute_tolerance, relative_tolerance
-        ) where {T, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression}
-        absolute = convert(T, absolute_tolerance)
-        relative = convert(T, relative_tolerance)
-        isfinite(absolute) && absolute >= zero(T) &&
-            isfinite(relative) && relative >= zero(T) || throw(ArgumentError(
-                "site sum comparison tolerances must be finite and nonnegative"))
-        return new{T, Q, E}(quantity, expression, absolute, relative)
+        ) where {T, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression, F <: AbstractFloat}
+        F === _site_sum_scalar_type(T) || throw(ArgumentError("site sum tolerances must use the contribution leaf type"))
+        absolute = convert(F, absolute_tolerance)
+        relative = convert(F, relative_tolerance)
+        isfinite(absolute) && absolute >= zero(F) &&
+            isfinite(relative) && relative >= zero(F) || throw(
+            ArgumentError(
+                "site sum comparison tolerances must be finite and nonnegative"
+            )
+        )
+        return new{T, Q, E, F}(quantity, expression, absolute, relative)
     end
 end
 
-SiteSumTracker(quantity::Q, expression::E, absolute::T, relative::T) where {
+SiteSumTracker{T, Q, E}(quantity::Q, expression::E, absolute, relative) where {
     T, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression,
+} = SiteSumTracker{T, Q, E, _site_sum_scalar_type(T)}(quantity, expression, absolute, relative)
+
+SiteSumTracker(quantity::Q, expression::E, absolute::T, relative::T) where {
+    T <: AbstractFloat, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression,
 } = SiteSumTracker{T, Q, E}(quantity, expression, absolute, relative)
 
-function SiteSumTracker(::Type{T}, quantity::Q, expression::E;
-        absolute_tolerance = zero(T), relative_tolerance = zero(T)) where {
-        T <: AbstractFloat, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression,
+function SiteSumTracker(
+        ::Type{T}, quantity::Q, expression::E;
+        absolute_tolerance = zero(_site_sum_scalar_type(T)), relative_tolerance = zero(_site_sum_scalar_type(T))
+    ) where {
+        T, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression,
     }
     return SiteSumTracker{T, Q, E}(
         quantity, expression, absolute_tolerance, relative_tolerance
@@ -91,6 +105,8 @@ function SiteSumTracker(::Type{T}, quantity::Q, expression::E;
 end
 """Store one scalar of type `T` per finite owner."""
 struct DenseOwnerScalarStorage{T} <: AbstractTrackerStorage end
+"""Store one floating `StaticArrays.SArray` value per finite owner."""
+struct DenseOwnerValueStorage{T} <: AbstractTrackerStorage end
 struct DenseOwnerScalarGroupStorage{T} <: AbstractTrackerStorage end
 """Store first and second coordinate moments for each finite owner."""
 struct DenseOwnerMomentsStorage{N, T <: AbstractFloat} <:
@@ -153,13 +169,13 @@ struct TrackerContract{
     rebuild_cost::B
 end
 
-"""One signed scalar change for a single owner."""
-struct OwnerScalarDelta{T} <: AbstractTrackerDelta
+"""One signed immutable numeric-value change for a single owner."""
+struct OwnerValueDelta{T} <: AbstractTrackerDelta
     amount::T
 end
 
 """Independent signed changes for the proposal's old and new finite owners."""
-struct OldNewOwnerScalarDelta{T} <: AbstractTrackerDelta
+struct OldNewOwnerValueDelta{T} <: AbstractTrackerDelta
     old_amount::T
     new_amount::T
 end
@@ -323,6 +339,14 @@ function tracker_storage(group::DenseScalarTrackerGroup)
 end
 
 _tracker_storage_eltype(::DenseOwnerScalarStorage{T}) where {T} = T
+_tracker_storage_eltype(::DenseOwnerValueStorage{T}) where {T} = T
+
+_owner_value_storage_type_admitted(::Type{T}) where {T} =
+    isconcretetype(T) && T <: StaticArrays.SArray &&
+    eltype(T) <: AbstractFloat
+_owner_scalar_storage_type_admitted(::Type{<:Integer}) = true
+_owner_scalar_storage_type_admitted(::Type{<:AbstractFloat}) = true
+_owner_scalar_storage_type_admitted(::Type) = false
 
 tracker_adapt(to, descriptor::AbstractTrackerDescriptor) = descriptor
 tracker_adapt(to, group::DenseScalarTrackerGroup) =
@@ -357,8 +381,26 @@ function _validate_tracker_descriptor(descriptor::AbstractTrackerDescriptor)
     end
     contract.storage isa Union{
         DenseOwnerScalarStorage,
+        DenseOwnerValueStorage,
         DenseOwnerMomentsStorage,
     } || throw(ArgumentError("tracker storage strategy is not admitted"))
+    if contract.storage isa DenseOwnerScalarStorage
+        _owner_scalar_storage_type_admitted(
+            _tracker_storage_eltype(contract.storage)
+        ) || throw(
+            ArgumentError(
+                "owner-scalar tracker storage requires an integer or floating scalar"
+            )
+        )
+    elseif contract.storage isa DenseOwnerValueStorage
+        _owner_value_storage_type_admitted(
+            _tracker_storage_eltype(contract.storage)
+        ) || throw(
+            ArgumentError(
+                "owner-value tracker storage requires a fixed-shape floating value"
+            )
+        )
+    end
     contract.visibility isa AcceptedCommitTrackerVisibility || throw(
         ArgumentError("tracker visibility must be accepted-commit")
     )
@@ -526,10 +568,13 @@ tracker_contract(::OwnershipCountTracker) = TrackerContract(
     LatticeLinearTrackerCost(),
 )
 
+_site_sum_storage(::Type{T}) where {T <: AbstractFloat} = DenseOwnerScalarStorage{T}()
+_site_sum_storage(::Type{T}) where {T <: StaticArrays.SArray} = DenseOwnerValueStorage{T}()
+
 tracker_contract(descriptor::SiteSumTracker{T}) where {T} = TrackerContract(
     descriptor.quantity.quantity,
     SiteExpressionTrackerSource(descriptor.expression),
-    DenseOwnerScalarStorage{T}(),
+    _site_sum_storage(T),
     AcceptedCommitTrackerVisibility(),
     ClaimedOwnerExclusiveTrackerConcurrency(),
     OldNewOwnerUpdateBound(),
@@ -638,6 +683,11 @@ _tracker_cost_symbol(cost::BoundedNeighborhoodTrackerCost) = (
 _tracker_cost_symbol(::LatticeLinearTrackerCost) = :lattice_linear
 _tracker_storage_inspection(::DenseOwnerScalarStorage{T}) where {T} = (
     storage = Symbol(:dense_, lowercase(string(nameof(T)))),
+    element_type = T,
+)
+
+_tracker_storage_inspection(::DenseOwnerValueStorage{T}) where {T} = (
+    storage = :dense_owner_value,
     element_type = T,
 )
 

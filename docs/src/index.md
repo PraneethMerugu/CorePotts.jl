@@ -37,6 +37,15 @@ LocalMath reduction in `execution/tracker_source_execution.jl`. Publication
 updates the host mirror and both execution banks only after scientific
 validation, without creating a separate downstream transaction authority.
 
+Per-owner maintained sums may store either a scalar or a floating
+`StaticArrays.SArray` value, including `SVector` and `SMatrix`.
+`SiteSumTracker` derives comparison tolerances
+from the value's floating-point leaf type, validates fixed values
+componentwise, and uses the same LocalMath reduction and transactional
+publication path for scalars, vectors, and matrices. `DenseOwnerValueStorage`
+and `OwnerValueDelta` describe this durable storage/update meaning; they do not
+introduce a second structured-value executor.
+
 `program_snapshot` exposes the resulting settled state. Ordinary behavior is
 covered by `test_program_input_publication.jl`, its shared
 `fixtures/program_input_publication_support.jl`, and

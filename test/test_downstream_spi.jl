@@ -6,8 +6,9 @@ import CorePotts.CompilerSPI:
     ClaimedOwnerExclusiveTrackerConcurrency,
     ConstantTrackerCost,
     DenseOwnerScalarStorage,
+    DenseOwnerValueStorage,
     LatticeLinearTrackerCost,
-    OwnerScalarDelta,
+    OwnerValueDelta,
     OwnershipTrackerSource,
     PersistTrackerCheckpoint,
     OldNewOwnerUpdateBound,
@@ -21,10 +22,14 @@ import CorePotts.BackendSPI:
     CPUProgramBackend,
     SequentialProgramEngine,
     program_backend_name
+import StaticArrays: SArray, SVector
 
 struct TripleOccupancyTracker <: AbstractTrackerDescriptor end
 struct InvalidDeltaTracker <: AbstractTrackerDescriptor end
 struct NonfiniteDeltaTracker <: AbstractTrackerDescriptor end
+struct InvalidOwnerValueTracker <: AbstractTrackerDescriptor end
+struct NonconcreteOwnerValueTracker <: AbstractTrackerDescriptor end
+struct InvalidScalarValueTracker <: AbstractTrackerDescriptor end
 
 tracker_contract(::TripleOccupancyTracker) = TrackerContract(
     Val(:triple_occupancy),
@@ -60,6 +65,33 @@ tracker_contract(::NonfiniteDeltaTracker) = TrackerContract(
     ConstantTrackerCost(), LatticeLinearTrackerCost(),
 )
 
+tracker_contract(::InvalidOwnerValueTracker) = TrackerContract(
+    Val(:invalid_owner_value), OwnershipTrackerSource(),
+    DenseOwnerValueStorage{SVector{2, Int32}}(),
+    AcceptedCommitTrackerVisibility(),
+    ClaimedOwnerExclusiveTrackerConcurrency(), OldNewOwnerUpdateBound(),
+    PersistTrackerCheckpoint(), TrackerSupport(true, true, true, true),
+    ConstantTrackerCost(), LatticeLinearTrackerCost(),
+)
+
+tracker_contract(::NonconcreteOwnerValueTracker) = TrackerContract(
+    Val(:nonconcrete_owner_value), OwnershipTrackerSource(),
+    DenseOwnerValueStorage{SArray{Tuple{2}, Float32}}(),
+    AcceptedCommitTrackerVisibility(),
+    ClaimedOwnerExclusiveTrackerConcurrency(), OldNewOwnerUpdateBound(),
+    PersistTrackerCheckpoint(), TrackerSupport(true, true, true, true),
+    ConstantTrackerCost(), LatticeLinearTrackerCost(),
+)
+
+tracker_contract(::InvalidScalarValueTracker) = TrackerContract(
+    Val(:invalid_scalar_value), OwnershipTrackerSource(),
+    DenseOwnerScalarStorage{SVector{2, Float32}}(),
+    AcceptedCommitTrackerVisibility(),
+    ClaimedOwnerExclusiveTrackerConcurrency(), OldNewOwnerUpdateBound(),
+    PersistTrackerCheckpoint(), TrackerSupport(true, true, true, true),
+    ConstantTrackerCost(), LatticeLinearTrackerCost(),
+)
+
 function tracker_rebuild(::TripleOccupancyTracker, source, cell_kinds)
     values = zeros(Int32, length(cell_kinds))
     for owner in source.ownership
@@ -85,16 +117,16 @@ tracker_recompute(tracker::NonfiniteDeltaTracker, source, cell_kinds) =
 tracker_ownership_delta(
     ::TripleOccupancyTracker, target,
     old_owner::Int32, new_owner::Int32,
-) = OwnerScalarDelta(Int32(3))
+) = OwnerValueDelta(Int32(3))
 
 tracker_ownership_delta(
     ::InvalidDeltaTracker, target,
     old_owner::Int32, new_owner::Int32,
-) = OwnerScalarDelta(Float32(1))
+) = OwnerValueDelta(Float32(1))
 tracker_ownership_delta(
     ::NonfiniteDeltaTracker, target,
     old_owner::Int32, new_owner::Int32,
-) = OwnerScalarDelta(Inf)
+) = OwnerValueDelta(Inf)
 
 function public_backend_probe()
     return (
@@ -124,7 +156,20 @@ end
     ) == Int32[6, 3]
     @test CorePotts.CompilerSPI.tracker_ownership_delta(
         tracker, CartesianIndex(1, 1), Int32(1), Int32(2)
-    ) == CorePotts.CompilerSPI.OwnerScalarDelta(Int32(3))
+    ) == CorePotts.CompilerSPI.OwnerValueDelta(Int32(3))
+
+    @test_throws r"fixed-shape floating value" CorePotts.CompilerSPI.TrackerExecutionPlan(
+        (extension.InvalidOwnerValueTracker(),),
+        "invalid-integer-owner-value-storage",
+    )
+    @test_throws r"fixed-shape floating value" CorePotts.CompilerSPI.TrackerExecutionPlan(
+        (extension.NonconcreteOwnerValueTracker(),),
+        "nonconcrete-owner-value-storage",
+    )
+    @test_throws r"integer or floating scalar" CorePotts.CompilerSPI.TrackerExecutionPlan(
+        (extension.InvalidScalarValueTracker(),),
+        "invalid-structured-scalar-storage",
+    )
 
     atomic_plan = CorePotts.CompilerSPI.TrackerExecutionPlan(
         (tracker, extension.InvalidDeltaTracker()),

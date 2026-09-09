@@ -907,13 +907,13 @@ end
     iszero(lane) && return zero(first(pair))
     value = pair[lane]
     context.after || return value
-    delta = _checkerboard_scalar_tracker_delta(
+    delta = _checkerboard_owner_value_delta(
         descriptor, proposal.contact_sites, proposal.contact_owners,
         proposal.contact_ranges,
         (proposal.target_linear, proposal.target),
         proposal.old_owner, proposal.new_owner
     )
-    return _scalar_value_after(
+    return _owner_value_after(
         value, delta, owner, proposal.old_owner, proposal.new_owner
     )
 end

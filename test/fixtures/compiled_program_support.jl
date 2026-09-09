@@ -249,7 +249,7 @@ end
         target,
         old_owner::Int32,
         new_owner::Int32,
-    ) = CorePotts.CompilerSPI.OwnerScalarDelta(Int32(2))
+    ) = CorePotts.CompilerSPI.OwnerValueDelta(Int32(2))
 
 struct SingleSiteOwnershipProbe{A <: AbstractMatrix{Int32}} <:
        AbstractMatrix{Int32}

@@ -462,9 +462,9 @@ function _tracker_requirement_descriptors(keys, tracker_plan; source = nothing)
                 )
             )
             descriptor = instances[index]
-            tracker_storage(descriptor) isa DenseOwnerScalarStorage || throw(
+            tracker_storage(descriptor) isa Union{DenseOwnerScalarStorage, DenseOwnerValueStorage} || throw(
                 ArgumentError(
-                    "compiled tracker read$(source === nothing ? "" : " at $(repr(source))") requires dense scalar storage for " *
+                    "compiled tracker read$(source === nothing ? "" : " at $(repr(source))") requires dense owner-value storage for " *
                         repr(key)
                 )
             )

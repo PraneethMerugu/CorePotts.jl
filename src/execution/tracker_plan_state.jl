@@ -27,14 +27,14 @@ function tracker_recompute(descriptor::SiteSumTracker{T}, source::TrackerSourceV
 end
 
 @inline _source_dependent_tracker_ownership_delta(descriptor::SiteSumTracker, source::TrackerSourceView,
-    target, old_owner::Int32, new_owner::Int32) = OwnerScalarDelta(_site_sum_contribution(descriptor, source, target))
+    target, old_owner::Int32, new_owner::Int32) = OwnerValueDelta(_site_sum_contribution(descriptor, source, target))
 
 @inline _tracker_source_entry_delta(descriptor, source, target, old_owner, new_owner) =
     _source_dependent_tracker_ownership_delta(descriptor, source, target, old_owner, new_owner)
 @inline function _tracker_source_entry_delta(descriptor::SiteSumTracker{T}, source,
         target, old_owner, new_owner) where {T}
     amount = old_owner > 0 ? _site_sum_contribution(descriptor, source, target) : zero(T)
-    return OldNewOwnerScalarDelta(-amount, zero(T))
+    return OldNewOwnerValueDelta(-amount, zero(T))
 end
 
 function tracker_rebuild(
@@ -234,7 +234,7 @@ end
     target,
     old_owner::Int32,
     new_owner::Int32,
-) = OwnerScalarDelta(Int32(1))
+) = OwnerValueDelta(Int32(1))
 
 @inline function tracker_ownership_delta(
         ::CellMomentsTracker{N, T},
@@ -261,7 +261,7 @@ end
         old_owner::Int32,
         new_owner::Int32,
     )
-    old_owner == new_owner && return OldNewOwnerScalarDelta(Int32(0), Int32(0))
+    old_owner == new_owner && return OldNewOwnerValueDelta(Int32(0), Int32(0))
     old_amount = Int32(0)
     new_amount = Int32(0)
     for direction in 1:Int(descriptor.maximum_neighbors)
@@ -277,7 +277,7 @@ end
         new_owner > 0 && (new_amount += neighbor_owner == new_owner ?
             Int32(-1) : Int32(1))
     end
-    return OldNewOwnerScalarDelta(old_amount, new_amount)
+    return OldNewOwnerValueDelta(old_amount, new_amount)
 end
 
 @inline _source_dependent_tracker_ownership_delta(
@@ -293,6 +293,15 @@ function _validate_tracker_state(
     ) where {T}
     values isa AbstractVector{T} && length(values) == cell_count || throw(
         ArgumentError("tracker rebuild violates its dense scalar storage contract")
+    )
+    return values
+end
+
+function _validate_tracker_state(
+        ::DenseOwnerValueStorage{T}, values, cell_count
+    ) where {T}
+    values isa AbstractVector{T} && length(values) == cell_count || throw(
+        ArgumentError("tracker rebuild violates its dense value storage contract")
     )
     return values
 end
@@ -321,8 +330,8 @@ end
 
 @inline function _apply_tracker_delta!(
         values::AbstractVector{T},
-        ::DenseOwnerScalarStorage{T},
-        delta::OwnerScalarDelta{T},
+        ::Union{DenseOwnerScalarStorage{T}, DenseOwnerValueStorage{T}},
+        delta::OwnerValueDelta{T},
         old_owner::Int32,
         new_owner::Int32,
     ) where {T}
@@ -334,8 +343,8 @@ end
 
 @inline function _apply_tracker_delta!(
         values::AbstractVector{T},
-        ::DenseOwnerScalarStorage{T},
-        delta::OldNewOwnerScalarDelta{T},
+        ::Union{DenseOwnerScalarStorage{T}, DenseOwnerValueStorage{T}},
+        delta::OldNewOwnerValueDelta{T},
         old_owner::Int32,
         new_owner::Int32,
     ) where {T}
