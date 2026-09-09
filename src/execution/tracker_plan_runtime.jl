@@ -34,7 +34,22 @@ end
     return result
 end
 
-@inline function _validate_scalar_delta(values, delta::OwnerScalarDelta,
+@inline function _checked_tracker_add(value::T, delta::T) where {T <: StaticArrays.SArray}
+    result = value + delta
+    all(isfinite, value) && all(isfinite, delta) && all(isfinite, result) || throw(
+        ArgumentError("tracker ownership update produced a nonfinite value")
+    )
+    return result
+end
+@inline function _checked_tracker_sub(value::T, delta::T) where {T <: StaticArrays.SArray}
+    result = value - delta
+    all(isfinite, value) && all(isfinite, delta) && all(isfinite, result) || throw(
+        ArgumentError("tracker ownership update produced a nonfinite value")
+    )
+    return result
+end
+
+@inline function _validate_owner_value_delta(values, delta::OwnerValueDelta,
         old_owner::Int32, new_owner::Int32)
     if old_owner > 0
         value = @inbounds values[Int(old_owner)]
@@ -49,7 +64,7 @@ end
     return nothing
 end
 
-@inline function _validate_scalar_delta(values, delta::OldNewOwnerScalarDelta,
+@inline function _validate_owner_value_delta(values, delta::OldNewOwnerValueDelta,
         old_owner::Int32, new_owner::Int32)
     if old_owner > 0
         value = @inbounds values[Int(old_owner)]
@@ -66,14 +81,14 @@ end
 
 @inline function _validate_tracker_delta(
         values::AbstractVector{T},
-        ::DenseOwnerScalarStorage{T},
-        delta::Union{OwnerScalarDelta{T},OldNewOwnerScalarDelta{T}},
+        ::Union{DenseOwnerScalarStorage{T}, DenseOwnerValueStorage{T}},
+        delta::Union{OwnerValueDelta{T},OldNewOwnerValueDelta{T}},
         old_owner::Int32,
         new_owner::Int32,
     ) where {T}
     _validate_owner_index(values, old_owner)
     _validate_owner_index(values, new_owner)
-    _validate_scalar_delta(values, delta, old_owner, new_owner)
+    _validate_owner_value_delta(values, delta, old_owner, new_owner)
     return nothing
 end
 
@@ -127,7 +142,7 @@ end
 @inline function _validate_group_tracker_delta(
         values::AbstractMatrix{T},
         column::Int,
-        delta::Union{OwnerScalarDelta{T},OldNewOwnerScalarDelta{T}},
+        delta::Union{OwnerValueDelta{T},OldNewOwnerValueDelta{T}},
         old_owner::Int32,
         new_owner::Int32,
     ) where {T}
@@ -136,7 +151,7 @@ end
         throw(BoundsError(values, (old_owner, column)))
     new_owner <= 0 || new_owner <= size(values, 1) ||
         throw(BoundsError(values, (new_owner, column)))
-    _validate_scalar_delta(view(values, :, column), delta, old_owner, new_owner)
+    _validate_owner_value_delta(view(values, :, column), delta, old_owner, new_owner)
     return nothing
 end
 
@@ -155,7 +170,7 @@ end
 @inline function _apply_group_tracker_delta!(
         values,
         column::Int,
-        delta::OwnerScalarDelta,
+        delta::OwnerValueDelta,
         old_owner::Int32,
         new_owner::Int32,
     )
@@ -166,7 +181,7 @@ end
 
 @inline function _apply_validated_tracker_delta!(
         values::AbstractVector{T},
-        delta::OwnerScalarDelta{T},
+        delta::OwnerValueDelta{T},
         old_owner::Int32,
         new_owner::Int32,
     ) where {T}
@@ -177,7 +192,7 @@ end
 
 @inline function _apply_validated_tracker_delta!(
         values::AbstractVector{T},
-        delta::OldNewOwnerScalarDelta{T},
+        delta::OldNewOwnerValueDelta{T},
         old_owner::Int32,
         new_owner::Int32,
     ) where {T}
@@ -216,7 +231,7 @@ end
 @inline function _apply_group_tracker_delta!(
         values,
         column::Int,
-        delta::OldNewOwnerScalarDelta,
+        delta::OldNewOwnerValueDelta,
         old_owner::Int32,
         new_owner::Int32,
     )
@@ -384,9 +399,9 @@ end
 end
 
 
-@inline function _scalar_value_after(
+@inline function _owner_value_after(
         value,
-        delta::OwnerScalarDelta,
+        delta::OwnerValueDelta,
         owner::Int32,
         old_owner::Int32,
         new_owner::Int32,
@@ -396,9 +411,9 @@ end
     return value
 end
 
-@inline function _scalar_value_after(
+@inline function _owner_value_after(
         value,
-        delta::OldNewOwnerScalarDelta,
+        delta::OldNewOwnerValueDelta,
         owner::Int32,
         old_owner::Int32,
         new_owner::Int32,
@@ -425,7 +440,7 @@ end
         delta = _source_dependent_tracker_ownership_delta(
             descriptor, source, target, old_owner, new_owner
         )
-        return _scalar_value_after(
+        return _owner_value_after(
             value, delta, owner, old_owner, new_owner
         )
     end
@@ -475,7 +490,7 @@ end
     new_owner,
 )
 
-@generated function _qualified_scalar_value_after(
+@generated function _qualified_owner_value_after(
         quantity::Val{Q},
         source_handle::Int32,
         descriptors::D,
@@ -512,7 +527,7 @@ end
                     old_owner,
                     new_owner,
                 )
-                return _scalar_value_after(
+                return _owner_value_after(
                     value, delta, owner, old_owner, new_owner
                 )
             end
@@ -535,7 +550,7 @@ end
                         old_owner,
                         new_owner,
                     )
-                    return _scalar_value_after(
+                    return _owner_value_after(
                         value, delta, owner, old_owner, new_owner
                     )
                 end
@@ -546,7 +561,7 @@ end
     return result
 end
 
-@generated function _qualified_scalar_value(
+@generated function _qualified_owner_value(
         quantity::Val{Q},
         source_handle::Int32,
         descriptors::D,
@@ -598,7 +613,7 @@ end
     quantity::Val,
     source_handle::Int32,
     owner::Int32,
-) = _qualified_scalar_value(
+) = _qualified_owner_value(
     quantity, source_handle, plan.descriptors, state.values, owner
 )
 
@@ -611,7 +626,7 @@ end
     target,
     old_owner::Int32,
     new_owner::Int32,
-) = _qualified_scalar_value_after(
+) = _qualified_owner_value_after(
     key.quantity,
     key.source_handle,
     plan.descriptors,
@@ -633,7 +648,7 @@ end
     target,
     old_owner::Int32,
     new_owner::Int32,
-) = _qualified_scalar_value_after(
+) = _qualified_owner_value_after(
     quantity,
     source_handle,
     plan.descriptors,
@@ -717,6 +732,16 @@ function _site_sum_values_match(descriptor::SiteSumTracker, cached, recomputed)
     relative_difference = isfinite(difference) ? difference / scale :
         abs(cached / scale - recomputed / scale)
     return relative_difference <= descriptor.relative_tolerance
+end
+function _site_sum_values_match(
+        descriptor::SiteSumTracker,
+        cached::StaticArrays.SArray,
+        recomputed::StaticArrays.SArray,
+    )
+    axes(cached) == axes(recomputed) || return false
+    return all(zip(cached, recomputed)) do (cached_component, recomputed_component)
+        _site_sum_values_match(descriptor, cached_component, recomputed_component)
+    end
 end
 function _tracker_recomputation_matches(descriptor::SiteSumTracker, actual, expected)
     axes(actual) == axes(expected) || return false

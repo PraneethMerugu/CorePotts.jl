@@ -184,7 +184,7 @@ CorePotts.tracker_recompute(::CPUOnlyCapabilityTracker, source, cell_kinds) =
     CorePotts.tracker_recompute(CorePotts.OwnershipCountTracker(), source, cell_kinds)
 @inline CorePotts.tracker_ownership_delta(
     ::CPUOnlyCapabilityTracker, target, old_owner::Int32, new_owner::Int32,
-) = CorePotts.OwnerScalarDelta(Int32(1))
+) = CorePotts.OwnerValueDelta(Int32(1))
 
 const CPU_ONLY_TRACKER_ADAPTATIONS = Ref(0)
 function CorePotts.tracker_adapt(to, descriptor::CPUOnlyCapabilityTracker)

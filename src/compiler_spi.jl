@@ -115,6 +115,7 @@ import ..CorePotts:
     CreateCellLifecycleEffect,
     DeferredRequestWriteAccess,
     DenseOwnerScalarStorage,
+    DenseOwnerValueStorage,
     DenseOwnerMomentsStorage,
     DenseScalarTrackerGroup,
     DestinationLifecycleStateRole,
@@ -234,7 +235,7 @@ import ..CorePotts:
     SiteEnergyDomainPlan,
     SourceLifecycleStateRole,
     OldNewOwnerUpdateBound,
-    OldNewOwnerScalarDelta,
+    OldNewOwnerValueDelta,
     SourceTargetCellsAffectedPlan,
     SpecifiedNormalLifecyclePartition,
     SplitConservativelyLifecycleState,
@@ -262,7 +263,7 @@ import ..CorePotts:
     WorkspaceSchema,
     LatticeLinearTrackerCost,
     OwnerMomentsDelta,
-    OwnerScalarDelta,
+    OwnerValueDelta,
     allocate_auxiliary_state,
     copy_auxiliary_state,
     descriptor_adapt,
@@ -380,7 +381,7 @@ public RelationshipRetuneEffect, StageDescriptorGroup, StageExecutionPlan
 public NoWriteAccess, ExclusiveWriteAccess, CommutativeIntegerWriteAccess
 public DeferredRequestWriteAccess, RelationshipStoreSchema
 public OwnershipCountTracker, CellSurfaceTracker, CellMomentsTracker
-public DenseOwnerScalarStorage, DenseOwnerMomentsStorage, DenseScalarTrackerGroup
+public DenseOwnerScalarStorage, DenseOwnerValueStorage, DenseOwnerMomentsStorage, DenseScalarTrackerGroup
 public OwnershipTrackerSource, OwnershipRelationTrackerSource
 public SiteExpressionTrackerSource, SiteSumTracker
 public AcceptedCommitTrackerVisibility
@@ -388,7 +389,7 @@ public ClaimedOwnerExclusiveTrackerConcurrency, OldNewOwnerUpdateBound
 public PersistTrackerCheckpoint, ReconstructTrackerCheckpoint
 public ConstantTrackerCost, DimensionSquaredTrackerCost
 public BoundedNeighborhoodTrackerCost, LatticeLinearTrackerCost
-public OwnerScalarDelta, OldNewOwnerScalarDelta, OwnerMomentsDelta
+public OwnerValueDelta, OldNewOwnerValueDelta, OwnerMomentsDelta
 public TrackerSourceView, TrackerSupport, QualifiedTrackerKey
 public QualifiedTrackerOperation, TrackerContract, TrackerExecutionPlan
 public LifecycleDomainCode, ModelLifecycleDomain, CellKindLifecycleDomain

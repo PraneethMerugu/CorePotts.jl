@@ -54,7 +54,7 @@ function _site_sum_result_access(accepted, handle, live_field, target_relation)
         bindings = (sample_relation => LocalMath.Allocate(endpoints),))
 end
 
-function _checkerboard_scalar_tracker_declaration(accepted, field, descriptor::SiteSumTracker,
+function _checkerboard_owner_tracker_declaration(accepted, field, descriptor::SiteSumTracker,
         owner_capacity, terminal_gate, label)
     handles = expression_state_handles(descriptor.expression)
     fields = map(handles) do handle
