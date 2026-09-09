@@ -197,6 +197,7 @@ end
     Metal.allowscalar(false)
     backend = Metal.MetalBackend()
     descriptor, layout = _metal_model_assignment_descriptor()
+    stage_plan = CorePotts.StageExecutionPlan((), (CorePotts.StageDescriptorGroup([descriptor]),), (), 0, 0, "metal-model-assignment")
     gate_space = LocalMath.Space(CorePotts._CheckerboardStageGateDomain, 1)
     external_gate = LocalMath.Field(gate_space, Bool)
     declaration = CorePotts._compile_identity_assignment_law(
@@ -205,6 +206,7 @@ end
         LocalMath.Space(CorePotts._CheckerboardStageModelDomain, 1),
         external_gate,
         layout,
+        stage_plan,
         (UInt64(0), UInt64(0)),
         CorePotts._SCHEDULED_BEFORE_LIFECYCLE,
         Float32,

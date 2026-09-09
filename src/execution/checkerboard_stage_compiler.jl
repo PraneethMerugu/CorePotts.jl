@@ -1055,14 +1055,14 @@ function _stage_contact_tables(resources::HamiltonianDomainResources, dimensions
     return offsets, Tuple(resources.contact_starts), Tuple(resources.contact_counts)
 end
 
-function _stage_state_fields(space, handles::Tuple, ::Type{T}; layout = nothing) where {T}
+function _stage_state_fields(space, handles::Tuple, ::Type{T}; layout = nothing, stage_plan = nothing) where {T}
     model = space isa LocalMath.Space{_CheckerboardStageModelDomain} ? space :
         LocalMath.Space(_CheckerboardStageModelDomain, 1)
     return map(handles) do handle
         domain = if layout === nothing
             space
         else
-            entry = only(entry for entry in layout.entries if entry.handle == handle)
+            entry = state_read_source(stage_plan, layout, handle)
             entry.schema.domain === :model ? model :
                 entry.schema.domain === :site && space isa LocalMath.Space{_CheckerboardStageSiteDomain} ? space :
                 entry.schema.domain === :cell && space isa LocalMath.Space{_CheckerboardStageCellDomain} ? space :
@@ -1116,7 +1116,7 @@ end
 function _compile_site_assignment_law(
         descriptor::CompiledStageDescriptor,
         source_table, shape, periodic, medium_kind,
-        resources, ownership, cell_kinds, status, gate, state_layout,
+        resources, ownership, cell_kinds, status, gate, state_layout, stage_plan,
         trajectory_key::NTuple{2, UInt64}, boundary::UInt16,
         ::Type{T}
     ) where {T}
@@ -1137,7 +1137,7 @@ function _compile_site_assignment_law(
     lattice = LocalMath.Space(_CheckerboardStageSiteDomain, Tuple(shape))
     cells = LocalMath.Space(_CheckerboardStageCellDomain, length(cell_kinds))
     status_space = LocalMath.Space(_CheckerboardStageStatusDomain, 1)
-    fields = _stage_state_fields(lattice, handles, T; layout = state_layout)
+    fields = _stage_state_fields(lattice, handles, T; layout = state_layout, stage_plan)
     first(fields).space == lattice || throw(ArgumentError("site assignment target requires site-owned storage"))
     model_relation = _stage_model_read_relation(lattice, fields)
     identity = LocalMath.IdentityRelation(lattice)
@@ -1266,7 +1266,7 @@ end
 
 function _compile_identity_assignment_law(
         descriptor::CompiledStageDescriptor,
-        source_table, domain, gate, state_layout,
+        source_table, domain, gate, state_layout, stage_plan,
         trajectory_key::NTuple{2, UInt64}, boundary::UInt16, ::Type{T}
     ) where {T}
     handles = _stage_descriptor_handles(descriptor)
@@ -1281,7 +1281,7 @@ function _compile_identity_assignment_law(
     )
     condition, value = _compiled_stage_expressions(descriptor, handles, source)
     status_space = LocalMath.Space(_CheckerboardStageStatusDomain, 1)
-    fields = _stage_state_fields(domain, handles, T; layout = state_layout)
+    fields = _stage_state_fields(domain, handles, T; layout = state_layout, stage_plan)
     first(fields).space == domain || throw(ArgumentError("identity assignment target does not match its declared domain"))
     model_relation = _stage_model_read_relation(domain, fields)
     identity = LocalMath.IdentityRelation(domain)
@@ -1392,15 +1392,23 @@ function _compile_identity_assignment_law(
     )
 end
 
-struct _CompiledHistoryShiftAppend{N, Axis, Depth} end
+struct _CompiledHistoryShiftAppend
+    cadence::CompletedMCSCadence
+    cadence_value::Int64
+end
 
-@inline function (::_CompiledHistoryShiftAppend{N, Axis, Depth})(
+@inline function (operation::_CompiledHistoryShiftAppend)(
         item::Int32, reads, parameters
-    ) where {N, Axis, Depth}
+    )
     shifted = @inbounds reads[1][1]
     appended = @inbounds reads[2][1]
     value = shifted.present ? something(shifted.value) :
         something(appended.value)
+    completed_mcs = getfield(parameters, 1)
+    if !_completed_mcs_due(operation.cadence, operation.cadence_value, completed_mcs) ||
+            (completed_mcs == 0 && shifted.present)
+        value = something(@inbounds reads[3][1].value)
+    end
     return (value = LocalMath.UniqueValue(value),)
 end
 
@@ -1439,7 +1447,7 @@ function _compile_history_law(
     ) where {C, V, E <: ShiftAppendEffect, T}
     effect = descriptor.effect
     target_shape = Tuple(Int.(handle_shape(effect.target)))
-    source_shape = Tuple(Int.(handle_shape(effect.source)))
+    source_shape = _history_source_shape(effect.source)
     axis = Int(effect.axis)
     1 <= axis <= length(target_shape) || throw(
         ArgumentError(
@@ -1483,6 +1491,7 @@ function _compile_history_law(
         (
             shifted = LocalMath.Access(target, shifted; required = false),
             appended = LocalMath.Access(source, appended; required = false),
+            current = LocalMath.Access(target, identity),
         ),
         (
             LocalMath.Publication(
@@ -1495,10 +1504,8 @@ function _compile_history_law(
             ),
         ),
         LocalMath.Evaluator(
-            _CompiledHistoryShiftAppend{
-                length(target_shape), axis, target_shape[axis],
-            }(),
-            _stage_submission_parameters()
+            _CompiledHistoryShiftAppend(effect.cadence, effect.cadence_value),
+            _stage_submission_parameters(; minimum_mcs = Int64(0))
         ),
         LocalMath.Control(; gate = initial_gate),
         LocalMath.SourceOrigin(
@@ -1992,9 +1999,9 @@ function _prepare_history_stage_declaration(
         declaration.target => state_block(
             bank.descriptor_state, declaration.effect.target
         ).values,
-        declaration.source => state_block(
-            bank.descriptor_state, declaration.effect.source
-        ).values,
+        declaration.source => _identity_stage_state_storage(
+            declaration.source.space, declaration.effect.source, bank
+        ),
         declaration.appended => LocalMath.Allocate(declaration.endpoints),
         declaration.initial_gate => LocalMath.Allocate(false),
         declaration.external_gate => gate,
@@ -2105,7 +2112,7 @@ function _stage_boundary_entry(prepared, source_handle, effect; repetitions = 1)
 end
 
 function _compile_checkerboard_stage_boundary(
-        workspace, groups::Tuple, backend, queue_mcs_capacity::Integer, state_layout,
+        workspace, groups::Tuple, backend, queue_mcs_capacity::Integer, state_layout, stage_plan,
         boundary::UInt16
     )
     descriptors = _stage_descriptors(groups)
@@ -2175,7 +2182,7 @@ function _compile_checkerboard_stage_boundary(
                     descriptor, workspace.source_table, shape, periodic,
                     state.program.medium_kind, resources, state.ownership,
                     state.cell_kinds, state.program_status, external_gate,
-                    state_layout, trajectory_key, boundary, T
+                    state_layout, stage_plan, trajectory_key, boundary, T
                 ), (; external_gate)
             )
         elseif effect isa Union{ModelAssignmentEffect, CellAssignmentEffect}
@@ -2185,7 +2192,7 @@ function _compile_checkerboard_stage_boundary(
             merge(
                 _compile_identity_assignment_law(
                     descriptor, workspace.source_table, domain,
-                    external_gate, state_layout, trajectory_key, boundary, T
+                    external_gate, state_layout, stage_plan, trajectory_key, boundary, T
                 ), (; external_gate)
             )
         elseif effect isa ShiftAppendEffect
@@ -2206,7 +2213,7 @@ function _compile_checkerboard_stage_boundary(
             end
             publications = (
                 publications..., _stage_boundary_entry(
-                    prepared, descriptor.source_handle, nameof(typeof(effect))
+                    prepared, descriptor.source_handle, effect
                 ),
             )
             continue
@@ -2265,11 +2272,11 @@ function _prepare_checkerboard_stage_boundaries(
         queue_mcs_capacity::Integer, state_layout
     )
     before = _compile_checkerboard_stage_boundary(
-        workspace, stage_plan.before_lifecycle, backend, queue_mcs_capacity, state_layout,
+        workspace, stage_plan.before_lifecycle, backend, queue_mcs_capacity, state_layout, stage_plan,
         _SCHEDULED_BEFORE_LIFECYCLE
     )
     after = _compile_checkerboard_stage_boundary(
-        workspace, stage_plan.after_lifecycle, backend, queue_mcs_capacity, state_layout,
+        workspace, stage_plan.after_lifecycle, backend, queue_mcs_capacity, state_layout, stage_plan,
         _SCHEDULED_AFTER_LIFECYCLE
     )
     return (; before, after)

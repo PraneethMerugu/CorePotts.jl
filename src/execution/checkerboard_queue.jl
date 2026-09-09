@@ -22,7 +22,8 @@ end
 end
 
 function _clear_checkerboard_bulk!(
-        execution::_CheckerboardExecutionWorkspace, state
+        execution::_CheckerboardExecutionWorkspace, state;
+        completed_mcs::Integer = state.mcs + 1,
     )
     bank = _checkerboard_authorized_bank(execution, state)
     receipt = LocalMath.execute!(execution.clear_report[bank])
@@ -30,7 +31,8 @@ function _clear_checkerboard_bulk!(
     # durable domain status without a host settlement boundary.
     _enqueue_localmath_failure_bridge!(
         receipt, execution.gates[bank], state.program_status,
-        state.mcs + 1, ProgramStagePublication)
+        completed_mcs, ProgramStagePublication
+    )
     _record_checkerboard_receipt!(execution.receipts.mechanics, bank, receipt)
     return receipt
 end
@@ -95,32 +97,42 @@ end
 function _execute_compiled_stage_boundary!(
         execution::_CheckerboardExecutionWorkspace,
         entries::Tuple,
-        state,
+        state;
+        completed_mcs::Integer = state.mcs + 1,
     )
     isempty(entries) && return nothing
     bank = _checkerboard_authorized_bank(execution, state)
     receipts = execution.receipts.mechanics[bank]
     tail = isempty(receipts) ? nothing : last(receipts)
-    tail === nothing && throw(ArgumentError(
-        "checkerboard stage boundary requires an initialized mechanics tail"))
+    tail === nothing && throw(
+        ArgumentError(
+            "checkerboard stage boundary requires an initialized mechanics tail"
+        )
+    )
     for entry in entries
         preparation = entry.prepared[bank]
         for invocation in 0:(entry.repetitions - 1)
             try
-                receipt = LocalMath.execute!(preparation;
-                    parameters = (mcs = Int64(state.mcs + 1), invocation = UInt32(invocation)),
+                receipt = LocalMath.execute!(
+                    preparation;
+                    parameters = (mcs = Int64(completed_mcs), invocation = UInt32(invocation)),
                     dependencies = (tail,),
                 )
                 _enqueue_localmath_failure_bridge!(
                     receipt, execution.gates[bank], state.program_status,
-                    state.mcs + 1, ProgramStageState)
+                    completed_mcs, ProgramStageState
+                )
                 _record_checkerboard_receipt!(
-                    execution.receipts.mechanics, bank, receipt)
+                    execution.receipts.mechanics, bank, receipt
+                )
                 tail = receipt
             catch error
                 error isa LifecycleBackendFailure && rethrow()
-                throw(LifecycleBackendFailure(
-                    error, state.mcs + 1, state.mcs + 1))
+                throw(
+                    LifecycleBackendFailure(
+                        error, completed_mcs, completed_mcs
+                    )
+                )
             end
         end
     end

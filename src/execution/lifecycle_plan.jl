@@ -8,16 +8,6 @@ end
 @doc "Apply one lifecycle descriptor to the model domain." ModelLifecycleDomain
 @doc "Apply one lifecycle descriptor to a selected cell-kind domain." CellKindLifecycleDomain
 
-"""Cadence at which a lifecycle descriptor becomes due."""
-@enum LifecycleCadenceCode::UInt8 begin
-    EveryMCSLifecycleCadence = 0x01
-    AtMCSLifecycleCadence = 0x02
-    PeriodicLifecycleCadence = 0x03
-end
-@doc "Run at every completed MCS." EveryMCSLifecycleCadence
-@doc "Run at one specified MCS." AtMCSLifecycleCadence
-@doc "Run at a fixed positive MCS cadence." PeriodicLifecycleCadence
-
 """Core-owned scientific lifecycle effect."""
 @enum LifecycleEffectCode::UInt8 begin
     CreateCellLifecycleEffect = 0x01
@@ -475,7 +465,7 @@ struct LifecycleDescriptor{N, T <: AbstractFloat}
     domain::LifecycleDomainCode
     domain_kind::Int16
     trigger_evaluator::Int32
-    cadence::LifecycleCadenceCode
+    cadence::CompletedMCSCadence
     cadence_value::Int32
     effect::LifecycleEffectCode
     priority::Int32
@@ -621,31 +611,50 @@ function LifecycleExecutionPlan(
         SO <: AbstractVector{<:NTuple{N, Int16}},
         R <: LifecycleRelationStorage{N},
     }
-    cell_capacity > 0 || throw(ArgumentError(
-        "lifecycle cell capacity must be positive"
-    ))
-    maximum_requests >= 0 || throw(ArgumentError(
-        "lifecycle request bound cannot be negative"
-    ))
+    cell_capacity > 0 || throw(
+        ArgumentError(
+            "lifecycle cell capacity must be positive"
+        )
+    )
+    maximum_requests >= 0 || throw(
+        ArgumentError(
+            "lifecycle request bound cannot be negative"
+        )
+    )
+    for descriptor in descriptors
+        _validate_completed_mcs_cadence(descriptor.cadence, descriptor.cadence_value)
+    end
     iszero(maximum_requests) && return NoLifecycleExecutionPlan()
-    maximum_requests <= typemax(Int32) || throw(ArgumentError(
-        "lifecycle request bound exceeds Int32"
-    ))
-    maximum_placement_sites > 0 || throw(ArgumentError(
-        "lifecycle placement-site bound must be positive"
-    ))
-    maximum_placement_sites <= typemax(Int32) || throw(ArgumentError(
-        "lifecycle placement-site bound exceeds Int32"
-    ))
-    maximum_policy_workspace >= 0 || throw(ArgumentError(
-        "lifecycle policy-workspace bound cannot be negative"
-    ))
-    maximum_policy_workspace <= typemax(Int32) || throw(ArgumentError(
-        "lifecycle policy-workspace bound exceeds Int32"
-    ))
-    length(forbid_extinction) > 0 || throw(ArgumentError(
-        "lifecycle extinction table cannot be empty"
-    ))
+    maximum_requests <= typemax(Int32) || throw(
+        ArgumentError(
+            "lifecycle request bound exceeds Int32"
+        )
+    )
+    maximum_placement_sites > 0 || throw(
+        ArgumentError(
+            "lifecycle placement-site bound must be positive"
+        )
+    )
+    maximum_placement_sites <= typemax(Int32) || throw(
+        ArgumentError(
+            "lifecycle placement-site bound exceeds Int32"
+        )
+    )
+    maximum_policy_workspace >= 0 || throw(
+        ArgumentError(
+            "lifecycle policy-workspace bound cannot be negative"
+        )
+    )
+    maximum_policy_workspace <= typemax(Int32) || throw(
+        ArgumentError(
+            "lifecycle policy-workspace bound exceeds Int32"
+        )
+    )
+    length(forbid_extinction) > 0 || throw(
+        ArgumentError(
+            "lifecycle extinction table cannot be empty"
+        )
+    )
     owned_forbid_extinction = Tuple(forbid_extinction)
     effect_mask = UInt8(0)
     division_variant_mask = UInt16(0)
@@ -654,9 +663,11 @@ function LifecycleExecutionPlan(
     for descriptor in descriptors
         effect_mask |= _lifecycle_effect_bit(descriptor.effect)
         descriptor.effect === DivideCellLifecycleEffect &&
-            (division_variant_mask |= _lifecycle_division_variant_bit(
+            (
+            division_variant_mask |= _lifecycle_division_variant_bit(
                 descriptor.partition, descriptor.side
-            ))
+            )
+        )
         for offset in 0:(Int(descriptor.state_rule_count) - 1)
             rule_index = Int(descriptor.state_rule_offset) + offset
             action = call_lifecycle_state_rule(

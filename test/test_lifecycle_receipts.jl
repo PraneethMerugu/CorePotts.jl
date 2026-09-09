@@ -197,7 +197,7 @@ function periodic_transition_lifecycle_plan()
         CorePotts.TransitionCellLifecycleEffect;
         domain_kind = 2,
         destination_kind = 3,
-        cadence = CorePotts.PeriodicLifecycleCadence,
+        cadence = CorePotts.PeriodicMCSCadence,
         cadence_value = 2,
     )
     evaluators = CorePotts.LifecycleEvaluatorStorage(

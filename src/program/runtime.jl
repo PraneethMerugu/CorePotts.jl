@@ -103,7 +103,7 @@ function _validate_cell_stage_capacity(plan, layout, sources, capacity)
         descriptor.effect isa CellAssignmentEffect || continue
         source = _descriptor_source(sources, descriptor.source_handle; descriptor, context = :cell_stage_capacity)
         for handle in _stage_descriptor_handles(descriptor)
-            entry = only(entry for entry in layout.entries if entry.handle == handle)
+            entry = state_read_source(plan, layout, handle)
             entry.schema.domain === :cell || continue
             only(handle_shape(handle)) >= capacity ||
                 throw(ArgumentError("cell-stage at $source requires state covering all $capacity finite-cell slots"))
@@ -394,7 +394,13 @@ function _materialize_program(
     return runtime
 end
 
-"""Validate and materialize a compiled program, initial state, parameters, and RNG identity."""
+"""
+Validate and materialize a compiled program, initial state, parameters, and RNG identity.
+Fresh MCS-zero construction captures declared initial history after preparation.
+An embedding initializer may defer that capture with `capture_initial_history=false`,
+then call `initialize_history!` once its initial state is settled. Nonzero construction
+and checkpoint restoration do not capture an initial sample.
+"""
 function initialize_program(
         program::CompiledPottsProgram,
         initial::ProgramInitialState,
@@ -403,6 +409,7 @@ function initialize_program(
         replica::UInt32;
         repeat::UInt32 = UInt32(1),
         initial_mcs::Integer = 0,
+        capture_initial_history::Bool = true,
     )
     runtime = _materialize_program(
         program,
@@ -413,8 +420,11 @@ function initialize_program(
         repeat,
         initial_mcs,
     )
-    runtime.engine_workspace isa CheckerboardWorkspace || return runtime
-    return _prepare_checkerboard_execution(runtime)
+    if runtime.engine_workspace isa CheckerboardWorkspace
+        runtime = _prepare_checkerboard_execution(runtime)
+    end
+    capture_initial_history && initial_mcs == 0 && initialize_history!(runtime)
+    return runtime
 end
 
 """Adapt a checkerboard runtime's execution banks to device storage `to`."""

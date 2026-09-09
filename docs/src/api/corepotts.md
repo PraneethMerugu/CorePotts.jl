@@ -4,7 +4,7 @@ Most users should author with Potts. CorePotts intentionally exposes a
 narrow MTK-free runtime boundary:
 
 - `ProgramInitialState`, `ProgramRuntime`, `ProgramSnapshot`;
-- `initialize_program`, `advance_mcs!`, `program_snapshot`;
+- `initialize_program`, `initialize_history!`, `advance_mcs!`, `program_snapshot`;
 - parameter updates, execution/capability reports, and failure reports;
 - `ProgramCheckpoint`, `program_checkpoint`, and
   `restore_program_checkpoint`; and
@@ -30,6 +30,7 @@ runtime_api = Set((
     :ProgramInitialState,
     :ProgramRuntime,
     :initialize_program,
+    :initialize_history!,
     :advance_mcs!,
     :program_checkpoint,
 ))
@@ -68,6 +69,22 @@ operation, role, and source-table context instead of becoming an anonymous
 integer provenance value.
 
 ### Scheduled state and relationship publication
+
+History storage has one dense trailing retention axis over its declared source
+domain. `history_sample_handle` constructs only validated read-only whole-sample
+projections; every write remains a canonical layout handle. The source relation
+is derived from the actual `ShiftAppendEffect`, not another runtime registry.
+
+`initialize_program` captures histories explicitly scheduled with `AtMCSCadence`
+at zero after fresh preparation. It replaces only the newest sample, retaining
+older prehistory, without executing ordinary MCS processes or changing counters.
+An embedding initializer may set `capture_initial_history=false`, settle its
+initial source values, and call `initialize_history!` once. Nonzero construction
+and checkpoint restoration never capture automatically. Checkerboard initialization
+executes existing prepared history laws against the inactive bank; successful
+`InitializationSettlement` materializes that candidate for the validated state
+publisher, while failure retains the active bank. Ordinary settlement's positive
+failure-boundary checks are unchanged.
 
 At each before- or after-lifecycle boundary, ordinary site, cell, and model assignment
 right-hand sides and relationship requests observe boundary-entry state.

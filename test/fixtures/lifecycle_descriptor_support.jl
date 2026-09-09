@@ -16,8 +16,8 @@ function receipt_descriptor(
         on_inadmissible::CorePotts.LifecycleInadmissibilityDisposition =
             CorePotts.ErrorLifecycleInadmissible,
         compiler_synthesized::Bool = false,
-        cadence::CorePotts.LifecycleCadenceCode =
-            CorePotts.EveryMCSLifecycleCadence,
+        cadence::CorePotts.CompletedMCSCadence =
+            CorePotts.EveryMCSCadence,
         cadence_value::Integer = 1,
         state_rule_offset::Integer = 1,
         state_rule_count::Integer = 0,

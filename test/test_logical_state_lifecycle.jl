@@ -23,7 +23,7 @@ function _logical_lifecycle_runtime(last_value)
     )
     descriptor = CorePotts.LifecycleDescriptor{2, Float32}(
         1, 0x61, 0x62, CorePotts.CellKindLifecycleDomain, 2,
-        1, CorePotts.EveryMCSLifecycleCadence, 1, CorePotts.TransitionCellLifecycleEffect, 0,
+        1, CorePotts.EveryMCSCadence, 1, CorePotts.TransitionCellLifecycleEffect, 0,
         CorePotts.ErrorLifecycleInadmissible, 3, 1, CorePotts.NoLifecyclePlacement, 0,
         1, 0, 0, 0, CorePotts.NoLifecyclePartition,
         0, false, (0.0f0, 0.0f0), (0.0f0, 0.0f0), CorePotts.CanonicalLifecycleSide,

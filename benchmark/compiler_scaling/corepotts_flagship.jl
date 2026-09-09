@@ -37,7 +37,7 @@ function _flagship_descriptor()
         CorePotts.CellKindLifecycleDomain,
         Int16(2),
         Int32(1),
-        CorePotts.EveryMCSLifecycleCadence,
+        CorePotts.EveryMCSCadence,
         Int32(1),
         CorePotts.RemoveCellLifecycleEffect,
         Int32(0),

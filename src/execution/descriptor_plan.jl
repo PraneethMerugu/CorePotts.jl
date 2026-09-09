@@ -74,9 +74,8 @@ function _contains_tracker_fold(expression::OperationExpression)
     return any(_contains_tracker_fold, expression.arguments)
 end
 
-function _validate_model_read_domain(expression::StateExpression, layout, operation, source)
-    entry_index = findfirst(entry -> entry.handle == expression.handle, layout.entries)
-    entry = entry_index === nothing ? nothing : layout.entries[entry_index]
+function _validate_model_read_domain(expression::StateExpression, layout, operation, source, stage_plan)
+    entry = state_read_source(stage_plan, layout, expression.handle)
     if operation isa BoundStateValueOperation{ModelStageSite}
         entry !== nothing && entry.schema.domain === :model &&
             prod(handle_shape(expression.handle); init = 1) == 1 ||
@@ -87,16 +86,16 @@ function _validate_model_read_domain(expression::StateExpression, layout, operat
     return nothing
 end
 
-function _validate_model_read_domain(expression::OperationExpression, layout, operation, source)
+function _validate_model_read_domain(expression::OperationExpression, layout, operation, source, stage_plan)
     for argument in expression.arguments
-        _validate_model_read_domain(argument, layout, expression.operation, source)
+        _validate_model_read_domain(argument, layout, expression.operation, source, stage_plan)
     end
     return nothing
 end
 
-_validate_model_read_domain(::AbstractStaticExpression, layout, operation, source) = nothing
+_validate_model_read_domain(::AbstractStaticExpression, layout, operation, source, stage_plan) = nothing
 
-"""Validated ordered proposal descriptor plan and its storage requirements."""
+"""Ordered proposal descriptors with intrinsic source/storage validation. Cross-plan state-read domains are validated when a complete program supplies its actual stage plan."""
 struct DescriptorExecutionPlan{
         G <: Tuple,
         C <: Tuple,
@@ -150,7 +149,6 @@ struct DescriptorExecutionPlan{
                     descriptor.role, handle; source),
             ))
             push!(seen_sources, handle)
-            _validate_model_read_domain(descriptor.evaluator.expression, state_layout, nothing, source)
         end
         for group in constraints, constraint in group.instances
             _descriptor_source(
@@ -184,6 +182,19 @@ struct DescriptorExecutionPlan{
             domain_resources,
         )
     end
+end
+
+function _validate_descriptor_state_domains(plan::DescriptorExecutionPlan, stage_plan)
+    for group in plan.groups, descriptor in group.instances
+        source = _descriptor_source(plan, descriptor; context = :program_state_domains)
+        _validate_model_read_domain(descriptor.evaluator.expression, plan.state_layout, nothing, source, stage_plan)
+        _validate_state_write_handles(plan.state_layout, descriptor.access.writes, source)
+    end
+    for group in plan.constraints, constraint in group.instances
+        source = _descriptor_source(plan.source_table, constraint.source_handle; descriptor = constraint, context = :program_state_domains)
+        _validate_model_read_domain(constraint.evaluator.expression, plan.state_layout, nothing, source, stage_plan)
+    end
+    return nothing
 end
 
 function _descriptor_source(

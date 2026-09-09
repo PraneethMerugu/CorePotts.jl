@@ -11,6 +11,7 @@
         :program_failure_report,
         :ProgramSettlementReceipt,
         :initialize_program,
+        :initialize_history!,
         :program_snapshot,
         :advance_mcs!,
         :update_program_parameters!,

@@ -159,19 +159,28 @@ struct ShiftAppendEffect{
     target::T
     source::S
     axis::Int32
+    cadence::CompletedMCSCadence
+    cadence_value::Int64
     function ShiftAppendEffect(
             target::T,
             source::S,
-            axis::Integer,
+            axis::Integer;
+            cadence::CompletedMCSCadence = EveryMCSCadence,
+            cadence_value::Integer = 1,
         ) where {T <: StateHandle, S <: StateHandle}
         axis > 0 || throw(
             ArgumentError(
                 "a shift-append effect axis must be positive"
             )
         )
-        return new{T, S}(target, source, Int32(axis))
+        _validate_completed_mcs_cadence(cadence, cadence_value; initialization = true)
+        return new{T, S}(target, source, Int32(axis), cadence, Int64(cadence_value))
     end
 end
+
+# A zero-dimensional model block is one sample, not an empty source domain.
+_history_source_shape(handle::StateHandle) =
+    isempty(handle_shape(handle)) ? (1,) : Tuple(Int.(handle_shape(handle)))
 
 """Create one bounded relationship record from compiled endpoint and payload evaluators."""
 struct RelationshipCreateEffect{
@@ -458,6 +467,112 @@ StageExecutionPlan() = StageExecutionPlan(
     (), (), (), 0, 0, "empty-stage-plan-v1"
 )
 
+_history_descriptors(plan::StageExecutionPlan) =
+    _history_descriptors(Tuple(descriptor for group in _after_mcs_groups(plan) for descriptor in group.instances))
+function _history_descriptors(descriptors::Tuple)
+    all(descriptor -> descriptor isa CompiledStageDescriptor, descriptors) ||
+        throw(ArgumentError("history source queries require compiled stage descriptors"))
+    return Tuple(descriptor for descriptor in descriptors if descriptor.effect isa ShiftAppendEffect)
+end
+
+function _history_contract(plan, layout::StateLayout, target::StateHandle)
+    targets = filter(entry -> entry.handle == target, layout.entries)
+    length(targets) == 1 && only(targets).schema.domain === :history ||
+        throw(ArgumentError("a history target must be one canonical history layout entry"))
+    effects = [
+        descriptor.effect for descriptor in _history_descriptors(plan)
+            if descriptor.effect.target == target
+    ]
+    length(effects) == 1 || throw(ArgumentError("a history target requires exactly one shift-append source"))
+    effect = only(effects)
+    source = effect.source
+    entries = filter(entry -> entry.handle == source, layout.entries)
+    length(entries) == 1 || throw(ArgumentError("the history source must resolve to one canonical state-layout entry"))
+    source_entry = only(entries)
+    source_entry.schema.domain in (:model, :cell, :site) ||
+        throw(ArgumentError("history requires a canonical model, cell, or site source"))
+    target_entry = only(targets)
+    source_shape = _history_source_shape(source)
+    target_shape = Tuple(target_entry.schema.shape)
+    effect.axis == length(target_shape) &&
+        length(target_shape) == length(source_shape) + 1 &&
+        target_shape[1:(end - 1)] == source_shape && last(target_shape) > 0 ||
+        throw(ArgumentError("history samples require a positive dense trailing retention axis over the source domain"))
+    target_entry.schema.element_type === source_entry.schema.element_type ||
+        throw(ArgumentError("history samples and their source must have the same logical element type"))
+    return (; target = target_entry, source = source_entry, effect)
+end
+
+"""
+    history_source(plan, layout::StateLayout, target::StateHandle)
+
+Return the canonical source layout entry for a dense history target. The unique
+`ShiftAppendEffect` is the source authority; the returned entry contains its
+existing source `handle` and `schema`, not a separately retained history registry.
+An absent or ambiguous history writer, or a source outside `layout`, is invalid.
+`plan` is a `StageExecutionPlan` or its already lowered descriptor tuple.
+"""
+history_source(plan::Union{StageExecutionPlan, Tuple}, layout::StateLayout, target::StateHandle) =
+    _history_contract(plan, layout, target).source
+
+"""
+    history_sample_handle(plan, layout, history, lag)
+
+Select one retained source-domain sample without copying storage. Zero selects
+the newest sample. The history's unique shift-append effect and canonical layout
+prove the dense trailing-axis projection. The returned handle is a read view,
+not a new writable state declaration. `plan` may be a `StageExecutionPlan` or
+the tuple of its already lowered descriptors during compiler construction.
+"""
+function history_sample_handle(plan::Union{StageExecutionPlan, Tuple}, layout::StateLayout, history::StateHandle, lag::Integer)
+    lag isa Bool && throw(ArgumentError("a history lag must be an integer sample index, not Bool"))
+    contract = _history_contract(plan, layout, history)
+    depth = last(contract.target.schema.shape)
+    0 <= lag < depth || throw(ArgumentError("history lag $lag is outside retained sample indices 0:$(depth - 1)"))
+    shape = Tuple(contract.source.schema.shape)
+    count = prod(BigInt.(shape); init = big(1))
+    offset = BigInt(history.location.offset) + (depth - 1 - lag) * count
+    1 <= offset <= typemax(Int32) || throw(ArgumentError("history sample offset exceeds the representable storage location"))
+    return StateHandle(handle_representation(history), history.bank, history.slot, Int(offset), shape)
+end
+
+function _history_read_source(plan, layout::StateLayout, handle::StateHandle)
+    parents = filter(layout.entries) do entry
+        parent = entry.handle
+        entry.schema.domain === :history && parent.bank == handle.bank && parent.slot == handle.slot &&
+            handle_representation(parent) === handle_representation(handle)
+    end
+    length(parents) == 1 || throw(ArgumentError("state read does not identify a declared history sample"))
+    parent = only(parents).handle
+    contract = _history_contract(plan, layout, parent)
+    shape = Tuple(contract.source.schema.shape)
+    handle_shape(handle) == shape || throw(ArgumentError("history read must select one complete source-shaped sample"))
+    count = prod(BigInt.(shape); init = big(1))
+    offset = BigInt(handle.location.offset) - parent.location.offset
+    depth = last(contract.target.schema.shape)
+    # All valid samples of an empty source share the same empty physical view.
+    valid = iszero(count) ? iszero(offset) :
+        offset >= 0 && iszero(rem(offset, count)) && div(offset, count) < depth
+    valid || throw(ArgumentError("history read is not aligned to a retained whole sample"))
+    return contract.source
+end
+
+"""Resolve an ordinary state read or a proven history-sample read to its canonical source declaration. This query does not authorize writes through projected handles."""
+function state_read_source(plan, layout::StateLayout, handle::StateHandle)
+    entries = filter(entry -> entry.handle == handle, layout.entries)
+    length(entries) == 1 && return only(entries)
+    return _history_read_source(plan, layout, handle)
+end
+
+function _validate_state_write_handles(layout::StateLayout, handles, source)
+    for handle in handles
+        handle isa StateHandle || continue
+        any(entry -> entry.handle == handle, layout.entries) ||
+            throw(ArgumentError("state write at $source requires a canonical layout handle, not a read-only history sample"))
+    end
+    return nothing
+end
+
 function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources, kind_count, medium_kinds)
     for group in (plan.accepted_copy..., plan.before_lifecycle..., plan.after_lifecycle...),
             descriptor in group.instances
@@ -465,9 +580,11 @@ function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources
             sources, descriptor.source_handle;
             descriptor, context = :stage_state_domains
         )
-        _validate_model_read_domain(descriptor.condition.expression, layout, nothing, source)
-        _validate_model_read_domain(descriptor.value.expression, layout, nothing, source)
+        _validate_model_read_domain(descriptor.condition.expression, layout, nothing, source, plan)
+        _validate_model_read_domain(descriptor.value.expression, layout, nothing, source, plan)
+        _validate_state_write_handles(layout, descriptor.access.writes, source)
         effect = descriptor.effect
+        effect isa ShiftAppendEffect && _history_contract(plan, layout, effect.target)
         if effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ModelAssignmentEffect, CellAssignmentEffect}
             index = findfirst(entry -> entry.handle == effect.target, layout.entries)
             entry = index === nothing ? nothing : layout.entries[index]
@@ -483,16 +600,13 @@ function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources
         if effect isa CellAssignmentEffect
             effect.domain_kind <= kind_count && !medium_kinds[effect.domain_kind] ||
                 throw(ArgumentError("cell-stage at $source requires a declared finite-cell kind"))
-            expression_handles = StateHandle[]
-            parameter_count = Ref(0)
-            _record_expression_requirements!(expression_handles, parameter_count, descriptor.condition.expression)
-            _record_expression_requirements!(expression_handles, parameter_count, descriptor.value.expression)
+            expression_handles = (expression_state_handles(descriptor.condition.expression)...,
+                expression_state_handles(descriptor.value.expression)...)
             all(handle -> any(==(handle), descriptor.access.reads), expression_handles) ||
                 throw(ArgumentError("cell-stage at $source reads state absent from its declared access contract"))
             for handle in _stage_descriptor_handles(descriptor)
-                index = findfirst(entry -> entry.handle == handle, layout.entries)
-                index === nothing && throw(ArgumentError("cell-stage at $source references a state handle outside the declared layout"))
-                domain = layout.entries[index].schema.domain
+                entry = state_read_source(plan, layout, handle)
+                domain = entry.schema.domain
                 domain in (:cell, :model) ||
                     throw(ArgumentError("cell-stage at $source requires cell-owned or model-owned reads, not $domain"))
                 domain !== :cell || length(handle_shape(handle)) == 1 ||

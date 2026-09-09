@@ -1194,7 +1194,7 @@ function _checkerboard_scientific_declaration(
     )
     model_space = LocalMath.Space(_CheckerboardModelDomain, 1)
     state_fields = map(state_handles) do handle
-        entry = only(entry for entry in descriptor_plan.state_layout.entries if entry.handle == handle)
+        entry = state_read_source(stage_plan, descriptor_plan.state_layout, handle)
         shape = Tuple(Int.(handle_shape(handle)))
         domain = if entry.schema.domain === :model
             prod(shape; init = 1) == 1 || throw(ArgumentError("model proposal state requires one logical value"))

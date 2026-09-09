@@ -351,7 +351,17 @@ function CompiledPottsProgram(
         !(resolved_checkerboard_plan isa NoCheckerboardPlan) && throw(
             ArgumentError("sequential programs cannot carry a checkerboard plan")
         )
+    _validate_descriptor_state_domains(descriptor_plan, stage_plan)
     _validate_stage_state_domains(stage_plan, descriptor_plan.state_layout, descriptor_plan.source_table, kind_count, medium_mask)
+    _validate_state_write_handles(descriptor_plan.state_layout, ownership_change_handles, :ownership_change)
+    if lifecycle_plan isa LifecycleExecutionPlan
+        for bank in lifecycle_plan.state_rules.banks, rule in bank
+            _validate_state_write_handles(descriptor_plan.state_layout, (rule.handle,), :lifecycle_state_policy)
+        end
+        for rule in lifecycle_plan.ownership_rules
+            _validate_state_write_handles(descriptor_plan.state_layout, (rule.handle,), :lifecycle_ownership)
+        end
+    end
     owned_proposal_offsets = copy(proposal_offsets)
     owned_medium_mask = copy(medium_mask)
     owned_parameter_defaults = copy(parameter_defaults)

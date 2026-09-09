@@ -792,28 +792,35 @@ function _apply_after_mcs_descriptor!(
         },
         boundary::UInt16,
     ) where {C, V, E <: ShiftAppendEffect}
-    effect = descriptor.effect
-    target = state_block(runtime.descriptor_state, effect.target).values
-    source = state_block(runtime.descriptor_state, effect.source).values
+    _apply_history_effect!(runtime.descriptor_state, descriptor.effect, runtime.mcs + 1)
+    return runtime
+end
+
+function _apply_history_effect!(state, effect::ShiftAppendEffect, completed_mcs::Integer)
+    _completed_mcs_due(effect.cadence, effect.cadence_value, completed_mcs) || return state
+    target = state_block(state, effect.target).values
+    source = state_block(state, effect.source).values
     axis = Int(effect.axis)
     1 <= axis <= ndims(target) || error(
         "compiled shift-append axis is outside its target block"
     )
-    size(target)[1:(axis - 1)] == size(source) || error(
+    size(target)[1:(axis - 1)] == _history_source_shape(effect.source) || error(
         "compiled shift-append source shape is incompatible"
     )
     size(target)[(axis + 1):end] == () || error(
         "compiled shift-append target has trailing dimensions"
     )
     depth = size(target, axis)
-    for index in 1:(depth - 1)
-        copyto!(
-            selectdim(target, axis, index),
-            selectdim(target, axis, index + 1),
-        )
+    if completed_mcs != 0
+        for index in 1:(depth - 1)
+            copyto!(
+                selectdim(target, axis, index),
+                selectdim(target, axis, index + 1),
+            )
+        end
     end
     copyto!(selectdim(target, axis, depth), source)
-    return runtime
+    return state
 end
 
 function _apply_after_mcs_groups!(runtime, ::Tuple{}, boundary::UInt16)

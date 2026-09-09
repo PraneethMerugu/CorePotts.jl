@@ -41,6 +41,7 @@ include("execution/descriptor_plan.jl")
 include("execution/tracker_plan.jl")
 include("program/checkerboard_plan.jl")
 include("program/types.jl")
+include("execution/completed_mcs_cadence.jl")
 include("execution/stage_plan.jl")
 include("execution/lifecycle_plan.jl")
 include("program/capabilities.jl")
@@ -65,7 +66,7 @@ public CompilerSPI, BackendSPI
 public ProgramInitialState, ProgramSnapshot, ProgramRuntime
 public ProgramFailureReport, program_failed, program_failure_report
 public ProgramSettlementReceipt
-public initialize_program, program_snapshot, advance_mcs!
+public initialize_program, initialize_history!, program_snapshot, advance_mcs!
 public update_program_parameters!, program_execution_report
 public program_capability_report
 public ProgramCheckpoint, program_checkpoint

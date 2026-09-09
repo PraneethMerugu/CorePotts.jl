@@ -292,6 +292,19 @@ function _record_expression_requirements!(
     )
 end
 
+"""
+    expression_state_handles(expression::AbstractStaticExpression)
+
+Return the distinct state read handles in expression traversal order. The
+ordinary expression-requirements walker remains the sole authority; this cold
+query does not validate domains, authorize writes, or retain a read registry.
+"""
+function expression_state_handles(expression::AbstractStaticExpression)
+    handles = StateHandle[]
+    _record_expression_requirements!(handles, Ref(0), expression)
+    return Tuple(handles)
+end
+
 """Callable marker requesting canonical left-to-right argument folding."""
 struct OrderedFold{F}
     operation::F

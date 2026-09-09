@@ -46,7 +46,7 @@ function cell_stage_lifecycle_plan(handle; action, effect)
         receipt_descriptor(
             2, effect; destination_kind = effect === CorePotts.TransitionCellLifecycleEffect ? 3 : 2, domain_kind = 2,
             placement = CorePotts.SeedAtLifecyclePlacement, placement_evaluator = 2,
-            cadence = CorePotts.PeriodicLifecycleCadence, cadence_value = 2, state_rule_count = 1, scalar_type = Float32
+            cadence = CorePotts.PeriodicMCSCadence, cadence_value = 2, state_rule_count = 1, scalar_type = Float32
         ),
     ]
     evaluators = CorePotts.LifecycleEvaluatorStorage(

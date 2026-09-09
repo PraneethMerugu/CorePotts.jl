@@ -283,7 +283,7 @@ function _physical_descriptor(index, request)
         CorePotts.ModelLifecycleDomain,
         Int16(0),
         Int32(1),
-        CorePotts.EveryMCSLifecycleCadence,
+        CorePotts.EveryMCSCadence,
         Int32(1),
         effect,
         request.priority,

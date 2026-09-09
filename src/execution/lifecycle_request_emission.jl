@@ -115,12 +115,7 @@ struct BackendLifecycleExecution <: AbstractLifecycleExecutionMode end
 @inline function _lifecycle_due(
         descriptor::LifecycleDescriptor, next_mcs::Int
     )
-    descriptor.cadence === EveryMCSLifecycleCadence && return true
-    descriptor.cadence === AtMCSLifecycleCadence &&
-        return next_mcs == descriptor.cadence_value
-    descriptor.cadence === PeriodicLifecycleCadence &&
-        return rem(next_mcs, Int(descriptor.cadence_value)) == 0
-    return false
+    return _completed_mcs_due(descriptor.cadence, descriptor.cadence_value, next_mcs)
 end
 
 @inline function _lifecycle_context_site(runtime, workspace, anchor::Int32)
