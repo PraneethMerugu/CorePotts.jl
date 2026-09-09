@@ -156,7 +156,7 @@ jobs:
 
   metal:
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.execution != 'false')
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.execution != 'false') }}
     name: metal
     runs-on: macos-15
     timeout-minutes: 120
