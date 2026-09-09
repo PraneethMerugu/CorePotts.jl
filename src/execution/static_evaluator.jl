@@ -503,6 +503,8 @@ for (identity, operation) in (
         :exponential => exp,
         :logarithm => log,
         :square_root => sqrt,
+        :sine => sin,
+        :cosine => cos,
         :fixed_vector => FixedVectorConstruction(),
         :fixed_index => getindex,
         :product_field => getfield,

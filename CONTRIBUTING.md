@@ -89,9 +89,11 @@ launch counter. The owning coordinate and numerical witnesses are
 `test_scheduled_process_draws.jl` and `fixtures/scheduled_draw_support.jl`.
 
 `src/execution/static_evaluator.jl` owns the versioned operation-callable catalog,
-including immutable fixed-vector construction, indexing, and named-product field
-projection by declared ordinal. Authoring compilers
-validate expression shapes and indices before lowering; Core evaluates those
+including immutable fixed-vector construction, indexing, named-product field
+projection by declared ordinal, and standard sine/cosine numerical callables.
+`test_trigonometric_operations.jl` defends their concrete expression inference.
+Authoring compilers validate dimensions, expression shapes, and indices before
+lowering; Core evaluates those
 concrete operations through the existing expression path. The owning numerical
 and inference checks are in `test/test_fixed_vector_operations.jl` and
 `test/test_product_field_operations.jl`.

@@ -188,6 +188,13 @@ ordinary concrete callables used inside `OperationExpression`; construction
 preserves the promoted element type. Authoring compilers own shape and index
 admission, including proving literal indices in bounds before device execution.
 
+The same lookup supplies `:sine` and `:cosine` at schema `v"1.0.0"`; these are
+the standard `sin` and `cos` numerical callables, without a separate rotation
+executor. Authoring compilers own scalar and dimensionless-argument admission.
+`test_trigonometric_operations.jl` checks concrete Float32/Float64 expression
+evaluation, including the ordinary integer-to-floating result rather than an
+incorrect integer-preservation claim.
+
 `operation_callable(Val(:product_field), v"1.0.0")` selects one field of a
 named product by its declared ordinal without converting its value. Authoring
 compilers prove that the ordinal selects an existing field and retain the
