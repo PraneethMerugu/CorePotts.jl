@@ -10,6 +10,7 @@ const COREPOTTS_METAL_WITNESSES = (
     "corepotts_program_adaptation.jl",
     "corepotts_rng_contract.jl",
     "corepotts_scheduled_draws.jl",
+    "corepotts_input_publication.jl",
     "corepotts_feasibility.jl",
     "corepotts_stage_boundaries.jl",
     "corepotts_cartesian_domain.jl",

@@ -83,60 +83,77 @@ struct ProgramFailureReport
 end
 
 """
-    update_program_parameters!(runtime, parameters)
+    update_program_inputs!(runtime; parameters=nothing, descriptor_state=nothing)
 
-Publish one validated host parameter transaction at an already settled scientific boundary. The
-host mirror and every execution bank are updated together here so runtime adapters and indexing
-hooks do not acquire independent device-publication paths.
+Publish one combined host input transaction at a settled scientific boundary.
+`nothing` preserves that published input. Validate both effective inputs and
+their derived quantities before copying any candidate into the host mirror or
+execution banks. Candidate buffers are not retained. Ordinary validation is
+failure atomic; backend-copy failures are not a general rollback guarantee.
 """
-function update_program_parameters!(
-        runtime::ProgramRuntime{T}, parameters::AbstractVector{<:Real}
-    ) where {T}
+function update_program_inputs!(
+        runtime::ProgramRuntime;
+        parameters::Union{Nothing, AbstractVector{<:Real}} = nothing,
+        descriptor_state::Union{Nothing, AuxiliaryState} = nothing,
+    )
     runtime.settled ||
-        throw(ArgumentError("parameter updates require a settled MCS boundary"))
-    length(parameters) == length(runtime.parameters) ||
-        throw(ArgumentError("runtime parameter buffer has the wrong length"))
-    replacement = _validated_program_parameters(runtime.program, parameters)
-    copyto!(runtime.parameters, replacement)
-    execution_workspace = runtime.engine_workspace
-    if _is_checkerboard_execution_workspace(execution_workspace)
-        workspace = _checkerboard_core(execution_workspace)
-        primary = workspace.state.parameters
-        primary === runtime.parameters || copyto!(primary, replacement)
-        secondary = workspace.alternate_state.parameters
-        secondary === primary || secondary === runtime.parameters ||
-            copyto!(secondary, replacement)
-    end
-    return runtime
-end
-
-"""Publish one validated auxiliary-state transaction to the host mirror and both banks."""
-function update_program_descriptor_state!(
-        runtime::ProgramRuntime, descriptor_state::AuxiliaryState
-    )
-    runtime.settled || throw(ArgumentError(
-        "state updates require a settled MCS boundary"
+        throw(ArgumentError("input updates require a settled MCS boundary"))
+    program_failed(runtime) && throw(ArgumentError(
+        "input updates cannot repair a terminal-failed runtime"
     ))
+    parameters === nothing && descriptor_state === nothing && return runtime
+    replacement_parameters = if parameters === nothing
+        runtime.parameters
+    else
+        length(parameters) == length(runtime.parameters) ||
+            throw(ArgumentError("runtime parameter buffer has the wrong length"))
+        _validated_program_parameters(runtime.program, parameters)
+    end
+    replacement_state = descriptor_state === nothing ? runtime.descriptor_state :
+        _validate_auxiliary_state_candidate(
+            runtime.program.descriptor_plan.state_layout,
+            runtime.descriptor_state, descriptor_state,
+        )
     execution_workspace = runtime.engine_workspace
-    destinations = AuxiliaryState[runtime.descriptor_state]
-    if _is_checkerboard_execution_workspace(execution_workspace)
-        workspace = _checkerboard_core(execution_workspace)
-        primary = workspace.state.descriptor_state
-        primary === runtime.descriptor_state || push!(destinations, primary)
-        secondary = workspace.alternate_state.descriptor_state
-        secondary === primary || secondary === runtime.descriptor_state ||
-            push!(destinations, secondary)
+    device_workspace = _is_checkerboard_execution_workspace(execution_workspace) ?
+        _checkerboard_core(execution_workspace) : nothing
+    active = device_workspace === nothing ? runtime :
+        first(_checkerboard_transaction_banks(device_workspace, device_workspace.execution.committed_mcs))
+    source = tracker_source_view(runtime.program, active.ownership;
+        parameters = replacement_parameters,
+        descriptor_state = descriptor_state === nothing ? active.descriptor_state : replacement_state)
+    replacement_trackers = _input_tracker_candidate(
+        runtime.program.tracker_plan, active.trackers, source, active.cell_kinds;
+        backend = KernelAbstractions.get_backend(active.ownership),
+        copy_source = descriptor_state !== nothing)
+    destinations = if device_workspace !== nothing
+        (runtime, device_workspace.state, device_workspace.alternate_state)
+    else
+        (runtime,)
     end
-    _validate_auxiliary_state_candidate(
-        runtime.program.descriptor_plan.state_layout,
-        runtime.descriptor_state,
-        descriptor_state,
-    )
     for destination in destinations
-        _require_auxiliary_copy_compatible(destination, descriptor_state)
+        _require_auxiliary_copy_compatible(destination.descriptor_state, replacement_state)
+        _require_tracker_copy_compatible(destination.trackers, replacement_trackers)
     end
+    # No scientific observer runs between these copies. In particular a mixed
+    # update is never evaluated with new parameters over the old source state.
+    parameter_destinations = Any[]
+    state_destinations = Any[]
+    tracker_destinations = Any[]
     for destination in destinations
-        copyto_auxiliary_state!(destination, descriptor_state)
+        if parameters !== nothing && !any(value -> value === destination.parameters, parameter_destinations)
+            push!(parameter_destinations, destination.parameters)
+            copyto!(destination.parameters, replacement_parameters)
+        end
+        if descriptor_state !== nothing && !any(value -> value === destination.descriptor_state, state_destinations)
+            push!(state_destinations, destination.descriptor_state)
+            copyto_auxiliary_state!(destination.descriptor_state, replacement_state)
+        end
+        if !any(value -> value === destination.trackers, tracker_destinations)
+            push!(tracker_destinations, destination.trackers)
+            _copy_input_tracker_state!(destination.trackers, replacement_trackers,
+                runtime.program.tracker_plan, destination === runtime ? Array : identity)
+        end
     end
     return runtime
 end
@@ -400,7 +417,7 @@ function initialize_history!(runtime::ProgramRuntime)
         for descriptor in descriptors
             _apply_history_effect!(candidate, descriptor.effect, 0)
         end
-        return update_program_descriptor_state!(runtime, candidate)
+        return update_program_inputs!(runtime; descriptor_state = candidate)
     end
     execution isa _CheckerboardExecutionWorkspace || throw(
         ArgumentError(
@@ -424,7 +441,7 @@ function initialize_history!(runtime::ProgramRuntime)
     runtime.failure_status = receipt.status
     runtime.settled = true
     receipt.failure === nothing || throw(receipt.failure)
-    return update_program_descriptor_state!(runtime, receipt.snapshot.descriptor_state)
+    return update_program_inputs!(runtime; descriptor_state = receipt.snapshot.descriptor_state)
 end
 
 function _checkerboard_settlement_events(

@@ -28,6 +28,7 @@ function test_program(
         parameter_defaults = Float64[],
         scalar_type = Float64,
         domain = nothing,
+        backend = CorePotts.CPUProgramBackend(),
     )
     T = scalar_type
     scalar(value) = CorePotts.CompiledScalar(T(value))
@@ -54,7 +55,7 @@ function test_program(
         descriptor_plan,
         stage_plan,
         engine,
-        CorePotts.CPUProgramBackend(),
+        backend,
         "core-program-v1-test";
         checkerboard_plan,
         ownership_change_handles,

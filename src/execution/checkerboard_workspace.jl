@@ -188,11 +188,16 @@ _checkerboard_domain_resources(program::CheckerboardKernelProgram) =
 _checkerboard_domain_resources(program) =
     program.descriptor_plan.domain_resources
 
-tracker_source_view(program::CheckerboardKernelProgram, ownership) =
+tracker_source_view(
+    program::CheckerboardKernelProgram, ownership;
+    parameters = (), descriptor_state = nothing
+) =
     TrackerSourceView(
         ownership,
         program.domain,
         program.domain_resources,
+    parameters,
+    descriptor_state,
     )
 
 _checkerboard_adapt(to, value) =

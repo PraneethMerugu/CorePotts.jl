@@ -258,6 +258,9 @@ end
     Index
 
 struct _ExecutableTrackerKey{Quantity, SourceHandle} end
+_compile_tracker_key(key::Val) = _ExecutableTrackerKey{typeof(key).parameters[1], 0}()
+_compile_tracker_key(key::QualifiedTrackerKey) =
+    _ExecutableTrackerKey{typeof(key.quantity).parameters[1], Int(key.source_handle)}()
 @inline _executable_tracker_key(
     ::_ExecutableTrackerKey{Quantity, 0}
 ) where {Quantity} = Val(Quantity)
@@ -372,16 +375,19 @@ end
 
 
 _record_tracker_requirements!(
-    keys, ::AbstractStaticExpression, bounded_keys = nothing
+    keys, ::AbstractStaticExpression, bounded_keys = nothing; include_owner_counts = false
 ) = nothing
 function _record_tracker_requirements!(
-        keys, expression::OperationExpression, bounded_keys = nothing
+        keys, expression::OperationExpression, bounded_keys = nothing; include_owner_counts = false
     )
     operation = expression.operation
     if operation isa QualifiedTrackerOperation
         key = QualifiedTrackerKey(
             operation.quantity, operation.source_handle
         )
+        any(isequal(key), keys) || push!(keys, key)
+    elseif include_owner_counts && operation isa ResourceOperation{:cell_volume}
+        key = Val(:cell_volume)
         any(isequal(key), keys) || push!(keys, key)
     elseif operation isa ResourceOperation{:bounded_fold} &&
             length(expression.arguments) == 4
@@ -395,7 +401,7 @@ function _record_tracker_requirements!(
         end
     end
     foreach(expression.arguments) do argument
-        _record_tracker_requirements!(keys, argument, bounded_keys)
+        _record_tracker_requirements!(keys, argument, bounded_keys; include_owner_counts)
     end
     return nothing
 end
@@ -441,7 +447,7 @@ function _record_relationship_requirements!(
     return nothing
 end
 
-function _tracker_requirement_descriptors(keys, tracker_plan)
+function _tracker_requirement_descriptors(keys, tracker_plan; source = nothing)
     instances = tracker_instances(tracker_plan)
     return Tuple(
         map(keys) do key
@@ -451,14 +457,14 @@ function _tracker_requirement_descriptors(keys, tracker_plan)
             )
             index === nothing && throw(
                 ArgumentError(
-                    "checkerboard compilation requires unavailable tracker " *
+                    "compiled tracker read$(source === nothing ? "" : " at $(repr(source))") requires unavailable tracker " *
                         repr(key)
                 )
             )
             descriptor = instances[index]
             tracker_storage(descriptor) isa DenseOwnerScalarStorage || throw(
                 ArgumentError(
-                    "checkerboard gathered tracker reads require dense scalar storage for " *
+                    "compiled tracker read$(source === nothing ? "" : " at $(repr(source))") requires dense scalar storage for " *
                         repr(key)
                 )
             )
@@ -604,6 +610,10 @@ function _checkerboard_scientific_requirements(
     for handle in ownership_change_handles
         any(==(handle), handles) || push!(handles, handle)
         any(==(handle), affected_handles) || push!(affected_handles, handle)
+    end
+    for descriptor in tracker_instances(tracker_plan)
+        descriptor isa SiteSumTracker || continue
+        _record_expression_requirements!(handles, parameter_count, descriptor.expression)
     end
     return (;
         state_handles = Tuple(handles),
@@ -1001,13 +1011,7 @@ function _compile_proposal_expression(
         if operation isa ResourceOperation{:bounded_fold} && index == 2 &&
                 argument isa LiteralExpression
             key = argument.value
-            if key isa Val
-                return _ExecutableTrackerKey{typeof(key).parameters[1], 0}()
-            elseif key isa QualifiedTrackerKey
-                return _ExecutableTrackerKey{
-                    typeof(key.quantity).parameters[1], Int(key.source_handle),
-                }()
-            end
+            key isa Union{Val, QualifiedTrackerKey} && return _compile_tracker_key(key)
         end
         _compile_proposal_expression(argument, source, state_handles)
     end

@@ -75,7 +75,7 @@ end
         end
         # Retry starts from the saved scientific boundary, not a repaired failed status.
         retry = CorePotts.restore_program_checkpoint(runtime.program, checkpoint)
-        CorePotts.update_program_parameters!(retry, Float32[1])
+        CorePotts.update_program_inputs!(retry; parameters = Float32[1])
         reference, _, _ = scheduled_draw_runtime(engine)
         for current in (retry, reference)
             CorePotts.advance_mcs!(current)

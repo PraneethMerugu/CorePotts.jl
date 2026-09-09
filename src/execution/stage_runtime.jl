@@ -35,6 +35,28 @@ operation_context_supported(::ContextOperation{:energy_anchor_cell}, ::Type{Abst
 @inline state_value(context::_CellStageEvaluationContext, handle::StateHandle, slot) =
     @inbounds state_block(context.runtime.descriptor_state, handle).values[slot]
 
+@inline apply_resource_operation(
+    ::ResourceOperation{:cell_volume}, arguments,
+    context::_CellStageEvaluationContext
+) =
+    program_tracker_value(context.runtime, Val(:cell_volume), only(arguments))
+@inline _compiled_resource_operation(
+    operation::ResourceOperation{:cell_volume}, arguments::Tuple,
+    context::_CellStageEvaluationContext
+) = apply_resource_operation(operation, arguments, context)
+
+@inline qualified_tracker_operation_call(
+    ::ResourceOperation{:cell_site_sum}, arguments::Tuple,
+    context::_CellStageEvaluationContext, quantity::Val, source_handle::Int32
+) =
+    program_tracker_value(context.runtime, QualifiedTrackerKey(quantity, source_handle), only(arguments))
+@inline _compiled_qualified_tracker_operation(
+    operation::QualifiedTrackerOperation, arguments::Tuple,
+    context::_CellStageEvaluationContext
+) = qualified_tracker_operation_call(
+    operation.operation, arguments, context, operation.quantity, operation.source_handle
+)
+
 @inline function _cell_stage_eligible(effect::CellAssignmentEffect, kind, generation)
     return kind == effect.domain_kind && !iszero(generation)
 end
