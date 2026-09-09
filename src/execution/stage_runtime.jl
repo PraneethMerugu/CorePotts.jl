@@ -384,7 +384,7 @@ end
 end
 
 @inline function descriptor_emit_requests!(
-        scratch::AbstractArray{T},
+        scratch::AbstractArray{StageEvaluation{T}},
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
@@ -410,7 +410,7 @@ end
             value, "after-MCS stage value must be finite"
         )
     )
-    @inbounds scratch[context.site] = value
+    @inbounds scratch[context.site] = StageEvaluation(condition, value)
     return scratch
 end
 
@@ -499,8 +499,15 @@ end
             "unsupported compiled after-MCS effect"
         )
     )
-    copyto!(state_block(state, effect.target).values, scratch)
-    return state
+    values = state_block(state, effect.target).values
+    published = false
+    for index in eachindex(values, scratch)
+        evaluation = @inbounds scratch[index]
+        evaluation.enabled || continue
+        @inbounds values[index] = evaluation.value
+        published = true
+    end
+    return published
 end
 
 @inline _emit_accepted_copy_groups!(
@@ -752,8 +759,7 @@ function _apply_after_mcs_descriptor!(
     scratch = @inbounds runtime.stage_buffers.after_mcs[
         Int(descriptor.buffer_slot),
     ]
-    descriptor_apply_stage!(descriptor, scratch, runtime.descriptor_state)
-    return runtime
+    return descriptor_apply_stage!(descriptor, scratch, runtime.descriptor_state)
 end
 
 function _apply_after_mcs_descriptor!(
@@ -801,6 +807,7 @@ function _apply_after_mcs_descriptor!(
     scratch = @inbounds runtime.stage_buffers.after_mcs[
         Int(descriptor.buffer_slot),
     ]
+    published = false
     for invocation in 0:(Int(descriptor.effect.iterations) - 1)
         for site in CartesianIndices(runtime.ownership)
             descriptor_emit_requests!(
@@ -812,11 +819,11 @@ function _apply_after_mcs_descriptor!(
                 ),
             )
         end
-        descriptor_apply_stage!(
+        published |= descriptor_apply_stage!(
             descriptor, scratch, runtime.descriptor_state
         )
     end
-    return runtime
+    return published
 end
 
 function _apply_after_mcs_descriptor!(
@@ -826,12 +833,11 @@ function _apply_after_mcs_descriptor!(
         },
         boundary::UInt16,
     ) where {C, V, E <: ShiftAppendEffect}
-    _apply_history_effect!(runtime.descriptor_state, descriptor.effect, runtime.mcs + 1)
-    return runtime
+    return _apply_history_effect!(runtime.descriptor_state, descriptor.effect, runtime.mcs + 1)
 end
 
 function _apply_history_effect!(state, effect::ShiftAppendEffect, completed_mcs::Integer)
-    _completed_mcs_due(effect.cadence, effect.cadence_value, completed_mcs) || return state
+    _completed_mcs_due(effect.cadence, effect.cadence_value, completed_mcs) || return false
     target = state_block(state, effect.target).values
     source = state_block(state, effect.source).values
     axis = Int(effect.axis)
@@ -854,17 +860,20 @@ function _apply_history_effect!(state, effect::ShiftAppendEffect, completed_mcs:
         end
     end
     copyto!(selectdim(target, axis, depth), source)
-    return state
+    return !isempty(target)
 end
 
-function _apply_after_mcs_groups!(runtime, ::Tuple{}, boundary::UInt16)
-    return runtime
+function _apply_after_mcs_groups!(runtime, ::Tuple{}, boundary::UInt16, published)
+    return published
 end
-function _apply_after_mcs_groups!(runtime, groups::Tuple, boundary::UInt16)
+function _apply_after_mcs_groups!(runtime, groups::Tuple, boundary::UInt16, published)
     for descriptor in first(groups).instances
-        _apply_after_mcs_descriptor!(runtime, descriptor, boundary)
+        result = _apply_after_mcs_descriptor!(runtime, descriptor, boundary)
+        if result === true && descriptor.effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ShiftAppendEffect}
+            push!(published, descriptor.effect.target)
+        end
     end
-    return _apply_after_mcs_groups!(runtime, Base.tail(groups), boundary)
+    return _apply_after_mcs_groups!(runtime, Base.tail(groups), boundary, published)
 end
 
 function _execute_after_mcs_stage!(runtime, groups, boundary::UInt16)
@@ -879,11 +888,12 @@ function _execute_after_mcs_stage!(runtime, groups, boundary::UInt16)
         runtime.cell_generations,
         runtime.program.relationships,
     )
-    _apply_after_mcs_groups!(runtime, groups, boundary)
+    published = _apply_after_mcs_groups!(runtime, groups, boundary, StateHandle[])
     _publish_relationship_transactions!(
         runtime.relationships,
         runtime.stage_buffers.relationship_transactions,
     )
+    _refresh_published_site_sums!(runtime, published)
     return nothing
 end
 

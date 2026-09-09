@@ -94,6 +94,19 @@ iteration, and a history append records the value at its position in the
 boundary. Prepared relationship changes publish after those state operations.
 Sequential and checkerboard execution share this contract; checkerboard
 evaluation and publication use the existing LocalMath execution path.
+
+Source-dependent site sums refresh after the boundary's state and relationship
+publications, so simultaneous cell readers still observe the entry-state sum.
+An enabled assignment counts as a publication even when it writes the same
+value. A false condition does not; iterated assignments combine the actual
+publication results from every substep. History dependencies refer to the
+physical retained history block: changing its source alone does not refresh a
+lag sum until that history appends. An inactive boundary therefore preserves
+the cached floating-point value rather than silently replacing it with a
+freshly accumulated sum. Nonfinite derived results reject the unpublished MCS;
+checkpoint-based retry starts from the checkpoint saved before that failure,
+not by repairing the failed runtime.
+
 Lifecycle plan construction rejects state actions without the required participant:
 creation can initialize a new destination but cannot reset a source; removal,
 retirement, and transition can update their source but have no new destination.

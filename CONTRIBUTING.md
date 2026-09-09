@@ -238,6 +238,20 @@ measurements are engineering evidence rather than pass/fail timing gates. The
 fixture exercises empty lifecycle selection after resetting the workspace; it
 does not represent populated divide/retire throughput.
 
+Measure scheduled source publication with the same benchmark environment:
+
+```sh
+julia --project=benchmark --startup-file=no benchmark/scheduled_source_publication.jl 7
+```
+
+This runs both CPU engines with fixed ownership, one site-source increment,
+and two cell readers sharing one maintained sum. It times the public completed
+MCS, including rejected copy proposals and settlement, with independent value
+checks outside the measured region. Construction, first execution, harness
+warmups, and warm allocation/compilation samples are reported separately.
+Both engines share a process and compiled methods, so first-call observations
+are not isolated cold-build comparisons. There are no timing thresholds.
+
 The package suite includes Aqua and ExplicitImports checks. Real-Metal
 qualification lives in `test/metal` and uses Julia 1.12.6.
 

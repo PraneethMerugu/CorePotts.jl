@@ -52,6 +52,19 @@ effective pending parameters without publishing them. The owning regressions
 are in `test_program_step_inputs.jl`, alongside the existing transaction tests in
 `test_compiled_program_execution.jl`.
 
+Scheduled source maintenance follows `stage_runtime.jl` and
+`checkerboard_stage_compiler.jl` into the same source-sum reduction in
+`tracker_source_execution.jl`. The existing assignment scratch retains
+`StageEvaluation` values, including the emitted condition result. Prepared
+checkerboard publication laws reduce those actual results with Boolean OR,
+reset once per boundary, and refresh only dependent sums after all entry-state
+readers and state publications. History append laws supply their own actual
+cadence result; projected lag reads retain the physical history dependency.
+`test_scheduled_source_sums.jl` defends conditional and iterated writes, shared
+readers, inactive-history rounding, initialization, and failed-boundary
+checkpoint retry. `benchmark/scheduled_source_publication.jl` measures the
+public completed-MCS workflow, not an alternate private execution path.
+
 Checkerboard scientific state and parameter buffers belong to each execution
 bank, independently of the published host state. `execution/checkerboard_workspace.jl` constructs
 and adapts those buffers; the scientific copy schema in
