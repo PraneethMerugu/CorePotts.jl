@@ -499,11 +499,23 @@ function _validate_gpu_descriptor_plan(
 end
 
 
+struct _OwnedArrayAdaptation{T}
+    target::T
+end
+
+Adapt.adapt_storage(to::_OwnedArrayAdaptation, value) =
+    Adapt.adapt_storage(to.target, value)
+Adapt.adapt_storage(to::_OwnedArrayAdaptation, values::AbstractArray) =
+    copy(Adapt.adapt(to.target, values))
+
 """Adapt every checkerboard runtime bank after whole-program admission."""
 function _adapt_checkerboard_workspace(
         to, workspace::CheckerboardWorkspace;
         capability_report,
     )
+    # Preserve each storage owner's traversal while detaching array leaves,
+    # including controls and scratch that same-backend Adapt would reuse.
+    to = _OwnedArrayAdaptation(to)
     state = workspace.state
     primary_science = (
         ownership = Adapt.adapt(to, state.ownership),
@@ -558,7 +570,7 @@ function _adapt_checkerboard_workspace(
         return _allocate_checkerboard_workspace(
             adapted;
             capability_report,
-            color_sizes = workspace.color_sizes,
+            color_sizes = copy(workspace.color_sizes),
             color_order = copy(workspace.color_order),
             source_table = workspace.source_table,
             alternate_state = alternate,
@@ -616,7 +628,7 @@ function _adapt_checkerboard_workspace(
     return _allocate_checkerboard_workspace(
         adapted;
         capability_report,
-        color_sizes = workspace.color_sizes,
+        color_sizes = copy(workspace.color_sizes),
         color_order = copy(workspace.color_order),
         source_table = workspace.source_table,
         alternate_state = alternate,
