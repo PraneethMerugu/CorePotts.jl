@@ -170,7 +170,8 @@ end
 end
 
 function _site_sum_rebuild_declaration(descriptor::SiteSumTracker{T}, shape, owner_count, parameter_type;
-        submission_parameters = ()) where {T}
+        submission_parameters = (), gate = nothing
+    ) where {T}
     domain = LocalMath.Space(_CheckerboardStageSiteDomain, Tuple(shape))
     owners = LocalMath.Space(_CheckerboardStageCellDomain, owner_count)
     ownership = LocalMath.Field(domain, Int32)
@@ -195,13 +196,47 @@ function _site_sum_rebuild_declaration(descriptor::SiteSumTracker{T}, shape, own
                 seed = LocalMath.IdentitySeed(zero(T)), order = LocalMath.CanonicalLeftFold())),),
         LocalMath.Evaluator(_SiteSumRebuildEvaluator{!iszero(parameter_count[]), typeof(expression), typeof(handles), T}(
                 expression, handles, zero(T)), submission_parameters),
-        LocalMath.Control(),
+        LocalMath.Control(; gate),
         LocalMath.SourceOrigin(@__FILE__, @__LINE__; label = :site_sum_rebuild))
     validation = _checkerboard_tracker_validation(output, T, 1, 1)
     law = validation === nothing ? LocalMath.LocalLaw(stage) :
         LocalMath.sequence(LocalMath.LocalLaw(stage), validation.law)
     return (; law, ownership, handles, fields, output, parameter_field, parameter_count = parameter_count[],
         validation_bindings = validation === nothing ? () : validation.bindings)
+end
+
+# Read admission proves history projections; physical parent identity determines
+# invalidation. Updating a history's source does not yet update a retained lag.
+function _site_sum_reads_write(descriptor::SiteSumTracker, target, layout, stage_plan)
+    return any(expression_state_handles(descriptor.expression)) do handle
+        # The returned semantic source is deliberately not the physical parent
+        # of a lag read. This call admits the projection; its retained bank/slot
+        # identifies the history block whose publication changes that sample.
+        state_read_source(stage_plan, layout, handle)
+        handle.bank == target.bank && handle.slot == target.slot &&
+            handle_representation(handle) === handle_representation(target)
+    end
+end
+
+function _refresh_published_site_sums!(runtime, published)
+    isempty(published) && return nothing
+    program = runtime.program
+    source = tracker_source_view(
+        program, runtime.ownership;
+        parameters = runtime.parameters, descriptor_state = runtime.descriptor_state
+    )
+    for descriptor in tracker_instances(program.tracker_plan)
+        descriptor isa SiteSumTracker || continue
+        any(
+            target -> _site_sum_reads_write(
+                descriptor, target,
+                program.descriptor_plan.state_layout, program.stage_plan
+            ), published
+        ) || continue
+        values = _execute_site_sum_rebuild(descriptor, source, runtime.cell_kinds)
+        copyto!(tracker_values(program.tracker_plan, runtime.trackers, descriptor.quantity), values)
+    end
+    return nothing
 end
 
 function _execute_site_sum_rebuild(descriptor, source, cell_kinds;

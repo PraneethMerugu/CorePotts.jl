@@ -26,9 +26,13 @@ function site_sum_runtime(
     tracker_plan = C.TrackerExecutionPlan((C.OwnershipCountTracker(), tracker_descriptors(descriptor)...), "source-aware-site-sum")
     descriptor_plan = empty_descriptor_plan(; state_layout = layout, source_table = Any[:signal])
     if constraint !== nothing
+        constraint = constraint isa Function ? constraint(handle) : constraint
+        reads = Tuple(C.expression_state_handles(constraint))
+        footprint = isempty(reads) ? C.EmptyFootprint() :
+            C.FiniteSpatialFootprint(C.ProposalTargetFootprintAnchor(), ((0, 0),))
         proposal = C.ProposalDescriptor(
             C.StaticEvaluator(constraint),
-            C.ResourceAccess((), (), C.EmptyFootprint(), C.EmptyFootprint(), C.NoWriteAccess()),
+            C.ResourceAccess(reads, (), footprint, C.EmptyFootprint(), C.NoWriteAccess()),
             C.DescriptorSupport(true, true, true, true), (), (), C.ProposalConstraintRole(), 1
         )
         descriptor_plan = C.DescriptorExecutionPlan(
@@ -75,7 +79,23 @@ function site_sum_oracle(ownership, signal, gain, owner_count)
     ]
 end
 
-function site_sum_cell_read_runtime(engine; owner_expression = nothing)
+function scheduled_site_sum_assignment(
+        handle; condition = source -> CorePotts.LiteralExpression(true),
+        value = source -> CorePotts.OperationExpression(+, source, CorePotts.LiteralExpression(1.0f0)),
+        iterations = 1
+    )
+    C = CorePotts
+    source = C.OperationExpression(C.operation_callable(Val(:iteration_bound_state_value), v"1.0.0"), C.StateExpression(handle))
+    effect = iterations == 1 ? C.SiteAssignmentEffect(handle) : C.IteratedSiteAssignmentEffect(handle, iterations)
+    footprint = C.FiniteSpatialFootprint(C.IterationSiteFootprintAnchor(), ((0, 0),))
+    return C.CompiledStageDescriptor(
+        C.StaticEvaluator(condition(source)), C.StaticEvaluator(value(source)),
+        effect, C.AfterMCSStage(), C.ResourceAccess((handle,), (handle,), footprint, footprint, C.ExclusiveWriteAccess()),
+        C.DescriptorSupport(true, true, true, true), 1, 1
+    )
+end
+
+function site_sum_cell_read_runtime(engine; owner_expression = nothing, source_process = nothing)
     C = CorePotts
     names = (:signal, :first_total, :second_total, :site_count)
     schemas = map(eachindex(names)) do index
@@ -109,7 +129,9 @@ function site_sum_cell_read_runtime(engine; owner_expression = nothing)
         )
         C.StageDescriptorGroup([descriptor])
     end
-    stage_plan = C.StageExecutionPlan((), Tuple(groups), (), 0, 0, "shared-cell-source-sum-readers")
+    stage_groups = source_process === nothing ? Tuple(groups) :
+        (C.StageDescriptorGroup([source_process(handles[1])]), groups...)
+    stage_plan = C.StageExecutionPlan((), stage_groups, (), 0, Int(source_process !== nothing), "shared-cell-source-sum-readers")
     reject = C.ProposalDescriptor(
         C.StaticEvaluator(C.LiteralExpression(false)),
         C.ResourceAccess((), (), C.EmptyFootprint(), C.EmptyFootprint(), C.NoWriteAccess()),
