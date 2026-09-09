@@ -38,6 +38,7 @@ mutable struct ProgramStepTransaction{T <: AbstractFloat, R, W, C, L}
     counters_candidate::C
     lifecycle_receipt::L
     pending_parameters::Union{Nothing, Vector{T}}
+    descriptor_state_staged::Bool
     candidate_snapshot::Any
     state::ProgramStepTransactionState
 end
@@ -56,6 +57,7 @@ function ProgramStepTransaction(
         counters_candidate,
         receipt,
         nothing,
+        false,
         nothing,
         ProgramStepStaged,
     )
@@ -79,12 +81,14 @@ end
 
 """Return an independently owned snapshot of a staged program-step candidate."""
 function program_step_snapshot(transaction::ProgramStepTransaction)
-    _require_staged_program_step(transaction)
-    transaction.candidate_snapshot === nothing ||
-        return transaction.candidate_snapshot
+    prevalidate_program_step_transaction(transaction)
     runtime = transaction.runtime
+    candidate = transaction.candidate_snapshot === nothing ?
+        transaction.workspace : transaction.candidate_snapshot
+    parameters = transaction.pending_parameters === nothing ? runtime.parameters :
+        transaction.pending_parameters
     return _materialize_program_state_snapshot(
-        runtime, transaction.workspace, runtime.mcs + 1
+        runtime, candidate, runtime.mcs + 1; parameters,
     )
 end
 
@@ -155,6 +159,7 @@ function stage_program_descriptor_state!(
         )
         _validate_program_descriptor_state(runtime, candidate)
         copyto_auxiliary_state!(snapshot.descriptor_state, candidate)
+        transaction.descriptor_state_staged = true
         return transaction
     end
     _descriptor_state_banks_are_independent(
@@ -166,6 +171,7 @@ function stage_program_descriptor_state!(
     ))
     _validate_program_descriptor_state(runtime, candidate)
     copyto_auxiliary_state!(workspace.descriptor_state, candidate)
+    transaction.descriptor_state_staged = true
     return transaction
 end
 
@@ -562,6 +568,8 @@ function prevalidate_program_step_transaction(
     if pending !== nothing
         _validated_program_parameters(runtime.program, pending)
     end
+    inputs_staged = pending !== nothing || transaction.descriptor_state_staged
+    parameters = pending === nothing ? runtime.parameters : pending
     if _is_checkerboard_execution_workspace(transaction.workspace)
         workspace = _checkerboard_core(transaction.workspace)
         snapshot = transaction.candidate_snapshot
@@ -569,6 +577,22 @@ function prevalidate_program_step_transaction(
         _, destination, _ = _checkerboard_transaction_banks(
             workspace, runtime.mcs
         )
+        if inputs_staged
+            source = tracker_source_view(
+                runtime.program, destination.ownership;
+                parameters, descriptor_state = snapshot.descriptor_state
+            )
+            candidate = _input_tracker_candidate(
+                runtime.program.tracker_plan,
+                destination.trackers, source, destination.cell_kinds;
+                backend = KernelAbstractions.get_backend(destination.ownership),
+                copy_source = true
+            )
+            _require_tracker_copy_compatible(destination.trackers, candidate)
+            _require_tracker_copy_compatible(snapshot.trackers, candidate)
+            _copy_input_tracker_state!(destination.trackers, candidate, runtime.program.tracker_plan)
+            _copy_input_tracker_state!(snapshot.trackers, candidate, runtime.program.tracker_plan, Array)
+        end
         copyto_auxiliary_state!(
             destination.descriptor_state, snapshot.descriptor_state
         )
@@ -581,6 +605,19 @@ function prevalidate_program_step_transaction(
         _validate_program_descriptor_state(
             runtime, transaction.workspace.descriptor_state
         )
+        if inputs_staged
+            staged = transaction.workspace
+            source = tracker_source_view(
+                runtime.program, staged.ownership;
+                parameters, descriptor_state = staged.descriptor_state
+            )
+            candidate = _input_tracker_candidate(
+                runtime.program.tracker_plan,
+                staged.trackers, source, staged.cell_kinds
+            )
+            _require_tracker_copy_compatible(staged.trackers, candidate)
+            _copy_input_tracker_state!(staged.trackers, candidate, runtime.program.tracker_plan)
+        end
     end
     return transaction
 end
@@ -646,7 +683,8 @@ end
         constraint_rejections::UInt64, energy_rejections::UInt64,
         retired::UInt64,
     )
-    if @index(Global, Linear) == 1
+    index = @index(Global, Linear)
+    if index == 1
         @inbounds begin
             control.counters[_LIFECYCLE_CONTROL_ACTIVE_BANK] = bank
             control.counters[_LIFECYCLE_CONTROL_COMMITTED_MCS] = committed

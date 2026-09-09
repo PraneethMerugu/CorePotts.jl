@@ -856,7 +856,7 @@ end
         descriptors::Tuple{Any, Vararg{Any}},
         values::Tuple{Any, Vararg{Any}}
     )
-    key = tracker_quantity(first(descriptors))
+    key = _gathered_tracker_key(first(descriptors))
     key isa QualifiedTrackerKey && key.quantity === quantity &&
         key.source_handle == source_handle &&
         return (first(descriptors), first(values))
@@ -870,19 +870,22 @@ end
 ) =
     throw(ArgumentError("compiled gathered tracker key is unavailable"))
 
+@inline _gathered_tracker_key(descriptor::AbstractTrackerDescriptor) = tracker_quantity(descriptor)
+@inline _gathered_tracker_key(key::_ExecutableTrackerKey) = _executable_tracker_key(key)
+
 @inline function _gathered_bounded_tracker_samples(
         key,
         descriptors::Tuple{Any, Vararg{Any}},
         values::Tuple{Any, Vararg{Any}},
     )
-    isequal(tracker_quantity(first(descriptors)), key) && return first(values)
+    isequal(_gathered_tracker_key(first(descriptors)), key) && return first(values)
     return _gathered_bounded_tracker_samples(
         key, Base.tail(descriptors), Base.tail(values)
     )
 end
 @inline _gathered_bounded_tracker_samples(
     key, descriptors::Tuple{Any}, values::Tuple{Any},
-) = isequal(tracker_quantity(first(descriptors)), key) ? first(values) :
+) = isequal(_gathered_tracker_key(first(descriptors)), key) ? first(values) :
     _gathered_bounded_tracker_samples(key, (), ())
 @inline _gathered_bounded_tracker_samples(key, ::Tuple{}, ::Tuple{}) =
     throw(ArgumentError("compiled bounded tracker source is unavailable"))

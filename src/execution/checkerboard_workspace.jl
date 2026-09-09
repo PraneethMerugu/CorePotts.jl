@@ -12,6 +12,7 @@ function _checkerboard_state_banks(state::CheckerboardExecutionState)
             copy(state.relationships),
             copy_auxiliary_state(state.descriptor_state),
             NoLifecycleWorkspace(),
+            copy(state.parameters),
         )
         return state, alternate
     end
@@ -48,6 +49,7 @@ function _checkerboard_state_banks(state::CheckerboardExecutionState)
         secondary_science.relationships,
         secondary_science.descriptor_state,
         secondary_workspace,
+        copy(state.parameters),
     )
     return primary, secondary
 end
@@ -184,12 +186,17 @@ _checkerboard_domain_resources(program::CheckerboardKernelProgram) =
 _checkerboard_domain_resources(program) =
     program.descriptor_plan.domain_resources
 
-tracker_source_view(program::CheckerboardKernelProgram, ownership) =
+tracker_source_view(
+    program::CheckerboardKernelProgram, ownership;
+    parameters = (), descriptor_state = nothing
+) =
     TrackerSourceView(
         ownership,
         program.shape,
         program.periodic,
         program.domain_resources,
+    parameters,
+    descriptor_state,
     )
 
 _checkerboard_adapt(to, value) =
@@ -211,6 +218,13 @@ function _checkerboard_execution_state(
         to = nothing,
     )
     kernel_program = _checkerboard_kernel_program(program, to)
+    # Neither alternating execution bank may borrow the published host state.
+    ownership = copy(ownership)
+    cell_kinds = copy(cell_kinds)
+    cell_generations = copy(cell_generations)
+    trackers = copy_tracker_state(trackers)
+    relationships = copy(relationships)
+    descriptor_state = copy_auxiliary_state(descriptor_state)
     lifecycle_workspace = allocate_lifecycle_workspace(
         program.lifecycle_plan,
         program,
@@ -246,7 +260,7 @@ function _checkerboard_execution_state(
         _checkerboard_adapt(to, lifecycle_workspace),
         _checkerboard_adapt(to, lifecycle_control),
         _checkerboard_adapt(to, program_status),
-        _checkerboard_adapt(to, parameters),
+        _checkerboard_adapt(to, copy(parameters)),
         UInt64(seed),
         UInt32(replica),
         UInt32(repeat),
@@ -544,6 +558,7 @@ function _adapt_checkerboard_workspace(
             Adapt.adapt(to, alternate_source.relationships),
             Adapt.adapt(to, alternate_source.descriptor_state),
             NoLifecycleWorkspace(),
+            Adapt.adapt(to, alternate_source.parameters),
         )
         return _allocate_checkerboard_workspace(
             adapted;
@@ -601,6 +616,7 @@ function _adapt_checkerboard_workspace(
         secondary_science.relationships,
         secondary_science.descriptor_state,
         secondary_workspace,
+        Adapt.adapt(to, workspace.alternate_state.parameters),
     )
     return _allocate_checkerboard_workspace(
         adapted;

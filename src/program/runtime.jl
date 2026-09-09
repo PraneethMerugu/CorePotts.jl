@@ -197,21 +197,36 @@ function _materialize_program(
         1,
         length(initial_cell_generations),
     )
+    descriptor_state = if initial_descriptor_state === nothing
+        allocate_auxiliary_state(program.descriptor_plan.state_layout)
+    elseif initial_descriptor_state isa AuxiliaryState
+        copy_auxiliary_state(
+            program.descriptor_plan.state_layout,
+            initial_descriptor_state,
+        )
+    else
+        throw(ArgumentError(
+            "descriptor state must be a CorePotts AuxiliaryState"
+        ))
+    end
     trackers = tracker_checkpoint === nothing ? initialize_tracker_state(
-        program.tracker_plan, runtime_ownership, runtime_cell_kinds, program
+        program.tracker_plan, runtime_ownership, runtime_cell_kinds, program;
+        parameters = runtime_parameters, descriptor_state,
     ) : reconstruct_tracker_checkpoint(
         program.tracker_plan,
         tracker_checkpoint,
         runtime_ownership,
         runtime_cell_kinds,
-        program,
+        program;
+        parameters = runtime_parameters, descriptor_state,
     )
     validate_tracker_state!(
         program.tracker_plan,
         trackers,
         runtime_ownership,
         runtime_cell_kinds,
-        program,
+        program;
+        parameters = runtime_parameters, descriptor_state,
     )
     volumes = tracker_values(
         program.tracker_plan, trackers, Val(:cell_volume)
@@ -236,18 +251,6 @@ function _materialize_program(
         runtime_cell_generations,
         runtime_parameters,
     )
-    descriptor_state = if initial_descriptor_state === nothing
-        allocate_auxiliary_state(program.descriptor_plan.state_layout)
-    elseif initial_descriptor_state isa AuxiliaryState
-        copy_auxiliary_state(
-            program.descriptor_plan.state_layout,
-            initial_descriptor_state,
-        )
-    else
-        throw(ArgumentError(
-            "descriptor state must be a CorePotts AuxiliaryState"
-        ))
-    end
     stage_buffers = program.engine isa CheckerboardProgramEngine ? nothing :
         allocate_stage_runtime_buffers(
             program.stage_plan,
@@ -466,7 +469,8 @@ end
     runtime.last_lifecycle_receipt
 
 function _materialize_program_state_snapshot(
-        runtime::ProgramRuntime{T, N}, state, mcs::Integer
+        runtime::ProgramRuntime{T, N}, state, mcs::Integer;
+        parameters = runtime.parameters,
     ) where {T, N}
     length(state.relationships) == length(runtime.program.relationships) ||
         throw(ArgumentError(
@@ -485,7 +489,8 @@ function _materialize_program_state_snapshot(
         state.trackers,
         state.ownership,
         state.cell_kinds,
-        runtime.program,
+        runtime.program;
+        parameters, descriptor_state = state.descriptor_state,
     )
     relationships = copy(state.relationships)
     descriptor_state = copy_auxiliary_state(

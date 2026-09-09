@@ -27,6 +27,43 @@ lifecycle selection, rollback, and bank authorization. Lifecycle selection is
 therefore reported as a Core KernelAbstractions operation followed by a genuine
 LocalMath compacted-request publication, rather than as one LocalMath law.
 
+## Settled input publication
+
+The public `update_program_inputs!` entrypoint in
+`execution/program_settlement.jl` owns combined parameter and auxiliary-state
+publication. Auxiliary-state validation uses the storage owner; input-dependent
+tracker reconstruction uses `execution/tracker_plan_runtime.jl` and the
+LocalMath reduction in `execution/tracker_source_execution.jl`. Publication
+updates the host mirror and both execution banks only after scientific
+validation, without creating a separate downstream transaction authority.
+
+`program_snapshot` exposes the resulting settled state. Ordinary behavior is
+covered by `test_program_input_publication.jl`, its shared
+`fixtures/program_input_publication_support.jl`, and
+`test_source_aware_trackers.jl`; the device entrypoint is
+`metal/corepotts_input_publication.jl`. Device and continuation guarantees
+require the corresponding tests to pass for the selected execution profile.
+
+Coordinated native stepping remains owned by `ProgramStepTransaction` in
+`execution/sequential_program.jl`. Explicitly staged inputs use the same tracker
+reconstruction owner during prevalidation; ordinary no-input transactions retain
+incrementally accumulated values. Candidate snapshot validation receives the
+effective pending parameters without publishing them. The owning regressions
+are in `test_program_step_inputs.jl`, alongside the existing transaction tests in
+`test_compiled_program_execution.jl`.
+
+Checkerboard scientific state and parameter buffers belong to each execution
+bank, independently of the published host state. `execution/checkerboard_workspace.jl` constructs
+and adapts those buffers; the scientific copy schema in
+`execution/checkerboard_program_declaration.jl` carries their values when the
+active bank changes. Parameters do not have a separate copy executor. Staging
+can therefore change the candidate's coefficients without publishing host
+inputs; abort restores the execution position through the existing
+KernelAbstractions control kernel. Alternating commit/abort and no-input-step
+regressions live in `test_program_step_inputs.jl`, while
+`test_lifecycle_receipts.jl` exercises copy-schema validation, including empty
+storage. Adaptation additionally requires the device publication tests above.
+
 ## Qualified semantic randomness
 
 The active RNG contract is `Philox4x64x10V3`, version `3.0.0`. Its 128-bit

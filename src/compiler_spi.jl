@@ -145,6 +145,8 @@ import ..CorePotts:
     OwnerFootprint,
     OwnershipCountTracker,
     OwnershipTrackerSource,
+    SiteExpressionTrackerSource,
+    SiteSumTracker,
     OwnershipRelationTrackerSource,
     ParameterDomainConstraint,
     ParameterExpression,
@@ -296,7 +298,7 @@ import ..CorePotts:
     tracker_source_view,
     tracker_storage,
     tracker_support,
-    update_program_descriptor_state!,
+    update_program_inputs!,
     validate_parameters
 
 public AbstractCompiledStage, AbstractContextualOperation
@@ -342,6 +344,7 @@ public DeferredRequestWriteAccess, RelationshipStoreSchema
 public OwnershipCountTracker, CellSurfaceTracker, CellMomentsTracker
 public DenseOwnerScalarStorage, DenseOwnerMomentsStorage, DenseScalarTrackerGroup
 public OwnershipTrackerSource, OwnershipRelationTrackerSource
+public SiteExpressionTrackerSource, SiteSumTracker
 public AcceptedCommitTrackerVisibility
 public ClaimedOwnerExclusiveTrackerConcurrency, OldNewOwnerUpdateBound
 public PersistTrackerCheckpoint, ReconstructTrackerCheckpoint
@@ -419,6 +422,6 @@ public tracker_concurrency, tracker_inspection, tracker_instances
 public tracker_operation_value, tracker_ownership_delta, tracker_quantity
 public tracker_quantities, tracker_rebuild, tracker_recompute
 public tracker_source_view, tracker_storage, tracker_support
-public update_program_descriptor_state!, validate_parameters
+public update_program_inputs!, validate_parameters
 
 end

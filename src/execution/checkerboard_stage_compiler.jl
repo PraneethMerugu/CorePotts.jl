@@ -37,13 +37,15 @@ struct _GatheredModelStageContext{P, H, V, Z, G}
     rng::G
 end
 
-struct _GatheredCellStageContext{P, H, V, Z, G}
+struct _GatheredCellStageContext{P, H, V, Z, G, D, Q}
     parameters::P
     handles::H
     values::V
     zeros::Z
     cell::Int32
     rng::G
+    tracker_keys::D
+    tracker_values::Q
 end
 
 @inline function apply_resource_operation(
@@ -59,6 +61,21 @@ end
 @inline _proposal_parameters(context::_GatheredCellStageContext) = context.parameters
 @inline function state_value(context::_GatheredCellStageContext, ::_ExecutableStateReference{Index}, slot) where {Index}
     return _gathered_stage_read_value(getfield(context.values, Index), Int32(slot), getfield(context.zeros, Index))
+end
+
+@inline function _cell_stage_tracker_value(context::_GatheredCellStageContext, key)
+    return _gathered_bounded_tracker_samples(key, context.tracker_keys, context.tracker_values)
+end
+@inline apply_resource_operation(
+    ::ResourceOperation{:cell_volume}, arguments,
+    context::_GatheredCellStageContext
+) = _cell_stage_tracker_value(context, Val(:cell_volume))
+@inline function qualified_tracker_operation_call(
+        ::ResourceOperation{:cell_site_sum}, arguments::Tuple,
+        context::_GatheredCellStageContext, quantity::Val, source_handle::Int32
+    )
+    _, value = _gathered_tracker_slot(quantity, source_handle, context.tracker_keys, context.tracker_values)
+    return value
 end
 
 struct _GatheredRelationshipStageContext{P, H, V, Z, E, Q, U, M, T}
@@ -325,7 +342,7 @@ struct _CompiledModelStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z}
     boundary::UInt16
 end
 
-struct _CompiledCellStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z, E}
+struct _CompiledCellStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z, E, D}
     condition::C
     value::V
     handles::H
@@ -334,6 +351,7 @@ struct _CompiledCellStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z, E}
     effect::E
     trajectory_key::NTuple{2, UInt64}
     boundary::UInt16
+    tracker_keys::D
 end
 
 @generated function _stage_read_prefix(reads, ::H) where {H <: Tuple}
@@ -456,7 +474,9 @@ _CompiledStageCommit(::E) where {E <: AbstractCompiledEffect} = _CompiledStageCo
         _scheduled_rng_context(
             T, evaluator.trajectory_key, getfield(parameters, 1), evaluator.boundary,
             CellEntity, UInt32(item), generation, getfield(parameters, 2)
-        )
+        ),
+        evaluator.tracker_keys,
+        _checkerboard_terminal_state_values(reads, Val(length(evaluator.tracker_keys)), Val(count + 2 + Int(HasParameters)))
     )
     baseline = state_value(context, _stage_state_reference(first(evaluator.handles), Val(1)), item)
     eligible = _cell_stage_eligible(evaluator.effect, kind, generation)
@@ -925,6 +945,14 @@ function _stage_parameter_count(descriptor::CompiledStageDescriptor)
     return count[]
 end
 
+function _stage_tracker_descriptors(descriptor, tracker_plan, source)
+    keys = Any[]
+    _record_tracker_requirements!(keys, descriptor.condition.expression; include_owner_counts = true)
+    _record_tracker_requirements!(keys, descriptor.value.expression; include_owner_counts = true)
+    isempty(keys) && return ()
+    return _tracker_requirement_descriptors(keys, tracker_plan; source)
+end
+
 function _stage_submission_parameters(; minimum_mcs::Int64 = Int64(1))
     return (
         LocalMath.Parameter(:mcs, Int64; bounds = (minimum_mcs, typemax(Int64))),
@@ -999,6 +1027,12 @@ function _compile_stage_expression(
         if operation isa BoundCellStateValueOperation
             length(expression.arguments) == 1 && only(expression.arguments) isa StateExpression ||
                 throw(ArgumentError("cell-stage source $(repr(source)) requires exactly one declared state handle for bound-cell access"))
+        end
+        if operation isa QualifiedTrackerOperation
+            quantity = only(typeof(operation.quantity).parameters)
+            return _GatheredQualifiedTrackerCall{quantity, typeof(operation.operation), typeof(arguments)}(
+                operation.operation, arguments, operation.source_handle
+            )
         end
         return _ExecutableContextualCall(operation, arguments)
     end
@@ -1269,7 +1303,7 @@ end
 
 function _compile_identity_assignment_law(
         descriptor::CompiledStageDescriptor,
-        source_table, domain, gate, state_layout, stage_plan,
+        source_table, domain, gate, state_layout, stage_plan, tracker_plan, tracker_state,
         trajectory_key::NTuple{2, UInt64}, boundary::UInt16, ::Type{T}
     ) where {T}
     handles = _stage_descriptor_handles(descriptor)
@@ -1299,6 +1333,11 @@ function _compile_identity_assignment_law(
         status_field, domain, Int32(prod(size(domain)))
     )
     zeros = map(handle -> _state_value_zero(_stage_handle_element_type(handle, T)), handles)
+    tracker_descriptors = _stage_tracker_descriptors(descriptor, tracker_plan, source)
+    tracker_keys = map(tracker -> _compile_tracker_key(tracker_quantity(tracker)), tracker_descriptors)
+    tracker_fields = map(tracker_descriptors) do tracker
+        LocalMath.Field(domain, eltype(tracker_values(tracker_plan, tracker_state, tracker_quantity(tracker))))
+    end
     evaluator = if descriptor.effect isa ModelAssignmentEffect
         _CompiledModelStageEvaluator{
             !iszero(parameter_count), eltype(scratch), T, typeof(condition), typeof(value),
@@ -1309,9 +1348,9 @@ function _compile_identity_assignment_law(
             descriptor.source_handle, trajectory_key, boundary
         )
     else
-        _CompiledCellStageEvaluator{!iszero(parameter_count), eltype(scratch), T, typeof(condition), typeof(value), typeof(handles), typeof(zeros), typeof(descriptor.effect)}(
+        _CompiledCellStageEvaluator{!iszero(parameter_count), eltype(scratch), T, typeof(condition), typeof(value), typeof(handles), typeof(zeros), typeof(descriptor.effect), typeof(tracker_keys)}(
             condition, value, handles, zeros, descriptor.source_handle, descriptor.effect,
-            trajectory_key, boundary,
+            trajectory_key, boundary, tracker_keys,
         )
     end
     cell_kind_field = descriptor.effect isa CellAssignmentEffect ? LocalMath.Field(domain, Int16) : nothing
@@ -1326,7 +1365,10 @@ function _compile_identity_assignment_law(
                 required = true
             ),
         )
-    reads = merge(_stage_access_tuple(fields, identity, model_relation), identity_reads, parameter_reads)
+    tracker_reads = NamedTuple{ntuple(index -> Symbol(:tracker_, index), length(tracker_fields))}(
+        map(field -> LocalMath.Access(field, identity; required = true), tracker_fields)
+    )
+    reads = merge(_stage_access_tuple(fields, identity, model_relation), identity_reads, parameter_reads, tracker_reads)
     submission_parameters = _stage_submission_parameters()
     evaluate = LocalMath.Stage(
         domain, reads,
@@ -1390,7 +1432,7 @@ function _compile_identity_assignment_law(
     )
     return (;
         domain, evaluation, publication, fields, handles, parameter_field, scratch, status_field,
-        cell_kind_field, cell_generation_field, model_relation,
+        cell_kind_field, cell_generation_field, model_relation, tracker_descriptors, tracker_fields,
         initial_gate, refreshed_gate,
     )
 end
@@ -1955,6 +1997,9 @@ function _identity_stage_bindings(
     bindings = (
         _stage_model_read_bindings(declaration.model_relation, bank, size(declaration.domain))...,
         _stage_state_bindings(declaration.fields, declaration.handles, bank)...,
+        map(declaration.tracker_fields, declaration.tracker_descriptors) do field, tracker
+            field => tracker_values(bank.program.tracker_plan, bank.trackers, tracker_quantity(tracker))
+        end...,
         (
             declaration.cell_kind_field === nothing ? () : (
                     declaration.cell_kind_field => bank.cell_kinds,
@@ -2195,7 +2240,8 @@ function _compile_checkerboard_stage_boundary(
             merge(
                 _compile_identity_assignment_law(
                     descriptor, workspace.source_table, domain,
-                    external_gate, state_layout, stage_plan, trajectory_key, boundary, T
+                    external_gate, state_layout, stage_plan, state.program.tracker_plan, state.trackers,
+                    trajectory_key, boundary, T
                 ), (; external_gate)
             )
         elseif effect isa ShiftAppendEffect

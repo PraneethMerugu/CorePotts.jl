@@ -55,6 +55,7 @@ include("execution/checkerboard_science.jl")
 include("execution/checkerboard_transaction.jl")
 include("execution/checkerboard_law.jl")
 include("execution/checkerboard_stage_compiler.jl")
+include("execution/tracker_source_execution.jl")
 
 include("compiler_spi.jl")
 include("backend_spi.jl")
@@ -67,7 +68,7 @@ public ProgramInitialState, ProgramSnapshot, ProgramRuntime
 public ProgramFailureReport, program_failed, program_failure_report
 public ProgramSettlementReceipt
 public initialize_program, initialize_history!, program_snapshot, advance_mcs!
-public update_program_parameters!, program_execution_report
+public update_program_inputs!, program_execution_report
 public program_capability_report
 public ProgramCheckpoint, program_checkpoint
 public restore_program_checkpoint

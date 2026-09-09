@@ -788,17 +788,23 @@ function _checkerboard_transactional_tracker_group(laws_builder,
             terminal_gate, Symbol(:checkerboard_tracker_commit_,
                 tracker_index, :_, index))
         for (index, (source, scratch)) in enumerate(zip(source_fields, fields)))
-    laws = laws_builder(fields)
+    declaration = laws_builder(fields)
     validations = filter(!isnothing, ntuple(length(fields)) do index
         _checkerboard_tracker_validation(
             fields[index], eltype(source_fields[index]), tracker_index, index)
     end)
     return (; tracker_index = Int32(tracker_index), source_fields, fields,
-        paths, initialization_laws, laws,
+        paths, initialization_laws, laws = declaration.laws,
         validation_laws = map(validation -> validation.law, validations),
-        validation_bindings = Tuple(pair for validation in validations
-            for pair in validation.bindings),
+        bindings = (declaration.bindings..., Tuple(pair for validation in validations
+            for pair in validation.bindings)...),
         commit_laws)
+end
+
+function _checkerboard_scalar_tracker_declaration(accepted, field, descriptor,
+        owner_capacity, terminal_gate, label)
+    return (laws = _checkerboard_scalar_tracker_laws(accepted, field, (descriptor,), 1,
+        owner_capacity, terminal_gate, label), bindings = ())
 end
 
 function _checkerboard_scalar_tracker_laws(
@@ -913,22 +919,23 @@ function _checkerboard_tracker_group(
         end
         return _checkerboard_transactional_tracker_group(
             tracker_index, source_fields, paths, terminal_gate) do fields
-            Tuple(law for (column, field) in enumerate(fields)
-                for law in _checkerboard_scalar_tracker_laws(
-                    accepted, field, (descriptors[column],), 1,
-                    owner_capacity, terminal_gate,
-                    Symbol(:checkerboard_tracker_, tracker_index, :_, column)))
+            declarations = map(enumerate(fields)) do (column, field)
+                _checkerboard_scalar_tracker_declaration(accepted, field, descriptors[column],
+                    owner_capacity, terminal_gate, Symbol(:checkerboard_tracker_, tracker_index, :_, column))
+            end
+            (laws = Tuple(law for declaration in declarations for law in declaration.laws),
+                bindings = Tuple(binding for declaration in declarations for binding in declaration.bindings))
         end
     elseif descriptor isa OwnershipCountTracker
         return _checkerboard_transactional_tracker_group(
             tracker_index, (accepted.cell_volumes,), (nothing,),
             terminal_gate) do fields
-            _checkerboard_scalar_tracker_laws(
-                accepted, only(fields), (descriptor,), 1, owner_capacity,
+            _checkerboard_scalar_tracker_declaration(
+                accepted, only(fields), descriptor, owner_capacity,
                 terminal_gate, Symbol(:checkerboard_tracker_, tracker_index))
         end
     elseif tracker_storage(descriptor) isa DenseOwnerScalarStorage
-        if !(descriptor isa Union{OwnershipCountTracker,CellSurfaceTracker})
+        if !(descriptor isa Union{OwnershipCountTracker,CellSurfaceTracker,SiteSumTracker})
             target_type = CartesianIndex{length(accepted.shape)}
             hasmethod(tracker_ownership_delta, Tuple{
                 typeof(descriptor),target_type,Int32,Int32}) || throw(
@@ -942,8 +949,8 @@ function _checkerboard_tracker_group(
         return _checkerboard_transactional_tracker_group(
             tracker_index, (source,),
             (match === nothing ? :self : nothing,), terminal_gate) do fields
-            _checkerboard_scalar_tracker_laws(
-                accepted, only(fields), (descriptor,), 1, owner_capacity,
+            _checkerboard_scalar_tracker_declaration(
+                accepted, only(fields), descriptor, owner_capacity,
                 terminal_gate, Symbol(:checkerboard_tracker_, tracker_index))
         end
     elseif descriptor isa CellMomentsTracker
@@ -980,7 +987,7 @@ function _checkerboard_tracker_group(
                         eltype(value.second), 1, owner_capacity, terminal_gate,
                         Symbol(:checkerboard_tracker_, tracker_index,
                             :_second_, slot)))
-                (first_laws..., second_laws...)
+                (laws = (first_laws..., second_laws...), bindings = ())
             end
         end
         first_field = _checkerboard_tracker_field(value.first)
@@ -1004,7 +1011,7 @@ function _checkerboard_tracker_group(
                 accepted, fields[2], second_components, eltype(value.second),
                 dimensions * dimensions, owner_capacity, terminal_gate,
                 Symbol(:checkerboard_tracker_, tracker_index, :_second))
-            (first_laws..., second_laws...)
+            (laws = (first_laws..., second_laws...), bindings = ())
         end
     end
     throw(ArgumentError(

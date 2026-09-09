@@ -8,7 +8,7 @@
 end
 
 @inline _validate_tracker_updates(
-    ::Tuple{}, ::Tuple{}, source, target, old_owner, new_owner
+    ::Tuple{}, ::Tuple{}, source, target, old_owner, new_owner, delta_function
 ) = nothing
 
 @inline function _validate_owner_index(values, owner::Int32)
@@ -234,12 +234,13 @@ end
         target,
         old_owner,
         new_owner,
+        delta_function,
     ) where {G <: DenseScalarTrackerGroup}
     group = first(descriptors)
     group_values = first(values)
     for index in eachindex(group.descriptors)
         descriptor = @inbounds group.descriptors[index]
-        delta = _source_dependent_tracker_ownership_delta(
+        delta = delta_function(
             descriptor, source, target, old_owner, new_owner
         )
         _validate_group_tracker_delta(
@@ -253,6 +254,7 @@ end
         target,
         old_owner,
         new_owner,
+        delta_function,
     )
 end
 
@@ -263,13 +265,14 @@ end
         target,
         old_owner,
         new_owner,
+        delta_function,
     )
     descriptor = first(descriptors)
     contract = tracker_contract(descriptor)
     contract.update_bound isa OldNewOwnerUpdateBound || throw(
         ArgumentError("unsupported tracker update bound")
     )
-    delta = _source_dependent_tracker_ownership_delta(
+    delta = delta_function(
         descriptor, source, target, old_owner, new_owner
     )
     delta isa AbstractTrackerDelta || throw(ArgumentError(
@@ -285,11 +288,12 @@ end
         target,
         old_owner,
         new_owner,
+        delta_function,
     )
 end
 
 @inline _apply_tracker_updates!(
-    ::Tuple{}, ::Tuple{}, source, target, old_owner, new_owner
+    ::Tuple{}, ::Tuple{}, source, target, old_owner, new_owner, delta_function
 ) = nothing
 
 @inline function _apply_tracker_updates!(
@@ -299,12 +303,13 @@ end
         target,
         old_owner,
         new_owner,
+        delta_function,
     ) where {G <: DenseScalarTrackerGroup}
     group = first(descriptors)
     group_values = first(values)
     for index in eachindex(group.descriptors)
         descriptor = @inbounds group.descriptors[index]
-        delta = _source_dependent_tracker_ownership_delta(
+        delta = delta_function(
             descriptor, source, target, old_owner, new_owner
         )
         _apply_group_tracker_delta!(
@@ -313,7 +318,7 @@ end
     end
     return _apply_tracker_updates!(
         Base.tail(descriptors), Base.tail(values), source, target,
-        old_owner, new_owner,
+        old_owner, new_owner, delta_function,
     )
 end
 
@@ -325,9 +330,10 @@ end
         target,
         old_owner,
         new_owner,
+        delta_function,
     )
     descriptor = first(descriptors)
-    delta = _source_dependent_tracker_ownership_delta(
+    delta = delta_function(
         descriptor, source, target, old_owner, new_owner
     )
     _apply_validated_tracker_delta!(
@@ -335,7 +341,7 @@ end
     )
     return _apply_tracker_updates!(
         Base.tail(descriptors), Base.tail(values), source, target,
-        old_owner, new_owner,
+        old_owner, new_owner, delta_function,
     )
 end
 
@@ -346,14 +352,35 @@ end
         target,
         old_owner::Int32,
         new_owner::Int32,
+        delta_function = _source_dependent_tracker_ownership_delta,
     )
     _validate_tracker_updates(
-        plan.descriptors, state.values, source, target, old_owner, new_owner
+        plan.descriptors, state.values, source, target, old_owner, new_owner, delta_function
     )
     _apply_tracker_updates!(
-        plan.descriptors, state.values, source, target, old_owner, new_owner
+        plan.descriptors, state.values, source, target, old_owner, new_owner, delta_function
     )
     return nothing
+end
+
+@inline _finish_tracker_source_change!(::AbstractTrackerDescriptor, values, source, target, owner) = nothing
+@inline function _finish_tracker_source_change!(descriptor::SiteSumTracker, values, source, target, owner)
+    owner > 0 || return nothing
+    amount = _site_sum_contribution(descriptor, source, target)
+    _validate_owner_index(values, owner)
+    @inbounds values[Int(owner)] = _checked_tracker_add(values[Int(owner)], amount)
+    return nothing
+end
+@inline function _finish_tracker_source_change!(group::DenseScalarTrackerGroup, values, source, target, owner)
+    for index in eachindex(group.descriptors)
+        _finish_tracker_source_change!(group.descriptors[index], view(values, :, index), source, target, owner)
+    end
+    return nothing
+end
+@inline _finish_tracker_source_change!(::Tuple{}, ::Tuple{}, source, target, owner) = nothing
+@inline function _finish_tracker_source_change!(descriptors::Tuple, values::Tuple, source, target, owner)
+    _finish_tracker_source_change!(first(descriptors), first(values), source, target, owner)
+    return _finish_tracker_source_change!(Base.tail(descriptors), Base.tail(values), source, target, owner)
 end
 
 
@@ -677,17 +704,46 @@ end
 @inline program_tracker_value(runtime, quantity, index::Integer) =
     tracker_value(runtime.program.tracker_plan, runtime.trackers, quantity, index)
 
+_tracker_recomputation_matches(::AbstractTrackerDescriptor, actual, expected) = actual == expected
+function _site_sum_values_match(descriptor::SiteSumTracker, cached, recomputed)
+    isfinite(cached) && isfinite(recomputed) || return false
+    cached == recomputed && return true
+    difference = abs(cached - recomputed)
+    difference <= descriptor.absolute_tolerance && return true
+    iszero(descriptor.relative_tolerance) && return false
+    scale = max(abs(cached), abs(recomputed))
+    # Opposite finite extremes may overflow subtraction. Compare scaled values
+    # in that case instead of accepting a spurious Inf <= Inf tolerance test.
+    relative_difference = isfinite(difference) ? difference / scale :
+        abs(cached / scale - recomputed / scale)
+    return relative_difference <= descriptor.relative_tolerance
+end
+function _tracker_recomputation_matches(descriptor::SiteSumTracker, actual, expected)
+    axes(actual) == axes(expected) || return false
+    return all(zip(actual, expected)) do (cached, recomputed)
+        _site_sum_values_match(descriptor, cached, recomputed)
+    end
+end
+function _tracker_recomputation_matches(group::DenseScalarTrackerGroup, actual, expected)
+    axes(actual) == axes(expected) || return false
+    return all(eachindex(group.descriptors)) do index
+        _tracker_recomputation_matches(group.descriptors[index],
+            view(actual, :, index), view(expected, :, index))
+    end
+end
+
 function validate_tracker_state!(
         plan::AbstractTrackerPlan,
         state::TrackerState,
         ownership,
         cell_kinds,
-        program,
+        program;
+        parameters = (), descriptor_state = nothing,
     )
     length(plan.descriptors) == length(state.values) || throw(ArgumentError(
         "tracker plan and runtime state are misaligned"
     ))
-    source = tracker_source_view(program, ownership)
+    source = tracker_source_view(program, ownership; parameters, descriptor_state)
     for index in eachindex(state.values)
         descriptor = plan.descriptors[index]
         expected = tracker_recompute(descriptor, source, cell_kinds)
@@ -696,12 +752,64 @@ function validate_tracker_state!(
             expected,
             length(cell_kinds),
         )
-        state.values[index] == expected || throw(ArgumentError(
+        _tracker_recomputation_matches(descriptor, state.values[index], expected) || throw(ArgumentError(
             "tracker $(tracker_quantities(plan.descriptors[index])) " *
             "differs from its independent recomputation oracle"
         ))
     end
     return state
+end
+
+_tracker_uses_inputs(descriptor::AbstractTrackerDescriptor) =
+    tracker_contract(descriptor).source isa SiteExpressionTrackerSource
+_tracker_uses_inputs(group::DenseScalarTrackerGroup) = any(_tracker_uses_inputs, group.descriptors)
+
+_rebuild_input_tracker(descriptor::SiteSumTracker, source, cell_kinds; backend, copy_source) =
+    _execute_site_sum_rebuild(descriptor, source, cell_kinds; backend, copy_source)
+
+function _rebuild_input_tracker(group::DenseScalarTrackerGroup, source, cell_kinds; backend, copy_source)
+    columns = map(group.descriptors) do descriptor
+        _rebuild_input_tracker(descriptor, source, cell_kinds; backend, copy_source)
+    end
+    first_values = first(columns)
+    values = similar(first_values, eltype(first_values), length(cell_kinds), length(columns))
+    for (index, column) in enumerate(columns)
+        copyto!(view(values, :, index), column)
+    end
+    return values
+end
+
+function _input_tracker_candidate(plan, trackers, source, cell_kinds;
+        backend = KernelAbstractions.CPU(), copy_source = false)
+    return TrackerState(map(plan.descriptors, trackers.values) do descriptor, current
+        _tracker_uses_inputs(descriptor) || return current
+        replacement = _rebuild_input_tracker(descriptor, source, cell_kinds; backend, copy_source)
+        return _validate_tracker_state(tracker_storage(descriptor), replacement, length(cell_kinds))
+    end)
+end
+
+function _require_tracker_value_copy_compatible(destination::AbstractArray, source::AbstractArray)
+    eltype(destination) === eltype(source) && size(destination) == size(source) ||
+        throw(ArgumentError("tracker publication requires matching logical value types and shapes"))
+    return nothing
+end
+function _require_tracker_value_copy_compatible(destination::CellMomentsState, source::CellMomentsState)
+    _require_tracker_value_copy_compatible(destination.first, source.first)
+    _require_tracker_value_copy_compatible(destination.second, source.second)
+    return nothing
+end
+function _require_tracker_copy_compatible(destination::TrackerState, source::TrackerState)
+    length(destination.values) == length(source.values) || throw(ArgumentError("tracker publication requires matching quantity inventories"))
+    foreach(_require_tracker_value_copy_compatible, destination.values, source.values)
+    return nothing
+end
+
+function _copy_input_tracker_state!(destination, candidate, plan, to_host = identity)
+    for (descriptor, target, source) in zip(plan.descriptors, destination.values, candidate.values)
+        _tracker_uses_inputs(descriptor) || continue
+        target === source || copyto!(target, _tracker_state_to_host(to_host, source))
+    end
+    return destination
 end
 
 _tracker_instances(::Tuple{}) = ()

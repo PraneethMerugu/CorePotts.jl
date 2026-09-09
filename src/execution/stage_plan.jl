@@ -573,7 +573,24 @@ function _validate_state_write_handles(layout::StateLayout, handles, source)
     return nothing
 end
 
-function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources, kind_count, medium_kinds)
+_validate_stage_tracker_anchor(::AbstractStaticExpression, effect, source) = nothing
+function _validate_stage_tracker_anchor(expression::OperationExpression, effect, source)
+    operation = expression.operation
+    source_sum = operation isa ResourceOperation{:cell_site_sum} ||
+        (operation isa QualifiedTrackerOperation && operation.operation isa ResourceOperation{:cell_site_sum})
+    if source_sum || (effect isa CellAssignmentEffect && operation isa ResourceOperation{:cell_volume})
+        effect isa CellAssignmentEffect || throw(ArgumentError("source sum at $source requires a scheduled cell context"))
+        !source_sum || operation isa QualifiedTrackerOperation ||
+            throw(ArgumentError("source sum at $source requires a compiler-bound tracker key"))
+        length(expression.arguments) == 1 &&
+            only(expression.arguments) isa ContextExpression{ContextOperation{:energy_anchor_cell}} ||
+            throw(ArgumentError("cell tracker read at $source requires the current bound cell"))
+    end
+    foreach(argument -> _validate_stage_tracker_anchor(argument, effect, source), expression.arguments)
+    return nothing
+end
+
+function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources, kind_count, medium_kinds, tracker_plan)
     for group in (plan.accepted_copy..., plan.before_lifecycle..., plan.after_lifecycle...),
             descriptor in group.instances
         source = _descriptor_source(
@@ -584,6 +601,9 @@ function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources
         _validate_model_read_domain(descriptor.value.expression, layout, nothing, source, plan)
         _validate_state_write_handles(layout, descriptor.access.writes, source)
         effect = descriptor.effect
+        _validate_stage_tracker_anchor(descriptor.condition.expression, effect, source)
+        _validate_stage_tracker_anchor(descriptor.value.expression, effect, source)
+        effect isa CellAssignmentEffect && _stage_tracker_descriptors(descriptor, tracker_plan, source)
         effect isa ShiftAppendEffect && _history_contract(plan, layout, effect.target)
         if effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ModelAssignmentEffect, CellAssignmentEffect}
             index = findfirst(entry -> entry.handle == effect.target, layout.entries)

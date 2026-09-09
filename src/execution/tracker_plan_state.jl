@@ -1,3 +1,42 @@
+@inline function _site_sum_contribution(descriptor::SiteSumTracker{T}, source, site) where {T}
+    handles = expression_state_handles(descriptor.expression)
+    values = map(handle -> state_block(source.descriptor_state, handle).values[site], handles)
+    context = _site_contribution_context(source.parameters, handles, values)
+    value = convert(T, _compiled_evaluate_expression(descriptor.expression, context))
+    _state_value_isfinite(value) || throw(ArgumentError(
+        "site sum $(descriptor.quantity) produced a nonfinite contribution"
+    ))
+    return value
+end
+
+function tracker_rebuild(descriptor::SiteSumTracker{T}, source::TrackerSourceView, cell_kinds) where {T}
+    return _execute_site_sum_rebuild(descriptor, source, cell_kinds)
+end
+
+function tracker_recompute(descriptor::SiteSumTracker{T}, source::TrackerSourceView, cell_kinds) where {T}
+    # The independent owner-major traversal shares only expression semantics,
+    # not the incremental ownership update or its recipient routing.
+    return map(eachindex(cell_kinds)) do owner
+        total = zero(T)
+        for site in CartesianIndices(source.ownership)
+            source.ownership[site] == owner || continue
+            total = _checked_tracker_add(total, _site_sum_contribution(descriptor, source, site))
+        end
+        total
+    end
+end
+
+@inline _source_dependent_tracker_ownership_delta(descriptor::SiteSumTracker, source::TrackerSourceView,
+    target, old_owner::Int32, new_owner::Int32) = OwnerScalarDelta(_site_sum_contribution(descriptor, source, target))
+
+@inline _tracker_source_entry_delta(descriptor, source, target, old_owner, new_owner) =
+    _source_dependent_tracker_ownership_delta(descriptor, source, target, old_owner, new_owner)
+@inline function _tracker_source_entry_delta(descriptor::SiteSumTracker{T}, source,
+        target, old_owner, new_owner) where {T}
+    amount = old_owner > 0 ? _site_sum_contribution(descriptor, source, target) : zero(T)
+    return OldNewOwnerScalarDelta(-amount, zero(T))
+end
+
 function tracker_rebuild(
         ::OwnershipCountTracker,
         source::TrackerSourceView,
@@ -332,9 +371,10 @@ end
 end
 
 function initialize_tracker_state(
-        plan::AbstractTrackerPlan, ownership, cell_kinds, program
+        plan::AbstractTrackerPlan, ownership, cell_kinds, program;
+        parameters = (), descriptor_state = nothing,
     )
-    source = tracker_source_view(program, ownership)
+    source = tracker_source_view(program, ownership; parameters, descriptor_state)
     return TrackerState(map(
         descriptor -> begin
             value = tracker_rebuild(descriptor, source, cell_kinds)
@@ -422,12 +462,13 @@ function reconstruct_tracker_checkpoint(
         checkpoint::TrackerCheckpointState,
         ownership,
         cell_kinds,
-        program,
+        program;
+        parameters = (), descriptor_state = nothing,
     )
     length(plan.descriptors) == length(checkpoint.values) || throw(
         ArgumentError("tracker checkpoint and plan are misaligned")
     )
-    source = tracker_source_view(program, ownership)
+    source = tracker_source_view(program, ownership; parameters, descriptor_state)
     return TrackerState(map(
         (descriptor, value) -> _reconstruct_tracker_checkpoint(
             descriptor,

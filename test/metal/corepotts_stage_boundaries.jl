@@ -207,6 +207,8 @@ end
         external_gate,
         layout,
         stage_plan,
+        nothing,
+        nothing,
         (UInt64(0), UInt64(0)),
         CorePotts._SCHEDULED_BEFORE_LIFECYCLE,
         Float32,

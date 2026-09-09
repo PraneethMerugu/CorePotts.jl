@@ -202,8 +202,8 @@ end
     CorePotts.CompilerSPI.state_block(
         replacement_state, handle
     ).values .= 6.0
-    @test CorePotts.CompilerSPI.update_program_descriptor_state!(
-        runtime, replacement_state
+    @test CorePotts.update_program_inputs!(
+        runtime; descriptor_state = replacement_state
     ) === runtime
     published_before_failure = CorePotts.program_snapshot(runtime)
     invalid_replacement = CorePotts.CompilerSPI.copy_auxiliary_state(
@@ -212,8 +212,8 @@ end
     CorePotts.CompilerSPI.state_block(
         invalid_replacement, handle
     ).values[1] = NaN
-    @test_throws ArgumentError CorePotts.CompilerSPI.update_program_descriptor_state!(
-        runtime, invalid_replacement
+    @test_throws ArgumentError CorePotts.update_program_inputs!(
+        runtime; descriptor_state = invalid_replacement
     )
     @test CorePotts.CompilerSPI.state_block(
         CorePotts.BackendSPI.program_snapshot_descriptor_state(

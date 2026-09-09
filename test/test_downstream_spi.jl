@@ -114,6 +114,7 @@ end
     source = CorePotts.CompilerSPI.TrackerSourceView(
         reshape(Int32[1, 0, 2, 1], 2, 2), (2, 2), (false, false),
         CorePotts.CompilerSPI.HamiltonianDomainResources(0, 0),
+        (), nothing,
     )
     @test CorePotts.CompilerSPI.tracker_rebuild(
         tracker, source, Int16[2, 2]

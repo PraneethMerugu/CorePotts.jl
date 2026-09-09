@@ -5,7 +5,7 @@ narrow MTK-free runtime boundary:
 
 - `ProgramInitialState`, `ProgramRuntime`, `ProgramSnapshot`;
 - `initialize_program`, `initialize_history!`, `advance_mcs!`, `program_snapshot`;
-- parameter updates, execution/capability reports, and failure reports;
+- `update_program_inputs!`, execution/capability reports, and failure reports;
 - `ProgramCheckpoint`, `program_checkpoint`, and
   `restore_program_checkpoint`; and
 - generation-safe lifecycle identities, events, receipts, and receipt access.
@@ -214,6 +214,49 @@ named product by its declared ordinal without converting its value. Authoring
 compilers prove that the ordinal selects an existing field and retain the
 selected field's type, shape, and units. Field spellings and symbolic declaration
 types do not enter the execution callable or create separate operation schemas.
+
+## Publishing settled inputs
+
+`update_program_inputs!(runtime; parameters, descriptor_state)` publishes a
+single combined input transaction at a settled MCS boundary. Omit either
+keyword (or pass `nothing`) to preserve that input; omitting both is a no-op.
+A terminal-failed runtime cannot be repaired through this entrypoint.
+
+Pass parameters in the compiled program's parameter order and auxiliary state
+matching its declared layout. To edit state, start from an independently owned
+`program_snapshot(runtime)` and copy its `descriptor_state` with
+`copy_auxiliary_state`. Candidate buffers are copied, not retained: subsequent
+caller mutations do not change the published runtime.
+
+Both effective inputs and any input-dependent maintained quantities are
+validated together before publication. In particular, a mixed update is not
+evaluated with new parameters over the old state as an intermediate scientific
+boundary. Ordinary validation failure preserves the previous inputs and
+maintained values. This is not a rollback guarantee for arbitrary backend-copy
+failures, nor does it establish support for every maintained quantity or device.
+
+CorePotts owns publication to the host mirror and both checkerboard execution
+banks. Downstream adapters must use this public entrypoint rather than mutate
+those buffers separately. Inspect the result with `program_snapshot`; use the
+checkpoint API for persistence. Exact continuation additionally requires the
+checkpoint's execution identity to match the declared program and environment.
+
+Backend adapters coordinating an unpublished MCS with another solver use
+`BackendSPI.stage_program_parameters!` and
+`BackendSPI.stage_program_descriptor_state!` on the existing
+`ProgramStepTransaction`, not the settled-input entrypoint. Stage both inputs
+before requesting `BackendSPI.program_step_snapshot` or prevalidating the
+transaction: each of those operations validates the effective combined inputs
+and maintained values. The returned snapshot owns its storage independently.
+An ordinary transaction with no staged input replacement does not rebuild
+maintained sums merely to normalize their floating-point accumulation.
+
+Call `BackendSPI.prevalidate_program_step_transaction` for every participating
+token before coordinated publication. `BackendSPI.publish_program_step_transaction!`
+is only the publication half of that protocol, not a substitute for validation.
+`BackendSPI.abort_program_step!` discards the unpublished candidate and preserves
+the last published inputs. For a single token,
+`BackendSPI.commit_program_step!` performs prevalidation and publication together.
 
 ## Diagnosing a settled failure
 
