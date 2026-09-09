@@ -17,6 +17,7 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_rng_contract.jl",
     "test_rng_operations.jl",
     "test_rng_program_continuation.jl",
+    "test_scheduled_process_draws.jl",
     "test_scientific_reference.jl",
     "test_surface_tracker_contract.jl",
     "test_scientific_geometry_contract.jl",

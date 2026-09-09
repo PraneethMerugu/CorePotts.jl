@@ -183,6 +183,39 @@ end
     )
 end
 
+@inline function _with_draw(address::RNGAddress, draw::UInt32)
+    return _rng_address_unchecked(
+        address.stream, address.mcs, address.subround,
+        address.operation, address.entity_kind, address.entity, address.generation,
+        address.invocation, draw, address.retry
+    )
+end
+
+# Contexts own the semantic address; all execution domains share these
+# distribution transforms and their exact draw-coordinate assignment.
+@inline function _addressed_draw(
+        ::Type{T}, arguments, trajectory::NTuple{2, UInt64}, address::RNGAddress
+    ) where {T}
+    family = _rng_draw_family(arguments[1])
+    first_parameter = T(arguments[2])
+    second_parameter = T(arguments[3])
+    first_uniform = uniform_open01(T, Philox4x64x10V3(), trajectory, address)
+    family == 1 && return first_uniform < first_parameter
+    family == 2 && return muladd(
+        first_uniform, second_parameter - first_parameter, first_parameter
+    )
+    if family == 3
+        iszero(second_parameter) && return first_parameter
+        second_uniform = uniform_open01(
+            T, Philox4x64x10V3(), trajectory, _with_draw(address, UInt32(1))
+        )
+        normal = sqrt(-T(2) * log(first_uniform)) *
+            cos(T(2pi) * second_uniform)
+        return muladd(second_parameter, normal, first_parameter)
+    end
+    return T(NaN)
+end
+
 function bounded_uint(
         contract::Philox4x64x10V3, trajectory::NTuple{2, UInt64},
         address::RNGAddress, bound::UInt32

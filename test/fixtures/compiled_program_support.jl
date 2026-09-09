@@ -297,6 +297,7 @@ function CorePotts._emit_after_mcs_descriptor!(
         ::CorePotts.CompiledStageDescriptor{
             C, V, InjectedAfterMCSFailureEffect, CorePotts.AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {C, V}
     error("injected unexpected after-MCS failure")
 end
@@ -306,6 +307,7 @@ function CorePotts._apply_after_mcs_descriptor!(
         ::CorePotts.CompiledStageDescriptor{
             C, V, InjectedAfterMCSFailureEffect, CorePotts.AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {C, V}
     return runtime
 end

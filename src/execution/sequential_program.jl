@@ -358,11 +358,11 @@ end
 
 function _after_mcs!(runtime::ProgramRuntime{T, N}) where {T, N}
     _execute_after_mcs_stage!(
-        runtime, runtime.program.stage_plan.before_lifecycle
+        runtime, runtime.program.stage_plan.before_lifecycle, _SCHEDULED_BEFORE_LIFECYCLE
     )
     execute_lifecycle!(runtime)
     _execute_after_mcs_stage!(
-        runtime, runtime.program.stage_plan.after_lifecycle
+        runtime, runtime.program.stage_plan.after_lifecycle, _SCHEDULED_AFTER_LIFECYCLE
     )
     return nothing
 end

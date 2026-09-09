@@ -136,6 +136,18 @@ retain their state. The `:cell_bound_state_value` operation reads the current
 cell's declared state through `AbstractCellStageEvaluationContext`, without
 converting a cell identity into a site.
 
+Scheduled model, cell, and site evaluators can use the existing `:draw`
+operation with a compiler-declared `RNGOperationKey`. Bernoulli, uniform, and
+normal draws use the same distribution transforms as proposal and lifecycle
+evaluators. A draw is addressed by the trajectory, qualified operation,
+completed MCS, before/after-lifecycle boundary, logical entity, cell generation
+when relevant, and zero-based scientific substep. Ordinary synchronous updates
+use substep zero. Iterated updates receive fresh addressed noise each substep;
+held noise is an explicitly sampled state read by another process.
+There is no mutable RNG cursor to checkpoint or roll back. Uniform/Bernoulli
+cross-backend comparisons and normal floating-point comparisons are distinct
+guarantees; normal transforms do not imply bitwise cross-backend replay.
+
 Cell assignments admit same-cell reads from `:cell` state schemas and explicit
 `:model_bound_state_value` reads from singleton `:model` schemas. Model values
 are held at boundary entry, even when another model assignment updates them in

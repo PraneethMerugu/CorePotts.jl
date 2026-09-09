@@ -1,15 +1,29 @@
 # Generic accepted-copy and after-MCS staged-effect execution.
 
-struct _SiteStageEvaluationContext{R, I} <:
+struct _SiteStageEvaluationContext{R, I, G} <:
     AbstractSiteStageEvaluationContext
     runtime::R
     site::I
+    rng::G
 end
 
-struct _CellStageEvaluationContext{R} <: AbstractCellStageEvaluationContext
+struct _CellStageEvaluationContext{R, G} <: AbstractCellStageEvaluationContext
     runtime::R
     cell::Int32
+    rng::G
 end
+
+@inline function apply_resource_operation(
+        ::ResourceOperation{:draw}, arguments,
+        context::Union{_SiteStageEvaluationContext, _CellStageEvaluationContext}
+    )
+    return _scheduled_draw(arguments, context.rng)
+end
+
+@inline _compiled_resource_operation(
+    operation::ResourceOperation{:draw}, arguments::Tuple,
+    context::Union{_SiteStageEvaluationContext, _CellStageEvaluationContext},
+) = apply_resource_operation(operation, arguments, context)
 
 @inline stage_cell(context::_CellStageEvaluationContext) = context.cell
 @inline stage_site(::ModelStageSite, ::_CellStageEvaluationContext) = Int32(1)
@@ -22,7 +36,7 @@ end
     return kind == effect.domain_kind && !iszero(generation)
 end
 
-function _emit_after_mcs_descriptor!(runtime, descriptor::CompiledStageDescriptor{C, V, E, AfterMCSStage}) where {C, V, E <: CellAssignmentEffect}
+function _emit_after_mcs_descriptor!(runtime, descriptor::CompiledStageDescriptor{C, V, E, AfterMCSStage}, boundary::UInt16) where {C, V, E <: CellAssignmentEffect}
     scratch = runtime.stage_buffers.after_mcs_cell[Int(descriptor.buffer_slot)]
     T = _stage_value_type(descriptor.effect, eltype(runtime.parameters))
     for cell in eachindex(runtime.cell_kinds)
@@ -30,7 +44,10 @@ function _emit_after_mcs_descriptor!(runtime, descriptor::CompiledStageDescripto
             scratch[cell] = _state_value_zero(StageEvaluation{T})
             continue
         end
-        context = _CellStageEvaluationContext(runtime, Int32(cell))
+        context = _CellStageEvaluationContext(
+            runtime, Int32(cell),
+            _scheduled_rng_context(runtime, boundary, CellEntity, cell, runtime.cell_generations[cell], 0)
+        )
         condition = _compiled_evaluate_static(descriptor.condition, context)
         condition isa Bool || throw(ArgumentError("cell-stage condition must return Bool"))
         value = condition ? convert(T, _compiled_evaluate_static(descriptor.value, context)) : _state_value_zero(T)
@@ -40,7 +57,7 @@ function _emit_after_mcs_descriptor!(runtime, descriptor::CompiledStageDescripto
     return runtime
 end
 
-function _apply_after_mcs_descriptor!(runtime, descriptor::CompiledStageDescriptor{C, V, E, AfterMCSStage}) where {C, V, E <: CellAssignmentEffect}
+function _apply_after_mcs_descriptor!(runtime, descriptor::CompiledStageDescriptor{C, V, E, AfterMCSStage}, boundary::UInt16) where {C, V, E <: CellAssignmentEffect}
     scratch = runtime.stage_buffers.after_mcs_cell[Int(descriptor.buffer_slot)]
     values = state_block(runtime.descriptor_state, descriptor.effect.target).values
     for cell in eachindex(scratch)
@@ -560,6 +577,7 @@ function _emit_after_mcs_descriptor!(
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {C, V, E <: SiteAssignmentEffect}
     scratch = @inbounds runtime.stage_buffers.after_mcs[
         Int(descriptor.buffer_slot),
@@ -568,7 +586,10 @@ function _emit_after_mcs_descriptor!(
         descriptor_emit_requests!(
             scratch,
             descriptor,
-            _SiteStageEvaluationContext(runtime, site),
+            _SiteStageEvaluationContext(
+                runtime, site,
+                _scheduled_rng_context(runtime, boundary, SiteEntity, LinearIndices(runtime.ownership)[site], 0, 0)
+            ),
         )
     end
     return runtime
@@ -579,11 +600,14 @@ function _emit_after_mcs_descriptor!(
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {C, V, E <: ModelAssignmentEffect}
     descriptor_emit_requests!(
         runtime.stage_buffers.after_mcs_model[Int(descriptor.buffer_slot)],
         descriptor,
-        _SiteStageEvaluationContext(runtime, 1),
+        _SiteStageEvaluationContext(
+            runtime, 1, _scheduled_rng_context(runtime, boundary, ModelEntity, 0, 0, 0)
+        ),
     )
     return runtime
 end
@@ -593,6 +617,7 @@ end
         ::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {C, V, E <: ShiftAppendEffect}
     return runtime
 end
@@ -602,6 +627,7 @@ end
         ::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {C, V, E <: IteratedSiteAssignmentEffect}
     return runtime
 end
@@ -658,6 +684,7 @@ function _emit_after_mcs_descriptor!(
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {
         C, V, E <: Union{
             RelationshipRemoveEffect, RelationshipRetuneEffect,
@@ -671,14 +698,14 @@ function _emit_after_mcs_descriptor!(
     )
 end
 
-function _emit_after_mcs_groups!(runtime, ::Tuple{})
+function _emit_after_mcs_groups!(runtime, ::Tuple{}, boundary::UInt16)
     return runtime
 end
-function _emit_after_mcs_groups!(runtime, groups::Tuple)
+function _emit_after_mcs_groups!(runtime, groups::Tuple, boundary::UInt16)
     for descriptor in first(groups).instances
-        _emit_after_mcs_descriptor!(runtime, descriptor)
+        _emit_after_mcs_descriptor!(runtime, descriptor, boundary)
     end
-    return _emit_after_mcs_groups!(runtime, Base.tail(groups))
+    return _emit_after_mcs_groups!(runtime, Base.tail(groups), boundary)
 end
 
 function _apply_after_mcs_descriptor!(
@@ -686,6 +713,7 @@ function _apply_after_mcs_descriptor!(
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {C, V, E <: SiteAssignmentEffect}
     scratch = @inbounds runtime.stage_buffers.after_mcs[
         Int(descriptor.buffer_slot),
@@ -699,6 +727,7 @@ function _apply_after_mcs_descriptor!(
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {C, V, E <: ModelAssignmentEffect}
     evaluation = @inbounds runtime.stage_buffers.after_mcs_model[
         Int(descriptor.buffer_slot),
@@ -719,6 +748,7 @@ function _apply_after_mcs_descriptor!(
         ::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {
         C, V, E <: Union{
             RelationshipRemoveEffect, RelationshipRetuneEffect,
@@ -732,16 +762,20 @@ function _apply_after_mcs_descriptor!(
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {C, V, E <: IteratedSiteAssignmentEffect}
     scratch = @inbounds runtime.stage_buffers.after_mcs[
         Int(descriptor.buffer_slot),
     ]
-    for _ in 1:Int(descriptor.effect.iterations)
+    for invocation in 0:(Int(descriptor.effect.iterations) - 1)
         for site in CartesianIndices(runtime.ownership)
             descriptor_emit_requests!(
                 scratch,
                 descriptor,
-                _SiteStageEvaluationContext(runtime, site),
+                _SiteStageEvaluationContext(
+                    runtime, site,
+                    _scheduled_rng_context(runtime, boundary, SiteEntity, LinearIndices(runtime.ownership)[site], 0, invocation)
+                ),
             )
         end
         descriptor_apply_stage!(
@@ -756,6 +790,7 @@ function _apply_after_mcs_descriptor!(
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
+        boundary::UInt16,
     ) where {C, V, E <: ShiftAppendEffect}
     effect = descriptor.effect
     target = state_block(runtime.descriptor_state, effect.target).values
@@ -781,37 +816,34 @@ function _apply_after_mcs_descriptor!(
     return runtime
 end
 
-function _apply_after_mcs_groups!(runtime, ::Tuple{})
+function _apply_after_mcs_groups!(runtime, ::Tuple{}, boundary::UInt16)
     return runtime
 end
-function _apply_after_mcs_groups!(runtime, groups::Tuple)
+function _apply_after_mcs_groups!(runtime, groups::Tuple, boundary::UInt16)
     for descriptor in first(groups).instances
-        _apply_after_mcs_descriptor!(runtime, descriptor)
+        _apply_after_mcs_descriptor!(runtime, descriptor, boundary)
     end
-    return _apply_after_mcs_groups!(runtime, Base.tail(groups))
+    return _apply_after_mcs_groups!(runtime, Base.tail(groups), boundary)
 end
 
-function _execute_after_mcs_stage!(runtime, groups)
+function _execute_after_mcs_stage!(runtime, groups, boundary::UInt16)
     _reset_relationship_transactions!(
         runtime.stage_buffers.relationship_transactions,
         runtime.relationships,
     )
-    _emit_after_mcs_groups!(runtime, groups)
+    _emit_after_mcs_groups!(runtime, groups, boundary)
     _prepare_relationship_transactions!(
         runtime.stage_buffers.relationship_transactions,
         runtime.cell_kinds,
         runtime.cell_generations,
         runtime.program.relationships,
     )
-    _apply_after_mcs_groups!(runtime, groups)
+    _apply_after_mcs_groups!(runtime, groups, boundary)
     _publish_relationship_transactions!(
         runtime.relationships,
         runtime.stage_buffers.relationship_transactions,
     )
     return nothing
 end
-
-_execute_after_mcs_stage!(runtime) =
-    _execute_after_mcs_stage!(runtime, _after_mcs_groups(runtime.program.stage_plan))
 
 """Log acceptance ratio for the conventional descriptor-driven law."""

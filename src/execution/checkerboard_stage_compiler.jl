@@ -12,7 +12,7 @@ struct _CheckerboardHistorySourceDomain end
 struct _CheckerboardRelationshipRequestDomain end
 struct _CheckerboardRelationshipCellDomain end
 
-struct _GatheredSiteStageContext{P, H, V, Z, O, K, S, B, C, R}
+struct _GatheredSiteStageContext{P, H, V, Z, O, K, S, B, C, R, G}
     parameters::P
     handles::H
     values::V
@@ -26,21 +26,31 @@ struct _GatheredSiteStageContext{P, H, V, Z, O, K, S, B, C, R}
     contact_starts::R
     contact_counts::R
     item::Int32
+    rng::G
 end
 
-struct _GatheredModelStageContext{P, H, V, Z}
+struct _GatheredModelStageContext{P, H, V, Z, G}
     parameters::P
     handles::H
     values::V
     zeros::Z
+    rng::G
 end
 
-struct _GatheredCellStageContext{P, H, V, Z}
+struct _GatheredCellStageContext{P, H, V, Z, G}
     parameters::P
     handles::H
     values::V
     zeros::Z
     cell::Int32
+    rng::G
+end
+
+@inline function apply_resource_operation(
+        ::ResourceOperation{:draw}, arguments,
+        context::Union{_GatheredSiteStageContext, _GatheredModelStageContext, _GatheredCellStageContext}
+    )
+    return _scheduled_draw(arguments, context.rng)
 end
 
 @inline stage_cell(context::_GatheredCellStageContext) = context.cell
@@ -286,7 +296,7 @@ end
     return CartesianIndex(coordinates)
 end
 
-struct _CompiledSiteStageEvaluator{HasParameters, C, V, H, Z, S, B, O, R}
+struct _CompiledSiteStageEvaluator{HasParameters, T, C, V, H, Z, S, B, O, R}
     condition::C
     value::V
     handles::H
@@ -298,23 +308,29 @@ struct _CompiledSiteStageEvaluator{HasParameters, C, V, H, Z, S, B, O, R}
     contact_starts::R
     contact_counts::R
     source_handle::Int32
+    trajectory_key::NTuple{2, UInt64}
+    boundary::UInt16
 end
 
-struct _CompiledModelStageEvaluator{HasParameters, Evaluation, C, V, H, Z}
+struct _CompiledModelStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z}
     condition::C
     value::V
     handles::H
     zeros::Z
     source_handle::Int32
+    trajectory_key::NTuple{2, UInt64}
+    boundary::UInt16
 end
 
-struct _CompiledCellStageEvaluator{HasParameters, Evaluation, C, V, H, Z, E}
+struct _CompiledCellStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z, E}
     condition::C
     value::V
     handles::H
     zeros::Z
     source_handle::Int32
     effect::E
+    trajectory_key::NTuple{2, UInt64}
+    boundary::UInt16
 end
 
 @generated function _stage_read_prefix(reads, ::H) where {H <: Tuple}
@@ -356,9 +372,9 @@ end
     )
 end
 
-@inline function (evaluator::_CompiledSiteStageEvaluator{HasParameters})(
+@inline function (evaluator::_CompiledSiteStageEvaluator{HasParameters, T})(
         item::Int32, reads, parameters
-    ) where {HasParameters}
+    ) where {HasParameters, T}
     count = length(evaluator.handles)
     values = _stage_read_prefix(reads, evaluator.handles)
     ownership = getfield(reads, count + 1)
@@ -370,7 +386,11 @@ end
         evaluator.zeros, ownership, kinds, evaluator.shape,
         evaluator.periodic, evaluator.medium_kind,
         evaluator.contact_offsets, evaluator.contact_starts,
-        evaluator.contact_counts, item
+        evaluator.contact_counts, item,
+        _scheduled_rng_context(
+            T, evaluator.trajectory_key, getfield(parameters, 1), evaluator.boundary,
+            SiteEntity, UInt32(item), UInt64(0), getfield(parameters, 2)
+        )
     )
     condition = _execute_proposal_scalar(evaluator.condition, context)
     target = first(evaluator.handles)
@@ -387,16 +407,20 @@ end
     return (value = LocalMath.UniqueValue(result.value), status = result.status)
 end
 
-@inline function (evaluator::_CompiledModelStageEvaluator{HasParameters, Evaluation})(
+@inline function (evaluator::_CompiledModelStageEvaluator{HasParameters, Evaluation, T})(
         item::Int32, reads, parameters
-    ) where {HasParameters, Evaluation}
+    ) where {HasParameters, Evaluation, T}
     count = length(evaluator.handles)
     values = _stage_read_prefix(reads, evaluator.handles)
     science_parameters = HasParameters ?
         something(getfield(reads, count + 1)[1].value) : ()
     context = _gathered_model_stage_context(
         science_parameters, evaluator.handles, values,
-        evaluator.zeros
+        evaluator.zeros,
+        _scheduled_rng_context(
+            T, evaluator.trajectory_key, getfield(parameters, 1), evaluator.boundary,
+            ModelEntity, UInt32(0), UInt64(0), getfield(parameters, 2)
+        )
     )
     condition = _execute_proposal_scalar(evaluator.condition, context)
     target = first(evaluator.handles)
@@ -418,13 +442,19 @@ end
 struct _CompiledStageCommit{E <: AbstractCompiledEffect} end
 _CompiledStageCommit(::E) where {E <: AbstractCompiledEffect} = _CompiledStageCommit{E}()
 
-@inline function (evaluator::_CompiledCellStageEvaluator{HasParameters, Evaluation})(item::Int32, reads, parameters) where {HasParameters, Evaluation}
+@inline function (evaluator::_CompiledCellStageEvaluator{HasParameters, Evaluation, T})(item::Int32, reads, parameters) where {HasParameters, Evaluation, T}
     count = length(evaluator.handles)
     values = _stage_read_prefix(reads, evaluator.handles)
     kind = something(getfield(reads, count + 1)[1].value)
     generation = something(getfield(reads, count + 2)[1].value)
     science_parameters = HasParameters ? something(getfield(reads, count + 3)[1].value) : ()
-    context = _gathered_cell_stage_context(science_parameters, evaluator.handles, values, evaluator.zeros, item)
+    context = _gathered_cell_stage_context(
+        science_parameters, evaluator.handles, values, evaluator.zeros, item,
+        _scheduled_rng_context(
+            T, evaluator.trajectory_key, getfield(parameters, 1), evaluator.boundary,
+            CellEntity, UInt32(item), generation, getfield(parameters, 2)
+        )
+    )
     baseline = state_value(context, _stage_state_reference(first(evaluator.handles), Val(1)), item)
     eligible = _cell_stage_eligible(evaluator.effect, kind, generation)
     condition = eligible ? _execute_proposal_scalar(evaluator.condition, context) : false
@@ -892,6 +922,13 @@ function _stage_parameter_count(descriptor::CompiledStageDescriptor)
     return count[]
 end
 
+function _stage_submission_parameters(; minimum_mcs::Int64 = Int64(1))
+    return (
+        LocalMath.Parameter(:mcs, Int64; bounds = (minimum_mcs, typemax(Int64))),
+        LocalMath.Parameter(:invocation, UInt32; bounds = (UInt32(0), typemax(UInt32))),
+    )
+end
+
 _stage_selector_matches(
     ::BoundStateValueOperation{S}, selector::Type
 ) where {S} = S === selector || (S === ModelStageSite && selector === IterationStageSite)
@@ -924,7 +961,12 @@ function _compile_stage_expression(
         expression::OperationExpression, source, state_handles, selector, context_type
     )
     operation = expression.operation
-    arguments = map(expression.arguments) do argument
+    arguments = ntuple(length(expression.arguments)) do index
+        argument = getfield(expression.arguments, index)
+        if operation isa ResourceOperation{:draw} && index == 1 &&
+                argument isa LiteralExpression && argument.value isa Integer
+            return _ExecutableDrawFamily{Int(argument.value)}()
+        end
         _compile_stage_expression(argument, source, state_handles, selector, context_type)
     end
     if operation isa AbstractContextualOperation
@@ -1075,6 +1117,7 @@ function _compile_site_assignment_law(
         descriptor::CompiledStageDescriptor,
         source_table, shape, periodic, medium_kind,
         resources, ownership, cell_kinds, status, gate, state_layout,
+        trajectory_key::NTuple{2, UInt64}, boundary::UInt16,
         ::Type{T}
     ) where {T}
     handles = _stage_descriptor_handles(descriptor)
@@ -1121,7 +1164,7 @@ function _compile_site_assignment_law(
     contact_offsets, contact_starts, contact_counts =
         _stage_contact_tables(resources, dimensions)
     evaluator = _CompiledSiteStageEvaluator{
-        !iszero(parameter_count), typeof(condition), typeof(value),
+        !iszero(parameter_count), T, typeof(condition), typeof(value),
         typeof(handles), typeof(
             map(
                 handle -> _state_value_zero(
@@ -1136,7 +1179,7 @@ function _compile_site_assignment_law(
         map(handle -> _state_value_zero(_stage_handle_element_type(handle, T)), handles),
         Tuple(shape), Tuple(periodic), Int16(medium_kind),
         contact_offsets, contact_starts, contact_counts,
-        descriptor.source_handle
+        descriptor.source_handle, trajectory_key, boundary
     )
     core_reads = merge(
         _stage_access_tuple(fields, relation, model_relation), (
@@ -1156,9 +1199,7 @@ function _compile_site_assignment_law(
             ),
         )
     reads = merge(core_reads, parameter_reads)
-    submission_parameters = (
-        LocalMath.Parameter(:mcs, Int64; bounds = (Int64(1), typemax(Int64))),
-    )
+    submission_parameters = _stage_submission_parameters()
     evaluate = LocalMath.Stage(
         lattice, reads,
         (
@@ -1225,7 +1266,8 @@ end
 
 function _compile_identity_assignment_law(
         descriptor::CompiledStageDescriptor,
-        source_table, domain, gate, state_layout, ::Type{T}
+        source_table, domain, gate, state_layout,
+        trajectory_key::NTuple{2, UInt64}, boundary::UInt16, ::Type{T}
     ) where {T}
     handles = _stage_descriptor_handles(descriptor)
     target = first(handles)
@@ -1256,16 +1298,17 @@ function _compile_identity_assignment_law(
     zeros = map(handle -> _state_value_zero(_stage_handle_element_type(handle, T)), handles)
     evaluator = if descriptor.effect isa ModelAssignmentEffect
         _CompiledModelStageEvaluator{
-            !iszero(parameter_count), eltype(scratch), typeof(condition), typeof(value),
+            !iszero(parameter_count), eltype(scratch), T, typeof(condition), typeof(value),
             typeof(handles), typeof(zeros),
         }(
             condition, value, handles,
             zeros,
-            descriptor.source_handle
+            descriptor.source_handle, trajectory_key, boundary
         )
     else
-        _CompiledCellStageEvaluator{!iszero(parameter_count), eltype(scratch), typeof(condition), typeof(value), typeof(handles), typeof(zeros), typeof(descriptor.effect)}(
+        _CompiledCellStageEvaluator{!iszero(parameter_count), eltype(scratch), T, typeof(condition), typeof(value), typeof(handles), typeof(zeros), typeof(descriptor.effect)}(
             condition, value, handles, zeros, descriptor.source_handle, descriptor.effect,
+            trajectory_key, boundary,
         )
     end
     cell_kind_field = descriptor.effect isa CellAssignmentEffect ? LocalMath.Field(domain, Int16) : nothing
@@ -1281,9 +1324,7 @@ function _compile_identity_assignment_law(
             ),
         )
     reads = merge(_stage_access_tuple(fields, identity, model_relation), identity_reads, parameter_reads)
-    submission_parameters = (
-        LocalMath.Parameter(:mcs, Int64; bounds = (Int64(1), typemax(Int64))),
-    )
+    submission_parameters = _stage_submission_parameters()
     evaluate = LocalMath.Stage(
         domain, reads,
         (
@@ -1457,12 +1498,7 @@ function _compile_history_law(
             _CompiledHistoryShiftAppend{
                 length(target_shape), axis, target_shape[axis],
             }(),
-            (
-                LocalMath.Parameter(
-                    :mcs, Int64;
-                    bounds = (Int64(1), typemax(Int64))
-                ),
-            )
+            _stage_submission_parameters()
         ),
         LocalMath.Control(; gate = initial_gate),
         LocalMath.SourceOrigin(
@@ -1767,9 +1803,7 @@ function _compile_relationship_stage_group(
         status_fragments = _checkerboard_status_fragments(
             status_field, request_space, Int32(request_count)
         )
-        submission_parameters = (
-            LocalMath.Parameter(:mcs, Int64; bounds = (Int64(1), typemax(Int64))),
-        )
+        submission_parameters = _stage_submission_parameters()
         evaluate = LocalMath.Stage(
             request_space, reads,
             (
@@ -2071,7 +2105,8 @@ function _stage_boundary_entry(prepared, source_handle, effect; repetitions = 1)
 end
 
 function _compile_checkerboard_stage_boundary(
-        workspace, groups::Tuple, backend, queue_mcs_capacity::Integer, state_layout
+        workspace, groups::Tuple, backend, queue_mcs_capacity::Integer, state_layout,
+        boundary::UInt16
     )
     descriptors = _stage_descriptors(groups)
     isempty(descriptors) && return ()
@@ -2079,6 +2114,7 @@ function _compile_checkerboard_stage_boundary(
     banks = (state, workspace.alternate_state)
     gates = map(_checkerboard_open_gate, banks)
     T = eltype(state.parameters)
+    trajectory_key = _trajectory_key(state.seed, state.replica, state.repeat)
     shape = Tuple(state.program.shape)
     periodic = Tuple(state.program.periodic)
     resources = state.program.domain_resources
@@ -2139,7 +2175,7 @@ function _compile_checkerboard_stage_boundary(
                     descriptor, workspace.source_table, shape, periodic,
                     state.program.medium_kind, resources, state.ownership,
                     state.cell_kinds, state.program_status, external_gate,
-                    state_layout, T
+                    state_layout, trajectory_key, boundary, T
                 ), (; external_gate)
             )
         elseif effect isa Union{ModelAssignmentEffect, CellAssignmentEffect}
@@ -2149,7 +2185,7 @@ function _compile_checkerboard_stage_boundary(
             merge(
                 _compile_identity_assignment_law(
                     descriptor, workspace.source_table, domain,
-                    external_gate, state_layout, T
+                    external_gate, state_layout, trajectory_key, boundary, T
                 ), (; external_gate)
             )
         elseif effect isa ShiftAppendEffect
@@ -2229,10 +2265,12 @@ function _prepare_checkerboard_stage_boundaries(
         queue_mcs_capacity::Integer, state_layout
     )
     before = _compile_checkerboard_stage_boundary(
-        workspace, stage_plan.before_lifecycle, backend, queue_mcs_capacity, state_layout
+        workspace, stage_plan.before_lifecycle, backend, queue_mcs_capacity, state_layout,
+        _SCHEDULED_BEFORE_LIFECYCLE
     )
     after = _compile_checkerboard_stage_boundary(
-        workspace, stage_plan.after_lifecycle, backend, queue_mcs_capacity, state_layout
+        workspace, stage_plan.after_lifecycle, backend, queue_mcs_capacity, state_layout,
+        _SCHEDULED_AFTER_LIFECYCLE
     )
     return (; before, after)
 end

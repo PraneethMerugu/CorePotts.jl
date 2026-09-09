@@ -762,9 +762,6 @@ end
         ::ResourceOperation{:draw}, arguments, context::_LifecycleContext
     )
     T = eltype(context.runtime.parameters)
-    family = _rng_draw_family(arguments[1])
-    first_parameter = T(arguments[2])
-    second_parameter = T(arguments[3])
     operation = arguments[4]
     stream = context isa _LifecycleTriggerContext ? LifecycleTriggerStream :
         context isa _LifecyclePlacementContext ? LifecyclePlacementStream :
@@ -777,10 +774,8 @@ end
     address_anchor = destination_address ? context.destination : context.anchor
     address_generation = destination_address ?
         context.destination_generation : context.generation
-    first_uniform = _lifecycle_uniform(
-        T,
-        context.runtime,
-        stream,
+    address = _lifecycle_address(
+        stream, context.runtime,
         operation,
         address_anchor,
         address_generation,
@@ -788,28 +783,11 @@ end
         destination = destination_address,
         draw = 0,
     )
-    family == 1 && return first_uniform < first_parameter
-    family == 2 && return muladd(
-        first_uniform, second_parameter - first_parameter, first_parameter
+    return _addressed_draw(
+        T, arguments,
+        _trajectory_key(context.runtime.seed, context.runtime.replica, context.runtime.repeat),
+        address
     )
-    if family == 3
-        iszero(second_parameter) && return first_parameter
-        second_uniform = _lifecycle_uniform(
-            T,
-            context.runtime,
-            stream,
-            operation,
-            address_anchor,
-            address_generation,
-            context.occurrence;
-            destination = destination_address,
-            draw = 1,
-        )
-        normal = sqrt(-T(2) * log(first_uniform)) *
-                 cos(T(2pi) * second_uniform)
-        return muladd(second_parameter, normal, first_parameter)
-    end
-    return T(NaN)
 end
 
 @inline function _compiled_resource_operation(

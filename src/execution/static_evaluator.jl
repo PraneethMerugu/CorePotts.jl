@@ -452,6 +452,8 @@ for (identity, contexts) in (
             AbstractLifecyclePlacementEvaluationContext,
         ),
         :draw => (
+            AbstractSiteStageEvaluationContext,
+            AbstractCellStageEvaluationContext,
             AbstractLifecycleTriggerEvaluationContext,
             AbstractLifecyclePlacementEvaluationContext,
             AbstractLifecyclePartitionEvaluationContext,

@@ -255,6 +255,18 @@ of an address across substeps. Cadence uses absolute MCS, not invocation counts
 compressed across skipped ticks. Supporting these address meanings does not by
 itself admit a new execution scope or distribution.
 
+For scheduled site, cell, and model assignments, the scientific boundary is
+encoded in `subround`: zero before lifecycle and one after lifecycle. These
+names refer to the existing `StageExecutionPlan` boundaries, not submission
+order. Synchronous assignments use invocation zero; an iterated assignment uses
+its declared zero-based substep. Site addresses use the canonical logical
+linear site index and generation zero. Model addresses use `ModelEntity`,
+identity zero, and generation zero. Cell addresses use `CellEntity`, the visible
+slot, and its boundary-entry generation. A failed transaction advances none of
+these coordinates; retrying the same logical boundary reuses its addressed
+samples. The trajectory's `repeat` coordinate remains an independent explicit
+run identity, not an automatic counter of transaction failures.
+
 ## Reproducibility Vocabulary
 
 Documentation and APIs MUST qualify reproducibility claims using the following vocabulary.

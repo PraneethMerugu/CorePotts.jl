@@ -77,6 +77,17 @@ Resolve any affirmative answer as part of the same change.
 
 ## Scheduled publication ownership
 
+Scheduled randomness follows the existing `:draw` operation into
+`execution/program_rng.jl`'s immutable invocation context and then
+`rng/semantic.jl`'s shared addressed distribution transform. Proposal and
+lifecycle consumers use that same transform; each execution context supplies
+its own scientific address. `stage_runtime.jl` selects host identity and
+generation, while `checkerboard_stage_compiler.jl` builds concrete gathered
+contexts from the existing kind/generation reads. Its shared submission schema
+and `checkerboard_queue.jl` carry the actual MCS and zero-based substep, never a
+launch counter. The owning coordinate and numerical witnesses are
+`test_scheduled_process_draws.jl` and `fixtures/scheduled_draw_support.jl`.
+
 `src/execution/static_evaluator.jl` owns the versioned operation-callable catalog,
 including immutable fixed-vector construction, indexing, and named-product field
 projection by declared ordinal. Authoring compilers

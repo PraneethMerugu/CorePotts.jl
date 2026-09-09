@@ -161,7 +161,8 @@ function _metal_model_assignment_descriptor()
         :qualified,
         true,
     )
-    handle = only(CorePotts.StateLayout([schema]).entries).handle
+    layout = CorePotts.StateLayout([schema])
+    handle = only(layout.entries).handle
     read_model = CorePotts.OperationExpression(
         CorePotts.operation_callable(
             Val(:model_bound_state_value), v"1.0.0"
@@ -189,13 +190,13 @@ function _metal_model_assignment_descriptor()
         1,
         1,
     )
-    return descriptor
+    return descriptor, layout
 end
 
 @testset "CorePotts model-stage compiler executes through LocalMath on Metal" begin
     Metal.allowscalar(false)
     backend = Metal.MetalBackend()
-    descriptor = _metal_model_assignment_descriptor()
+    descriptor, layout = _metal_model_assignment_descriptor()
     gate_space = LocalMath.Space(CorePotts._CheckerboardStageGateDomain, 1)
     external_gate = LocalMath.Field(gate_space, Bool)
     declaration = CorePotts._compile_identity_assignment_law(
@@ -203,6 +204,9 @@ end
         (:metal_model_assignment,),
         LocalMath.Space(CorePotts._CheckerboardStageModelDomain, 1),
         external_gate,
+        layout,
+        (UInt64(0), UInt64(0)),
+        CorePotts._SCHEDULED_BEFORE_LIFECYCLE,
         Float32,
     )
     model_storage = Metal.MtlArray(Float32[2])
@@ -219,7 +223,7 @@ end
         external_gate => Metal.MtlArray(Bool[true]);
         backend,
     )
-    wait(LocalMath.execute!(prepared; parameters = (mcs = Int64(1),)))
+    wait(LocalMath.execute!(prepared; parameters = (mcs = Int64(1), invocation = UInt32(0))))
     @test Array(model_storage) == Float32[3]
     @test Array(status_storage)[1].code === CorePotts.ProgramStatusSuccess
 end

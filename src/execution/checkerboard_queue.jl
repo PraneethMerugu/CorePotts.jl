@@ -105,10 +105,10 @@ function _execute_compiled_stage_boundary!(
         "checkerboard stage boundary requires an initialized mechanics tail"))
     for entry in entries
         preparation = entry.prepared[bank]
-        for _ in 1:entry.repetitions
+        for invocation in 0:(entry.repetitions - 1)
             try
                 receipt = LocalMath.execute!(preparation;
-                    parameters = (mcs = Int64(state.mcs + 1),),
+                    parameters = (mcs = Int64(state.mcs + 1), invocation = UInt32(invocation)),
                     dependencies = (tail,),
                 )
                 _enqueue_localmath_failure_bridge!(

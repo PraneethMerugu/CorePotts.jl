@@ -408,35 +408,12 @@ end
         context::_GatheredProposalContext
     )
     T = typeof(context.scalar_zero)
-    family = _rng_draw_family(first(arguments))
-    first_parameter = T(arguments[2])
-    second_parameter = T(arguments[3])
     operation = arguments[4]
-    first_address = _program_address(
+    address = _program_address(
         ExplicitProposalDrawStream, context.mcs, operation,
         context.semantic; subround = context.color, draw = 0
     )
-    first_uniform = uniform_open01(
-        T, Philox4x64x10V3(), context.trajectory_key, first_address
-    )
-    family == 1 && return first_uniform < first_parameter
-    family == 2 && return muladd(
-        first_uniform, second_parameter - first_parameter, first_parameter
-    )
-    if family == 3
-        iszero(second_parameter) && return first_parameter
-        second_address = _program_address(
-            ExplicitProposalDrawStream, context.mcs, operation,
-            context.semantic; subround = context.color, draw = 1
-        )
-        second_uniform = uniform_open01(
-            T, Philox4x64x10V3(), context.trajectory_key, second_address
-        )
-        normal = sqrt(-T(2) * log(first_uniform)) *
-            cos(T(2pi) * second_uniform)
-        return muladd(second_parameter, normal, first_parameter)
-    end
-    return T(NaN)
+    return _addressed_draw(T, arguments, context.trajectory_key, address)
 end
 
 @inline function apply_resource_operation(

@@ -1,6 +1,6 @@
 include("lifecycle_descriptor_support.jl")
 
-function cell_stage_lifecycle_runtime(engine; birth_action = CorePotts.InitializeLifecycleState, second_effect = CorePotts.CreateCellLifecycleEffect)
+function cell_stage_lifecycle_runtime(engine; birth_action = CorePotts.InitializeLifecycleState, second_effect = CorePotts.CreateCellLifecycleEffect, descriptor_factory = cell_stage_descriptor)
     schema = CorePotts.StateBlockSchema(
         CorePotts.QualifiedResourceIdentity((), :cell_lifecycle_signal), v"1.0.0", :cell,
         Float32, (6,), 1, :structure_of_arrays, :provided_or_zero, :shape_and_finite,
@@ -19,8 +19,8 @@ function cell_stage_lifecycle_runtime(engine; birth_action = CorePotts.Initializ
         CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]), (), Any[:remove_cell, :create_cell, :before_cell, :after_cell],
         1, "cell-lifecycle-descriptors", CorePotts.HamiltonianDomainResources(0, 0),
     )
-    before = cell_stage_descriptor(handle, handle, 1; increment = 1.0f0, source_handle = 3)
-    after = cell_stage_descriptor(handle, handle, 2; increment = 1.0f0, source_handle = 4)
+    before = descriptor_factory(handle, handle, 1; increment = 1.0f0, source_handle = 3)
+    after = descriptor_factory(handle, handle, 2; increment = 1.0f0, source_handle = 4)
     stages = CorePotts.StageExecutionPlan((), (CorePotts.StageDescriptorGroup([before]),), (CorePotts.StageDescriptorGroup([after]),), 0, 0, "cell-lifecycle-boundaries")
     lifecycle = cell_stage_lifecycle_plan(handle; action = birth_action, effect = second_effect)
     offsets = Int8[1 -1 0 0; 0 0 1 -1]

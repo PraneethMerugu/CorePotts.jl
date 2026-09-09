@@ -4,6 +4,52 @@
 @inline _trajectory_key(seed::UInt64, replica::UInt32, repeat::UInt32) =
     (seed, UInt64(replica) | (UInt64(repeat) << 32))
 
+const _SCHEDULED_BEFORE_LIFECYCLE = UInt16(0)
+const _SCHEDULED_AFTER_LIFECYCLE = UInt16(1)
+
+"""Immutable scientific invocation facts shared by scheduled evaluator contexts."""
+struct _ScheduledRNGContext{T}
+    trajectory_key::NTuple{2, UInt64}
+    mcs::Int64
+    boundary::UInt16
+    entity_kind::RNGEntityKind
+    entity::UInt32
+    generation::UInt64
+    invocation::UInt32
+end
+
+@inline function _scheduled_rng_context(
+        ::Type{T}, trajectory_key, mcs, boundary, entity_kind, entity,
+        generation, invocation
+    ) where {T}
+    return _ScheduledRNGContext{T}(
+        trajectory_key, Int64(mcs), boundary, entity_kind, UInt32(entity),
+        UInt64(generation), UInt32(invocation)
+    )
+end
+
+@inline function _scheduled_rng_context(
+        runtime, boundary::UInt16, entity_kind::RNGEntityKind,
+        entity::Integer, generation::Integer, invocation::Integer
+    )
+    return _scheduled_rng_context(
+        eltype(runtime.parameters),
+        _trajectory_key(runtime.seed, runtime.replica, runtime.repeat),
+        Int64(runtime.mcs + 1), boundary, entity_kind, UInt32(entity),
+        UInt64(generation), UInt32(invocation)
+    )
+end
+
+@inline function _scheduled_draw(arguments, context::_ScheduledRNGContext{T}) where {T}
+    address = RNGAddress(
+        stream = ScheduledProcessDrawStream, operation = arguments[4],
+        mcs = context.mcs, subround = context.boundary,
+        entity_kind = context.entity_kind, entity = context.entity,
+        generation = context.generation, invocation = context.invocation,
+    )
+    return _addressed_draw(T, arguments, context.trajectory_key, address)
+end
+
 @inline function _lifecycle_address(
         stream::RNGStream, runtime,
         operation::RNGOperationKey, anchor::Integer, generation::Integer,
