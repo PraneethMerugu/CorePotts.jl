@@ -220,18 +220,24 @@ julia --project=docs -e 'using Pkg; Pkg.instantiate()'
 julia --project=docs docs/make.jl
 ```
 
-The manual executes bounded serial Wortel and Merks integration programs. The
-separate Makie package and backend suites exercise rendering; the published-
-model documentation does not claim to render figures or reproduce the papers.
+The manual documents CorePotts scientific execution and extension contracts.
+Complete biological models belong to PottsModels; visualization belongs to
+MakiePotts. Package and backend suites defend CorePotts behavior independently.
 
 ## Continuous integration
 
-Pull requests target the four package suites, independently runnable
-integration families, applicable platform installation smokes, and the active
-documentation build. Real-GPU hardware tests are manual commands when suitable
-hardware is available; the hosted workflow does not currently provide Metal
-hardware. Benchmarks remain diagnostic and are run when their measured path
-changes.
+Pull requests run the full owning package suite, macOS API smoke and strict
+documentation build. The hosted `macos-15` Metal job runs unless the whole PR
+diff consists only of explicitly listed non-executable prose/metadata paths.
+Source, tests, executable docs, examples, dependency/workflow changes and unknown
+paths retain device checks. Main and manual runs also run Metal and the full
+macOS package suite. The Metal runner rejects unavailable hardware.
+
+CI uses an explicit LocalMath revision by default; manual dispatch can select
+a candidate revision. Every test job logs its actual checkout tuple. Ordinary
+compatibility ranges remain broad and these runs do not claim an exact-replay
+dependency profile. Benchmarks remain diagnostic and run when their measured
+path changes.
 
 Run real-Metal semantic tests independently from performance measurements:
 
@@ -239,11 +245,10 @@ Run real-Metal semantic tests independently from performance measurements:
 julia --project=test/metal --startup-file=no test/metal/runtests.jl
 ```
 
-The runner includes the active semantic, parity, lifecycle, native-component,
-and extension-load witnesses; performance campaigns remain separate. Use the
-repository Julia version for these commands. The root `.julia-version` and
-Metal manifest select Julia 1.12.6; do not invoke the Metal environment through
-a separate Julia release channel.
+The runner owns CorePotts feasibility, stage-boundary and runtime-conformance
+witnesses; performance campaigns remain separate. Use Julia 1.12.6 for this
+Metal profile. Ordinary environments do not commit a complete dependency
+manifest or imply an exact-replay guarantee.
 
 Current specifications and decisions live under `spec/`. Historical interviews and evidence under
 `design/audits/`, and retired qualification scripts under `scripts/archive/`, document earlier

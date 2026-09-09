@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      localmath_ref:
+        description: LOCALMATH candidate revision
+        type: string
+        default: b699002a05f84e240e34162d509d6b952bf7d437
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,9 +20,38 @@ permissions:
 
 env:
   JULIA_VERSION: '1.12.6'
-  LOCALMATH_REF: main
+  LOCALMATH_REF: ${{ inputs.localmath_ref || 'b699002a05f84e240e34162d509d6b952bf7d437' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      execution: ${{ steps.diff.outputs.execution }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with: {fetch-depth: 0}
+      - name: Select execution checks from the whole PR diff
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          execution=true
+          if [[ "$EVENT" == pull_request ]] && git cat-file -e "$BASE^{commit}" && git cat-file -e "$HEAD^{commit}"; then
+            git diff --no-renames --name-only -z "$BASE...$HEAD" > "$RUNNER_TEMP/corepotts-changed-paths"
+            execution=false
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                AGENTS.md|CONTRIBUTING.md|README.md|LICENSE|CITATION.cff|spec/*.md|design/*.md) ;;
+                *) execution=true; break ;;
+              esac
+            done < "$RUNNER_TEMP/corepotts-changed-paths"
+          fi
+          printf 'execution=%s\n' "$execution" >> "$GITHUB_OUTPUT"
+          git rev-parse HEAD
+
   package:
     name: package
     runs-on: ubuntu-latest
@@ -29,6 +63,14 @@ jobs:
           repository: PraneethMerugu/LocalMath.jl
           ref: '${{ env.LOCALMATH_REF }}'
           path: deps/LocalMath
+      - name: Require immutable sibling revisions
+        shell: bash
+        run: |
+          [[ "$LOCALMATH_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "LOCALMATH_REF must be a full commit SHA"; exit 1; }
+      - name: Show selected revisions
+        run: |
+          git rev-parse HEAD
+          git -C deps/LocalMath rev-parse HEAD
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
@@ -47,6 +89,14 @@ jobs:
           repository: PraneethMerugu/LocalMath.jl
           ref: '${{ env.LOCALMATH_REF }}'
           path: deps/LocalMath
+      - name: Require immutable sibling revisions
+        shell: bash
+        run: |
+          [[ "$LOCALMATH_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "LOCALMATH_REF must be a full commit SHA"; exit 1; }
+      - name: Show selected revisions
+        run: |
+          git rev-parse HEAD
+          git -C deps/LocalMath rev-parse HEAD
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
@@ -65,6 +115,14 @@ jobs:
           repository: PraneethMerugu/LocalMath.jl
           ref: '${{ env.LOCALMATH_REF }}'
           path: deps/LocalMath
+      - name: Require immutable sibling revisions
+        shell: bash
+        run: |
+          [[ "$LOCALMATH_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "LOCALMATH_REF must be a full commit SHA"; exit 1; }
+      - name: Show selected revisions
+        run: |
+          git rev-parse HEAD
+          git -C deps/LocalMath rev-parse HEAD
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
@@ -82,6 +140,14 @@ jobs:
           repository: PraneethMerugu/LocalMath.jl
           ref: '${{ env.LOCALMATH_REF }}'
           path: deps/LocalMath
+      - name: Require immutable sibling revisions
+        shell: bash
+        run: |
+          [[ "$LOCALMATH_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "LOCALMATH_REF must be a full commit SHA"; exit 1; }
+      - name: Show selected revisions
+        run: |
+          git rev-parse HEAD
+          git -C deps/LocalMath rev-parse HEAD
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
@@ -89,16 +155,29 @@ jobs:
         run: julia --project=docs --startup-file=no -e 'using Pkg; Pkg.develop([PackageSpec(path=path) for path in ("deps/LocalMath", ".")]); Pkg.instantiate(); include("docs/make.jl")'
 
   metal:
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.execution != 'false')
     name: metal
     runs-on: macos-15
     timeout-minutes: 120
     steps:
+      - name: Require a valid change selection
+        if: needs.changes.result != 'success' || (needs.changes.outputs.execution != 'true' && needs.changes.outputs.execution != 'false')
+        run: exit 1
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: PraneethMerugu/LocalMath.jl
           ref: '${{ env.LOCALMATH_REF }}'
           path: deps/LocalMath
+      - name: Require immutable sibling revisions
+        shell: bash
+        run: |
+          [[ "$LOCALMATH_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "LOCALMATH_REF must be a full commit SHA"; exit 1; }
+      - name: Show selected revisions
+        run: |
+          git rev-parse HEAD
+          git -C deps/LocalMath rev-parse HEAD
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
