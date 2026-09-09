@@ -4,8 +4,17 @@ isdefined(@__MODULE__, :receipt_descriptor) || include("lifecycle_descriptor_sup
 function heterogeneous_lifecycle_runtime(
         engine; values = (2.0f0, StaticArrays.SVector(3.0f0, 4.0f0)),
         initial_values = (1.0f0, StaticArrays.SVector(1.0f0, 2.0f0)),
+        rule_indices = (1, 2),
+        state_evaluator_values = values,
+        state_action = CorePotts.RetireToLifecycleState,
+        evaluator_order = ntuple(identity, length(state_evaluator_values) + 1),
     )
-    schemas = map((:first_signal, :second_signal), initial_values) do name, initial
+    evaluator_values = (true, state_evaluator_values...)
+    evaluator_roles = [:lifecycle_trigger; fill(:lifecycle_state_transform, length(state_evaluator_values))]
+    sort(collect(evaluator_order)) == collect(eachindex(evaluator_values)) ||
+        throw(ArgumentError("evaluator order must be a permutation of the fixture evaluators"))
+    state_names = (:first_signal, :second_signal)[1:length(initial_values)]
+    schemas = map(state_names, initial_values) do name, initial
         CorePotts.StateBlockSchema(
             CorePotts.QualifiedResourceIdentity((), name), v"1.0.0", :cell,
             typeof(initial), (1,), 1, :structure_of_arrays, :provided_or_zero,
@@ -17,20 +26,21 @@ function heterogeneous_lifecycle_runtime(
     handles = map(schemas) do schema
         only(entry for entry in layout.entries if entry.schema.identity == schema.identity).handle
     end
-    rules = map(eachindex(handles)) do index
+    rules = map(collect(rule_indices)) do index
         CorePotts.LifecycleStateRule(
-            handles[index], UInt64(index), CorePotts.RetireToLifecycleState,
-            Int32(index + 1), Int32(0), Int32(0), Int32(0), 0.5f0, CorePotts.ExactLifecycleRounding,
+            handles[index], UInt64(index), state_action,
+            Int32(something(findfirst(==(index + 1), evaluator_order))), Int32(0), Int32(0), Int32(0), 0.5f0, CorePotts.ExactLifecycleRounding,
             UInt8(0), UInt8(0), CorePotts.RNGOperationKey(), CorePotts.RNGOperationKey(),
         )
     end
     evaluators = CorePotts.LifecycleEvaluatorStorage(
-        Any[CorePotts.StaticEvaluator(CorePotts.LiteralExpression(value)) for value in (true, values...)],
-        [:lifecycle_trigger, :lifecycle_state_transform, :lifecycle_state_transform],
+        Any[CorePotts.StaticEvaluator(CorePotts.LiteralExpression(evaluator_values[index])) for index in evaluator_order],
+        [evaluator_roles[index] for index in evaluator_order],
     )
     descriptor = receipt_descriptor(
         1, CorePotts.RemoveCellLifecycleEffect; domain_kind = 2,
-        state_rule_count = 2, scalar_type = Float32,
+        trigger_evaluator = something(findfirst(==(1), evaluator_order)),
+        state_rule_count = length(rules), scalar_type = Float32,
     )
     lifecycle = CorePotts.LifecycleExecutionPlan(
         [descriptor], evaluators, CorePotts.LifecycleStateRuleStorage(rules),
@@ -89,8 +99,12 @@ end
 function test_lifecycle_value_conversion(
         engine; adapt_to, values, invalid, initial_values, expected_values,
         expected_detail = CorePotts.LifecycleDetailStateValueInvalid,
+        rule_indices = (1, 2),
+        state_evaluator_values = values,
+        state_action = CorePotts.RetireToLifecycleState,
+        evaluator_order = ntuple(identity, length(state_evaluator_values) + 1),
     )
-    host, handles = heterogeneous_lifecycle_runtime(engine; values, initial_values)
+    host, handles = heterogeneous_lifecycle_runtime(engine; values, initial_values, rule_indices, state_evaluator_values, state_action, evaluator_order)
     runtime = adapt_to === identity ? host : CorePotts.adapt_program_runtime(adapt_to, host)
     before = CorePotts.program_snapshot(runtime)
     CorePotts.advance_mcs!(runtime)
@@ -117,6 +131,67 @@ function test_lifecycle_value_conversion(
         @test failure.source == 1
     else
         @test count(event -> event isa CorePotts.RemoveCellLifecycleEvent, CorePotts.program_lifecycle_receipt(runtime)) == 1
+    end
+    return
+end
+
+function test_lifecycle_scalar_evaluator(engine; adapt_to = identity)
+    initial = (Int32(1), (false, StaticArrays.SVector(Int32(1), Int32(2))))
+    numeric = (2.0f0, (1.0f0, StaticArrays.SVector(3.0f0, 4.0f0)))
+    test_lifecycle_value_conversion(
+        engine; adapt_to, values = (2.0f0, numeric), invalid = false,
+        initial_values = (1.0f0, initial), expected_values = (2.0f0, initial),
+        rule_indices = (1,), state_evaluator_values = (2.0f0,),
+    )
+    return
+end
+
+function test_lifecycle_scalar_state(engine; adapt_to = identity)
+    test_lifecycle_value_conversion(
+        engine; adapt_to, values = (2.0f0,), invalid = false,
+        initial_values = (1.0f0,), expected_values = (2.0f0,),
+        rule_indices = (1,), state_evaluator_values = (2.0f0,),
+    )
+    return
+end
+
+function test_lifecycle_preserved_scalar_state(engine; adapt_to = identity)
+    test_lifecycle_value_conversion(
+        engine; adapt_to, values = (2.0f0,), invalid = false,
+        initial_values = (1.0f0,), expected_values = (1.0f0,),
+        rule_indices = (1,), state_evaluator_values = (2.0f0,),
+        state_action = CorePotts.PreserveLifecycleState,
+    )
+    return
+end
+
+function test_lifecycle_scalar_evaluator_order(engine; adapt_to = identity)
+    test_lifecycle_value_conversion(
+        engine; adapt_to, values = (2.0f0,), invalid = false,
+        initial_values = (1.0f0,), expected_values = (2.0f0,),
+        rule_indices = (1,), state_evaluator_values = (2.0f0,),
+        evaluator_order = (2, 1),
+    )
+    return
+end
+
+function test_lifecycle_rule_composition(engine; adapt_to = identity)
+    initial = (Int32(1), (false, StaticArrays.SVector(Int32(1), Int32(2))))
+    numeric = (2.0f0, (1.0f0, StaticArrays.SVector(3.0f0, 4.0f0)))
+    expected = (Int32(2), (true, StaticArrays.SVector(Int32(3), Int32(4))))
+    cases = (
+        ("scalar rule", (1,), (2.0f0, numeric), (2.0f0, initial)),
+        ("numeric product rule", (2,), (2.0f0, numeric), (1.0f0, expected)),
+        ("coexisting numeric rules", (1, 2), (2.0f0, numeric), (2.0f0, expected)),
+        ("coexisting matched rules", (1, 2), (2.0f0, expected), (2.0f0, expected)),
+    )
+    for (name, rule_indices, values, expected_values) in cases
+        @testset "$name" begin
+            test_lifecycle_value_conversion(
+                engine; adapt_to, values, invalid = false,
+                initial_values = (1.0f0, initial), expected_values, rule_indices,
+            )
+        end
     end
     return
 end

@@ -19,8 +19,12 @@ const COREPOTTS_METAL_WITNESSES = (
     "corepotts_stage_anchor_contexts.jl",
     "corepotts_cell_domain_boundaries.jl",
     "corepotts_lifecycle_value_conversion.jl",
+    "corepotts_lifecycle_rule_composition.jl",
+    "corepotts_lifecycle_scalar_retirement.jl",
     "corepotts_lifecycle_numeric_conversion.jl",
     "corepotts_lifecycle_integer_bounds.jl",
+    "corepotts_lifecycle_product_conversion.jl",
+    "corepotts_lifecycle_identity_capacity.jl",
     "corepotts_runtime_conformance.jl",
 )
 
