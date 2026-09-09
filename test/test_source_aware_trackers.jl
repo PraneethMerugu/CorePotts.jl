@@ -161,7 +161,18 @@ end
     for invalid in (-1.0f0, Inf32, NaN32)
         @test_throws ArgumentError C.SiteSumTracker(Float32, descriptor.quantity, descriptor.expression; absolute_tolerance = invalid)
         @test_throws ArgumentError C.SiteSumTracker(Float32, descriptor.quantity, descriptor.expression; relative_tolerance = invalid)
+        @test_throws ArgumentError typeof(descriptor)(descriptor.quantity, descriptor.expression, invalid, 0.0f0)
+        @test_throws ArgumentError typeof(descriptor)(descriptor.quantity, descriptor.expression, 0.0f0, invalid)
+        @test_throws ArgumentError C.SiteSumTracker(descriptor.quantity, descriptor.expression, invalid, 0.0f0)
+        @test_throws ArgumentError C.SiteSumTracker(descriptor.quantity, descriptor.expression, 0.0f0, invalid)
     end
+    converted = typeof(descriptor)(descriptor.quantity, descriptor.expression, 0.25, 0.5)
+    @test converted.absolute_tolerance === 0.25f0
+    @test converted.relative_tolerance === 0.5f0
+    inferred = C.SiteSumTracker(descriptor.quantity, descriptor.expression, 0.25f0, 0.5f0)
+    @test inferred.absolute_tolerance === converted.absolute_tolerance
+    @test inferred.relative_tolerance === converted.relative_tolerance
+    @test_throws ArgumentError typeof(descriptor)(descriptor.quantity, descriptor.expression, floatmax(Float64), 0.0)
     relative = C.SiteSumTracker(Float32, descriptor.quantity, descriptor.expression; relative_tolerance = 1.5f0)
     @test !C._tracker_recomputation_matches(relative, Float32[3.0f38], Float32[-3.0f38])
     @test C._tracker_recomputation_matches(relative, Float32[3.0f38], Float32[1.0f38])
