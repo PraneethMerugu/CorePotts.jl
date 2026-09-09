@@ -35,6 +35,21 @@ struct _GatheredModelStageContext{P, H, V, Z}
     zeros::Z
 end
 
+struct _GatheredCellStageContext{P, H, V, Z}
+    parameters::P
+    handles::H
+    values::V
+    zeros::Z
+    cell::Int32
+end
+
+@inline stage_cell(context::_GatheredCellStageContext) = context.cell
+@inline stage_site(::ModelStageSite, ::_GatheredCellStageContext) = Int32(1)
+@inline _proposal_parameters(context::_GatheredCellStageContext) = context.parameters
+@inline function state_value(context::_GatheredCellStageContext, ::_ExecutableStateReference{Index}, slot) where {Index}
+    return _gathered_stage_read_value(getfield(context.values, Index), Int32(slot), getfield(context.zeros, Index))
+end
+
 struct _GatheredRelationshipStageContext{P, H, V, Z, E, Q, U, M, T}
     parameters::P
     handles::H
@@ -52,6 +67,8 @@ end
     _GatheredSiteStageContext(args...)
 @inline _gathered_model_stage_context(args...) =
     _GatheredModelStageContext(args...)
+@inline _gathered_cell_stage_context(args...) =
+    _GatheredCellStageContext(args...)
 @inline _gathered_relationship_stage_context(args...) =
     _GatheredRelationshipStageContext(args...)
 @inline _stage_state_reference(handle, ::Val{Index}) where {Index} =
@@ -291,6 +308,15 @@ struct _CompiledModelStageEvaluator{HasParameters, Evaluation, C, V, H, Z}
     source_handle::Int32
 end
 
+struct _CompiledCellStageEvaluator{HasParameters, Evaluation, C, V, H, Z, E}
+    condition::C
+    value::V
+    handles::H
+    zeros::Z
+    source_handle::Int32
+    effect::E
+end
+
 @generated function _stage_read_prefix(reads, ::H) where {H <: Tuple}
     return Expr(
         :tuple, (
@@ -392,6 +418,21 @@ end
 struct _CompiledStageCommit{E <: AbstractCompiledEffect} end
 _CompiledStageCommit(::E) where {E <: AbstractCompiledEffect} = _CompiledStageCommit{E}()
 
+@inline function (evaluator::_CompiledCellStageEvaluator{HasParameters, Evaluation})(item::Int32, reads, parameters) where {HasParameters, Evaluation}
+    count = length(evaluator.handles)
+    values = _stage_read_prefix(reads, evaluator.handles)
+    kind = something(getfield(reads, count + 1)[1].value)
+    generation = something(getfield(reads, count + 2)[1].value)
+    science_parameters = HasParameters ? something(getfield(reads, count + 3)[1].value) : ()
+    context = _gathered_cell_stage_context(science_parameters, evaluator.handles, values, evaluator.zeros, item)
+    baseline = state_value(context, _stage_state_reference(first(evaluator.handles), Val(1)), item)
+    eligible = _cell_stage_eligible(evaluator.effect, kind, generation)
+    condition = eligible ? _execute_proposal_scalar(evaluator.condition, context) : false
+    value = condition isa Bool && condition ? convert(typeof(baseline), _execute_proposal_scalar(evaluator.value, context)) : baseline
+    result = _compiled_stage_result(condition, value, baseline, evaluator.source_handle, item, getfield(parameters, 1))
+    return (value = LocalMath.UniqueValue(Evaluation(result.enabled, result.value)), status = result.status)
+end
+
 @inline function (::_CompiledStageCommit{E})(item::Int32, reads, parameters) where {
         E <: Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect},
     }
@@ -403,7 +444,7 @@ _CompiledStageCommit(::E) where {E <: AbstractCompiledEffect} = _CompiledStageCo
 end
 
 @inline function (::_CompiledStageCommit{E})(item::Int32, reads, parameters) where {
-        E <: ModelAssignmentEffect,
+        E <: Union{ModelAssignmentEffect, CellAssignmentEffect},
     }
     evaluation = something(@inbounds reads[1][1].value)
     return (value = LocalMath.ConditionalUniqueValue(evaluation.value, evaluation.enabled),)
@@ -841,19 +882,6 @@ function _stage_descriptors(groups::Tuple)
     return Tuple(descriptor for group in groups for descriptor in group.instances)
 end
 
-function _stage_descriptor_handles(descriptor::CompiledStageDescriptor)
-    handles = StateHandle[]
-    effect = descriptor.effect
-    target = effect isa Union{
-            SiteAssignmentEffect, ModelAssignmentEffect, IteratedSiteAssignmentEffect,
-        } ? effect.target : nothing
-    target === nothing || push!(handles, target)
-    for handle in descriptor.access.reads
-        any(==(handle), handles) || push!(handles, handle)
-    end
-    return Tuple(handles)
-end
-
 function _stage_parameter_count(descriptor::CompiledStageDescriptor)
     handles = StateHandle[]
     count = Ref(0)
@@ -870,17 +898,17 @@ _stage_selector_matches(
 
 function _compile_stage_expression(
         expression::Union{LiteralExpression, ParameterExpression, StateExpression},
-        source, state_handles, selector
+        source, state_handles, selector, context_type
     )
     return _compile_proposal_expression(expression, source, state_handles)
 end
 
 function _compile_stage_expression(
-        expression::ContextExpression, source, state_handles, selector
+        expression::ContextExpression, source, state_handles, selector, context_type
     )
     operation = expression.operation
     operation_context_supported(
-        operation, AbstractSiteStageEvaluationContext
+        operation, context_type
     ) || throw(
         ArgumentError(
             "stage source $(repr(source)) requires unsupported contextual " *
@@ -893,15 +921,15 @@ function _compile_stage_expression(
 end
 
 function _compile_stage_expression(
-        expression::OperationExpression, source, state_handles, selector
+        expression::OperationExpression, source, state_handles, selector, context_type
     )
     operation = expression.operation
     arguments = map(expression.arguments) do argument
-        _compile_stage_expression(argument, source, state_handles, selector)
+        _compile_stage_expression(argument, source, state_handles, selector, context_type)
     end
     if operation isa AbstractContextualOperation
         operation_context_supported(
-            operation, AbstractSiteStageEvaluationContext
+            operation, context_type
         ) || throw(
             ArgumentError(
                 "stage source $(repr(source)) requires unsupported contextual " *
@@ -923,6 +951,10 @@ function _compile_stage_expression(
                 )
             )
         end
+        if operation isa BoundCellStateValueOperation
+            length(expression.arguments) == 1 && only(expression.arguments) isa StateExpression ||
+                throw(ArgumentError("cell-stage source $(repr(source)) requires exactly one declared state handle for bound-cell access"))
+        end
         return _ExecutableContextualCall(operation, arguments)
     end
     if operation === (^) && length(expression.arguments) == 2 &&
@@ -940,12 +972,13 @@ function _compiled_stage_expressions(
     )
     selector = descriptor.effect isa ModelAssignmentEffect ?
         ModelStageSite : IterationStageSite
+    context_type = descriptor.effect isa CellAssignmentEffect ? AbstractCellStageEvaluationContext : AbstractSiteStageEvaluationContext
     return (
         _compile_stage_expression(
-            descriptor.condition.expression, source, handles, selector
+            descriptor.condition.expression, source, handles, selector, context_type
         ),
         _compile_stage_expression(
-            descriptor.value.expression, source, handles, selector
+            descriptor.value.expression, source, handles, selector, context_type
         ),
     )
 end
@@ -981,24 +1014,33 @@ function _stage_contact_tables(resources::HamiltonianDomainResources, dimensions
 end
 
 function _stage_state_fields(space, handles::Tuple, ::Type{T}; layout = nothing) where {T}
-    model = LocalMath.Space(_CheckerboardStageModelDomain, 1)
+    model = space isa LocalMath.Space{_CheckerboardStageModelDomain} ? space :
+        LocalMath.Space(_CheckerboardStageModelDomain, 1)
     return map(handles) do handle
         domain = if layout === nothing
             space
         else
             entry = only(entry for entry in layout.entries if entry.handle == handle)
             entry.schema.domain === :model ? model :
-                entry.schema.domain === :site ? space :
-                throw(ArgumentError("site assignment reads require site-owned or model-owned state"))
+                entry.schema.domain === :site && space isa LocalMath.Space{_CheckerboardStageSiteDomain} ? space :
+                entry.schema.domain === :cell && space isa LocalMath.Space{_CheckerboardStageCellDomain} ? space :
+                throw(ArgumentError("assignment reads require state owned by the iteration domain or the model"))
         end
         shape = Tuple(Int.(handle_shape(handle)))
         shape_matches = domain isa LocalMath.Space{_CheckerboardStageModelDomain} ?
-            prod(shape) == 1 : shape == Tuple(size(domain))
+            prod(shape) == 1 : domain isa LocalMath.Space{_CheckerboardStageCellDomain} ?
+            length(shape) == 1 && only(shape) >= prod(size(domain)) : shape == Tuple(size(domain))
         shape_matches || throw(
             ArgumentError("after-MCS state handle shape does not match its source domain")
         )
         LocalMath.Field(domain, _stage_handle_element_type(handle, T))
     end
+end
+
+function _stage_model_read_relation(domain, fields)
+    domain isa LocalMath.Space{_CheckerboardStageModelDomain} && return nothing
+    index = findfirst(field -> field.space isa LocalMath.Space{_CheckerboardStageModelDomain}, fields)
+    return index === nothing ? nothing : LocalMath.FixedRelation(domain => fields[index].space; degree = 1)
 end
 
 function _stage_access_tuple(fields::Tuple, relation, model_relation = nothing)
@@ -1012,18 +1054,18 @@ function _stage_access_tuple(fields::Tuple, relation, model_relation = nothing)
     return NamedTuple{names}(values)
 end
 
-function _model_stage_state_storage(model, handle, state)
+function _identity_stage_state_storage(domain, handle, state)
     values = state_block(state.descriptor_state, handle).values
-    # A model has one logical value even when its schema is zero-dimensional.
-    # Rebind the existing bank region; snapshots keep the declared shape.
-    return BlockView(values.storage, values.offset, Tuple(size(model)))
+    # Rebind the same bank region to the execution domain. Model snapshots keep
+    # their logical shape; excess allocated cell slots remain outside the view.
+    return BlockView(values.storage, values.offset, Tuple(size(domain)))
 end
 
 function _stage_state_bindings(fields::Tuple, handles::Tuple, state)
     return map(fields, handles) do field, handle
         field => (
-            field.space isa LocalMath.Space{_CheckerboardStageModelDomain} ?
-                _model_stage_state_storage(field.space, handle, state) :
+            field.space isa LocalMath.Space{<:Union{_CheckerboardStageModelDomain, _CheckerboardStageCellDomain}} ?
+                _identity_stage_state_storage(field.space, handle, state) :
                 state_block(state.descriptor_state, handle).values
         )
     end
@@ -1054,9 +1096,7 @@ function _compile_site_assignment_law(
     status_space = LocalMath.Space(_CheckerboardStageStatusDomain, 1)
     fields = _stage_state_fields(lattice, handles, T; layout = state_layout)
     first(fields).space == lattice || throw(ArgumentError("site assignment target requires site-owned storage"))
-    model_index = findfirst(field -> field.space isa LocalMath.Space{_CheckerboardStageModelDomain}, fields)
-    model_relation = model_index === nothing ? nothing :
-        LocalMath.FixedRelation(lattice => fields[model_index].space; degree = 1)
+    model_relation = _stage_model_read_relation(lattice, fields)
     identity = LocalMath.IdentityRelation(lattice)
     affine = LocalMath.AffineRelation(lattice => lattice; offsets)
     relation = LocalMath.BoundaryRelation(
@@ -1183,9 +1223,9 @@ function _compile_site_assignment_law(
     )
 end
 
-function _compile_model_assignment_law(
+function _compile_identity_assignment_law(
         descriptor::CompiledStageDescriptor,
-        source_table, status, gate, ::Type{T}
+        source_table, domain, gate, state_layout, ::Type{T}
     ) where {T}
     handles = _stage_descriptor_handles(descriptor)
     target = first(handles)
@@ -1195,44 +1235,57 @@ function _compile_model_assignment_law(
         descriptor,
         operation = descriptor.effect,
         role = descriptor.stage,
-        context = :model_assignment_lowering,
+        context = :identity_assignment_lowering,
     )
     condition, value = _compiled_stage_expressions(descriptor, handles, source)
-    model = LocalMath.Space(_CheckerboardStageModelDomain, 1)
     status_space = LocalMath.Space(_CheckerboardStageStatusDomain, 1)
-    fields = _stage_state_fields(model, handles, T)
-    identity = LocalMath.IdentityRelation(model)
+    fields = _stage_state_fields(domain, handles, T; layout = state_layout)
+    first(fields).space == domain || throw(ArgumentError("identity assignment target does not match its declared domain"))
+    model_relation = _stage_model_read_relation(domain, fields)
+    identity = LocalMath.IdentityRelation(domain)
     parameter_count = _stage_parameter_count(descriptor)
     parameter_field = iszero(parameter_count) ? nothing :
-        LocalMath.Field(model, NTuple{parameter_count, T})
-    scratch = LocalMath.Field(model, StageEvaluation{_stage_handle_element_type(target, T)})
+        LocalMath.Field(domain, NTuple{parameter_count, T})
+    scratch = LocalMath.Field(domain, StageEvaluation{_stage_handle_element_type(target, T)})
     status_field = LocalMath.Field(status_space, ProgramStatus)
     initial_gate = LocalMath.Field(gate.space, Bool)
     refreshed_gate = LocalMath.Field(gate.space, Bool)
     status_fragments = _checkerboard_status_fragments(
-        status_field, model, Int32(1)
+        status_field, domain, Int32(prod(size(domain)))
     )
     zeros = map(handle -> _state_value_zero(_stage_handle_element_type(handle, T)), handles)
-    evaluator = _CompiledModelStageEvaluator{
-        !iszero(parameter_count), eltype(scratch), typeof(condition), typeof(value),
-        typeof(handles), typeof(zeros),
-    }(
-        condition, value, handles,
-        zeros,
-        descriptor.source_handle
-    )
+    evaluator = if descriptor.effect isa ModelAssignmentEffect
+        _CompiledModelStageEvaluator{
+            !iszero(parameter_count), eltype(scratch), typeof(condition), typeof(value),
+            typeof(handles), typeof(zeros),
+        }(
+            condition, value, handles,
+            zeros,
+            descriptor.source_handle
+        )
+    else
+        _CompiledCellStageEvaluator{!iszero(parameter_count), eltype(scratch), typeof(condition), typeof(value), typeof(handles), typeof(zeros), typeof(descriptor.effect)}(
+            condition, value, handles, zeros, descriptor.source_handle, descriptor.effect,
+        )
+    end
+    cell_kind_field = descriptor.effect isa CellAssignmentEffect ? LocalMath.Field(domain, Int16) : nothing
+    cell_generation_field = descriptor.effect isa CellAssignmentEffect ? LocalMath.Field(domain, UInt32) : nothing
+    identity_reads = cell_kind_field === nothing ? NamedTuple() : (
+            kind = LocalMath.Access(cell_kind_field, identity; required = true),
+            generation = LocalMath.Access(cell_generation_field, identity; required = true),
+        )
     parameter_reads = parameter_field === nothing ? NamedTuple() : (
             parameters = LocalMath.Access(
                 parameter_field, identity;
                 required = true
             ),
         )
-    reads = merge(_stage_access_tuple(fields, identity), parameter_reads)
+    reads = merge(_stage_access_tuple(fields, identity, model_relation), identity_reads, parameter_reads)
     submission_parameters = (
         LocalMath.Parameter(:mcs, Int64; bounds = (Int64(1), typemax(Int64))),
     )
     evaluate = LocalMath.Stage(
-        model, reads,
+        domain, reads,
         (
             LocalMath.Publication(
                 (
@@ -1248,11 +1301,11 @@ function _compile_model_assignment_law(
         LocalMath.Control(; gate = initial_gate),
         LocalMath.SourceOrigin(
             @__FILE__, @__LINE__;
-            label = :corepotts_stage_model_evaluation
+            label = :corepotts_stage_identity_evaluation
         ),
     )
     commit = LocalMath.Stage(
-        model,
+        domain,
         (scratch = LocalMath.Access(scratch, identity; required = true),),
         (
             LocalMath.Publication(
@@ -1271,13 +1324,13 @@ function _compile_model_assignment_law(
         LocalMath.Control(; gate = refreshed_gate),
         LocalMath.SourceOrigin(
             @__FILE__, @__LINE__;
-            label = :corepotts_stage_model_publication
+            label = :corepotts_stage_identity_publication
         ),
     )
     evaluation = LocalMath.sequence(
         LocalMath.LocalLaw(
             _stage_gate_snapshot(
-                gate, initial_gate, :corepotts_stage_model_initial_gate
+                gate, initial_gate, :corepotts_stage_identity_initial_gate
             )
         ),
         LocalMath.LocalLaw(evaluate)
@@ -1285,14 +1338,15 @@ function _compile_model_assignment_law(
     publication = LocalMath.sequence(
         LocalMath.LocalLaw(
             _stage_gate_snapshot(
-                gate, refreshed_gate, :corepotts_stage_model_refreshed_gate;
+                gate, refreshed_gate, :corepotts_stage_identity_refreshed_gate;
                 parameters = submission_parameters,
             )
         ),
         LocalMath.LocalLaw(commit)
     )
     return (;
-        model, evaluation, publication, fields, handles, parameter_field, scratch, status_field,
+        domain, evaluation, publication, fields, handles, parameter_field, scratch, status_field,
+        cell_kind_field, cell_generation_field, model_relation,
         initial_gate, refreshed_gate,
     )
 end
@@ -1820,18 +1874,18 @@ end
     descriptor.effect isa IteratedSiteAssignmentEffect ?
     Int(descriptor.effect.iterations) : 1
 
+function _stage_model_read_bindings(relation, bank, shape)
+    relation === nothing && return ()
+    endpoints = _checkerboard_similar(bank.parameters, Int32, 1, prod(shape))
+    fill!(endpoints, Int32(1))
+    return (relation => endpoints,)
+end
+
 function _site_stage_bindings(
         declaration, bank, gate
     )
-    model_bindings = if declaration.model_relation === nothing
-        ()
-    else
-        endpoints = _checkerboard_similar(bank.parameters, Int32, 1, prod(bank.program.shape))
-        fill!(endpoints, Int32(1))
-        (declaration.model_relation => endpoints,)
-    end
     bindings = (
-        model_bindings...,
+        _stage_model_read_bindings(declaration.model_relation, bank, bank.program.shape)...,
         _stage_state_bindings(
             declaration.fields, declaration.handles, bank
         )...,
@@ -1851,16 +1905,20 @@ function _site_stage_bindings(
     return bindings
 end
 
-function _model_stage_bindings(
+function _identity_stage_bindings(
         declaration, bank, gate
     )
-    state_bindings = map(declaration.fields, declaration.handles) do field, handle
-        field => _model_stage_state_storage(declaration.model, handle, bank)
-    end
     bindings = (
-        state_bindings...,
+        _stage_model_read_bindings(declaration.model_relation, bank, size(declaration.domain))...,
+        _stage_state_bindings(declaration.fields, declaration.handles, bank)...,
+        (
+            declaration.cell_kind_field === nothing ? () : (
+                    declaration.cell_kind_field => bank.cell_kinds,
+                    declaration.cell_generation_field => bank.cell_generations,
+                )
+        )...,
         _checkerboard_parameter_binding(
-            declaration.parameter_field, bank, (1,)
+            declaration.parameter_field, bank, Tuple(size(declaration.domain))
         )...,
         declaration.scratch => LocalMath.Allocate(
             _checkerboard_storage_zero(declaration.scratch)
@@ -1877,8 +1935,8 @@ function _prepare_assignment_publication(
     )
     # The evaluation owns scratch. Publication binds that exact storage, so
     # the queue dependency carries the evaluated value without another copy.
-    target_storage = effect isa ModelAssignmentEffect ?
-        _model_stage_state_storage(declaration.model, first(declaration.handles), bank) :
+    target_storage = effect isa Union{ModelAssignmentEffect, CellAssignmentEffect} ?
+        _identity_stage_state_storage(declaration.domain, first(declaration.handles), bank) :
         state_block(bank.descriptor_state, first(declaration.handles)).values
     bindings = (
         first(declaration.fields) => target_storage,
@@ -2071,6 +2129,7 @@ function _compile_checkerboard_stage_boundary(
             continue
         end
         effect = descriptor.effect
+        effect isa CellAssignmentEffect && isempty(state.cell_kinds) && continue
         external_gate = LocalMath.Field(
             LocalMath.Space(_CheckerboardStageGateDomain, 1), Bool
         )
@@ -2083,11 +2142,14 @@ function _compile_checkerboard_stage_boundary(
                     state_layout, T
                 ), (; external_gate)
             )
-        elseif effect isa ModelAssignmentEffect
+        elseif effect isa Union{ModelAssignmentEffect, CellAssignmentEffect}
+            domain = effect isa ModelAssignmentEffect ?
+                LocalMath.Space(_CheckerboardStageModelDomain, 1) :
+                LocalMath.Space(_CheckerboardStageCellDomain, length(state.cell_kinds))
             merge(
-                _compile_model_assignment_law(
-                    descriptor, workspace.source_table, state.program_status,
-                    external_gate, T
+                _compile_identity_assignment_law(
+                    descriptor, workspace.source_table, domain,
+                    external_gate, state_layout, T
                 ), (; external_gate)
             )
         elseif effect isa ShiftAppendEffect
@@ -2113,8 +2175,8 @@ function _compile_checkerboard_stage_boundary(
             )
             continue
         end
-        bindings_for = effect isa ModelAssignmentEffect ?
-            _model_stage_bindings : _site_stage_bindings
+        bindings_for = effect isa Union{ModelAssignmentEffect, CellAssignmentEffect} ?
+            _identity_stage_bindings : _site_stage_bindings
         if effect isa IteratedSiteAssignmentEffect
             repetitions = _stage_submission_count(descriptor)
             lease_capacity = _checked_checkerboard_capacity_mul(

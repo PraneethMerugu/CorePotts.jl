@@ -106,6 +106,37 @@ ownership-change paths delegate there instead of defining backend-specific
 product semantics.
 `checkerboard_science.jl` owns the shared parameter view; its semantic consumers
 provide their execution-domain shapes without expanding parameter storage.
+Cell effects use the same boundary emission/application transaction and the
+same identity-domain publication builder as singleton model effects. Their
+distinct evaluation context reads finite-cell slots, not lattice sites.
+`program/runtime.jl` invokes the `stage_plan.jl` cell-domain validator before
+initialization. It derives expression requirements using the sole walker in
+`static_evaluator.jl`, checks declared reads, and resolves handles against the
+existing state-layout schemas and runtime identity capacity; the descriptor's
+kind and the runtime kind/generation tables remain the eligibility authorities.
+Extra allocated state capacity is bound as a view over the same storage, not
+another identity registry. `test_cell_stage_execution.jl` owns once-per-cell,
+inactive-slot, structured-value, and capacity behavior.
+`test_cell_stage_transactions.jl` covers conditions and failure rollback;
+`test_cell_stage_lifecycle.jl` covers removal, generation reuse, and continuation;
+`test_cell_stage_domain_boundaries.jl` covers mixed-domain publication and
+retirement after the final-site copy. Shared fixtures also feed the ordinary
+Metal inventory. `test_empty_logical_storage.jl` defends zero-length bank regions,
+whose allocation and copying remain owned by `storage_runtime.jl`.
+The `CompiledPottsProgram` constructor joins the stage plan with the existing
+state layout in `_validate_stage_state_domains`: target/read ownership,
+declared read resources, and finite-cell kind validity are checked there.
+Runtime materialization checks only coverage of the realized cell capacity.
+Checkerboard preparation threads that same layout into the existing site and
+identity assignment laws. Both reuse a degree-one model read relation and bank
+view binding; model values are neither copied per cell nor published early.
+
+Lifecycle value conversion remains owned by `lifecycle_commit_state.jl`;
+`test_lifecycle_value_conversion.jl` and its Metal counterpart cover heterogeneous
+evaluator banks, legitimate scalar/vector conversions and equal-length reshapes,
+and inapplicable-method or static-length rollback through the same lifecycle
+transaction. Inexact integer and Boolean conversions need additional owning
+coverage before stronger conversion claims.
 
 The ordinary behavioral tests are `test_structured_stage_transactions.jl`
 (simultaneous assignments, ordered history and substeps, failure rollback),

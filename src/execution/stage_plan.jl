@@ -91,7 +91,38 @@ operation_context_supported(
     ::Type{AbstractHamiltonianEvaluationContext},
 ) = true
 
+operation_context_supported(
+    ::BoundStateValueOperation{ModelStageSite},
+    ::Type{AbstractCellStageEvaluationContext},
+) = true
+
 abstract type AbstractCompiledEffect end
+
+"""Read one declared cell-state block at the current finite-cell slot."""
+struct BoundCellStateValueOperation <: AbstractContextualOperation end
+
+function operation_callable(::Val{:cell_bound_state_value}, version::VersionNumber)
+    version == v"1.0.0" || throw(ArgumentError("unsupported cell-bound-state operation version $version"))
+    return BoundCellStateValueOperation()
+end
+
+"""Return the finite-cell slot bound to a cell-stage evaluation."""
+function stage_cell end
+
+@inline (::BoundCellStateValueOperation)(arguments::Tuple, context) =
+    state_value(context, only(arguments), stage_cell(context))
+
+operation_context_supported(::BoundCellStateValueOperation, ::Type{AbstractCellStageEvaluationContext}) = true
+
+"""Assign one logical value once to each active finite cell of a declared kind."""
+struct CellAssignmentEffect{H <: StateHandle} <: AbstractCompiledEffect
+    target::H
+    domain_kind::Int16
+    function CellAssignmentEffect(target::H, domain_kind::Integer) where {H <: StateHandle}
+        1 <= domain_kind <= typemax(Int16) || throw(ArgumentError("cell assignment requires a positive finite-cell kind"))
+        return new{H}(target, Int16(domain_kind))
+    end
+end
 
 """Assign one logical value to one site in a declared auxiliary-state block."""
 struct SiteAssignmentEffect{H <: StateHandle} <: AbstractCompiledEffect
@@ -223,6 +254,7 @@ function stage_effect_buffered end
 stage_effect_buffered(::AbstractCompiledEffect) = false
 stage_effect_buffered(::SiteAssignmentEffect) = true
 stage_effect_buffered(::ModelAssignmentEffect) = true
+stage_effect_buffered(::CellAssignmentEffect) = true
 stage_effect_buffered(::IteratedSiteAssignmentEffect) = true
 stage_effect_buffered(::RelationshipCreateEffect) = true
 stage_effect_buffered(::RelationshipRemoveEffect) = true
@@ -311,6 +343,18 @@ descriptor_checkpoint_reconstruct(
 ) = descriptor
 descriptor_evaluator_node_count(descriptor::CompiledStageDescriptor) =
     evaluator_node_count(descriptor.condition) + evaluator_node_count(descriptor.value)
+
+function _stage_descriptor_handles(descriptor::CompiledStageDescriptor)
+    handles = StateHandle[]
+    effect = descriptor.effect
+    target = effect isa Union{SiteAssignmentEffect, CellAssignmentEffect, ModelAssignmentEffect, IteratedSiteAssignmentEffect} ? effect.target : nothing
+    target === nothing || push!(handles, target)
+    for handle in descriptor.access.reads
+        any(==(handle), handles) || push!(handles, handle)
+    end
+    return Tuple(handles)
+end
+
 descriptor_inspection(descriptor::CompiledStageDescriptor) = (
     source_handle = descriptor.source_handle,
     buffer_slot = descriptor.buffer_slot,
@@ -376,11 +420,11 @@ function StageExecutionPlan(
         )
     )
     any(
-        descriptor -> descriptor.effect isa ModelAssignmentEffect,
+        descriptor -> descriptor.effect isa Union{ModelAssignmentEffect, CellAssignmentEffect},
         (descriptor for group in accepted_copy for descriptor in group.instances),
     ) && throw(
         ArgumentError(
-            "model assignments are admitted only at the after-MCS boundary"
+            "model and cell assignments are admitted only at the after-MCS boundary"
         )
     )
     after_mcs = (before_lifecycle..., after_lifecycle...)
@@ -397,6 +441,8 @@ function StageExecutionPlan(
             "after-MCS model-assignment buffer slots must be dense and unique"
         )
     )
+    cell_slots = sort!(Int[descriptor.buffer_slot for group in after_mcs for descriptor in group.instances if descriptor.effect isa CellAssignmentEffect])
+    cell_slots == collect(eachindex(cell_slots)) || throw(ArgumentError("after-MCS cell-assignment buffer slots must be dense and unique"))
     return StageExecutionPlan{A, B, L}(
         accepted_copy,
         before_lifecycle,
@@ -412,7 +458,7 @@ StageExecutionPlan() = StageExecutionPlan(
     (), (), (), 0, 0, "empty-stage-plan-v1"
 )
 
-function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources)
+function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources, kind_count, medium_kinds)
     for group in (plan.accepted_copy..., plan.before_lifecycle..., plan.after_lifecycle...),
             descriptor in group.instances
         source = _descriptor_source(
@@ -422,15 +468,35 @@ function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources
         _validate_model_read_domain(descriptor.condition.expression, layout, nothing, source)
         _validate_model_read_domain(descriptor.value.expression, layout, nothing, source)
         effect = descriptor.effect
-        if effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ModelAssignmentEffect}
+        if effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ModelAssignmentEffect, CellAssignmentEffect}
             index = findfirst(entry -> entry.handle == effect.target, layout.entries)
             entry = index === nothing ? nothing : layout.entries[index]
-            domain = effect isa ModelAssignmentEffect ? :model : :site
+            domain = effect isa ModelAssignmentEffect ? :model :
+                effect isa CellAssignmentEffect ? :cell : :site
             entry !== nothing && entry.schema.domain === domain ||
                 throw(ArgumentError("stage target at $source requires $domain-owned storage"))
             if domain === :model
                 prod(handle_shape(effect.target); init = 1) == 1 ||
                     throw(ArgumentError("model-owned stage target at $source requires one logical value"))
+            end
+        end
+        if effect isa CellAssignmentEffect
+            effect.domain_kind <= kind_count && !medium_kinds[effect.domain_kind] ||
+                throw(ArgumentError("cell-stage at $source requires a declared finite-cell kind"))
+            expression_handles = StateHandle[]
+            parameter_count = Ref(0)
+            _record_expression_requirements!(expression_handles, parameter_count, descriptor.condition.expression)
+            _record_expression_requirements!(expression_handles, parameter_count, descriptor.value.expression)
+            all(handle -> any(==(handle), descriptor.access.reads), expression_handles) ||
+                throw(ArgumentError("cell-stage at $source reads state absent from its declared access contract"))
+            for handle in _stage_descriptor_handles(descriptor)
+                index = findfirst(entry -> entry.handle == handle, layout.entries)
+                index === nothing && throw(ArgumentError("cell-stage at $source references a state handle outside the declared layout"))
+                domain = layout.entries[index].schema.domain
+                domain in (:cell, :model) ||
+                    throw(ArgumentError("cell-stage at $source requires cell-owned or model-owned reads, not $domain"))
+                domain !== :cell || length(handle_shape(handle)) == 1 ||
+                    throw(ArgumentError("cell-stage at $source requires one-dimensional cell state"))
             end
         end
     end
@@ -445,10 +511,11 @@ end
 _state_value_zero(::Type{StageEvaluation{T}}) where {T} =
     StageEvaluation(false, _state_value_zero(T))
 
-mutable struct StageRuntimeBuffers{A, S, M, R}
+mutable struct StageRuntimeBuffers{A, S, M, C, R}
     accepted_copy::A
     after_mcs::S
     after_mcs_model::M
+    after_mcs_cell::C
     relationship_transactions::R
 end
 
@@ -480,6 +547,7 @@ function allocate_stage_runtime_buffers(
         ;
         accepted_batch_bound::Integer = 1,
         accepted_relationship_transactions::Bool = true,
+        cell_capacity::Integer = 0,
     ) where {T <: AbstractFloat, N}
     accepted_batch_bound > 0 || throw(
         ArgumentError(
@@ -503,6 +571,13 @@ function allocate_stage_runtime_buffers(
     )
     model_descriptors = _stage_buffer_descriptors(_after_mcs_groups(plan), model_count, effect -> effect isa ModelAssignmentEffect)
     after_model = map(descriptor -> _stage_evaluation_buffer(descriptor, T), model_descriptors)
+    cell_capacity >= 0 || throw(ArgumentError("cell-stage capacity cannot be negative"))
+    cell_count = sum((descriptor.effect isa CellAssignmentEffect for group in _after_mcs_groups(plan) for descriptor in group.instances); init = 0)
+    cell_descriptors = _stage_buffer_descriptors(_after_mcs_groups(plan), cell_count, effect -> effect isa CellAssignmentEffect)
+    after_cell = map(cell_descriptors) do descriptor
+        V = _stage_value_type(descriptor.effect, T)
+        fill(_state_value_zero(StageEvaluation{V}), cell_capacity)
+    end
     transactions = Any[]
     for store_slot in eachindex(relationships)
         accepted_bound = accepted_relationship_transactions ? sum(
@@ -536,6 +611,6 @@ function allocate_stage_runtime_buffers(
     relationship_transactions = all(isnothing, transactions) ? nothing :
         RelationshipStorage(transactions)
     return StageRuntimeBuffers(
-        accepted, after, after_model, relationship_transactions
+        accepted, after, after_model, after_cell, relationship_transactions
     )
 end

@@ -98,6 +98,20 @@ function _rebuild_program_runtime(
     )
 end
 
+function _validate_cell_stage_capacity(plan, layout, sources, capacity)
+    for group in _after_mcs_groups(plan), descriptor in group.instances
+        descriptor.effect isa CellAssignmentEffect || continue
+        source = _descriptor_source(sources, descriptor.source_handle; descriptor, context = :cell_stage_capacity)
+        for handle in _stage_descriptor_handles(descriptor)
+            entry = only(entry for entry in layout.entries if entry.handle == handle)
+            entry.schema.domain === :cell || continue
+            only(handle_shape(handle)) >= capacity ||
+                throw(ArgumentError("cell-stage at $source requires state covering all $capacity finite-cell slots"))
+        end
+    end
+    return nothing
+end
+
 function _materialize_program(
         program::CompiledPottsProgram{T, N},
         initial::ProgramInitialState,
@@ -139,6 +153,8 @@ function _materialize_program(
     lifecycle_plan = program.lifecycle_plan
     cell_capacity = lifecycle_plan isa LifecycleExecutionPlan ?
         Int(lifecycle_plan.cell_capacity) : length(initial_cell_kinds)
+    _validate_cell_stage_capacity(program.stage_plan, program.descriptor_plan.state_layout,
+        program.descriptor_plan.source_table, cell_capacity)
     length(initial_cell_kinds) <= cell_capacity || throw(ArgumentError(
         "initial finite-cell count exceeds compiled max_cells=$cell_capacity"
     ))
@@ -240,6 +256,7 @@ function _materialize_program(
             relationships,
             accepted_batch_bound = _accepted_copy_batch_bound(program),
             accepted_relationship_transactions = true,
+            cell_capacity = cell_capacity,
         )
     engine_workspace = allocate_program_engine_workspace(
         program,

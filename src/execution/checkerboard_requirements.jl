@@ -370,41 +370,6 @@ function _accepted_relationship_descriptors(stage_plan::StageExecutionPlan)
     return Tuple(records)
 end
 
-_record_expression_requirements!(handles, parameter_count, ::LiteralExpression) =
-    nothing
-function _record_expression_requirements!(
-        handles, parameter_count, expression::ParameterExpression
-    )
-    parameter_count[] = max(parameter_count[], Int(expression.index))
-    return nothing
-end
-function _record_expression_requirements!(
-        handles, parameter_count, expression::StateExpression
-    )
-    any(==(expression.handle), handles) || push!(handles, expression.handle)
-    return nothing
-end
-_record_expression_requirements!(
-    handles, parameter_count, ::ContextExpression
-) = nothing
-function _record_expression_requirements!(
-        handles, parameter_count, expression::OperationExpression
-    )
-    foreach(expression.arguments) do argument
-        _record_expression_requirements!(handles, parameter_count, argument)
-    end
-    return nothing
-end
-function _record_expression_requirements!(
-        handles, parameter_count, expression::AbstractStaticExpression
-    )
-    throw(
-        ArgumentError(
-            "checkerboard compilation encountered unsupported stage expression " *
-                string(typeof(expression))
-        )
-    )
-end
 
 _record_tracker_requirements!(
     keys, ::AbstractStaticExpression, bounded_keys = nothing

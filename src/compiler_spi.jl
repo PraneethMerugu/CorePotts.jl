@@ -16,6 +16,8 @@ module CompilerSPI
 
 import ..CorePotts: RNGNamespace, RNGOperationKey, rng_operation_keys
 public RNGNamespace, RNGOperationKey, rng_operation_keys
+import ..CorePotts: AbstractCellStageEvaluationContext, CellAssignmentEffect, BoundCellStateValueOperation, stage_cell
+public AbstractCellStageEvaluationContext, CellAssignmentEffect, BoundCellStateValueOperation, stage_cell
 
 import ..CorePotts:
     AbstractCompiledStage,

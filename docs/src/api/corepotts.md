@@ -69,7 +69,7 @@ integer provenance value.
 
 ### Scheduled state and relationship publication
 
-At each before- or after-lifecycle boundary, ordinary site and model assignment
+At each before- or after-lifecycle boundary, ordinary site, cell, and model assignment
 right-hand sides and relationship requests observe boundary-entry state.
 Assignments then publish in descriptor order. Iterated site updates and history
 appends retain their ordered position: each iteration observes the preceding
@@ -77,13 +77,22 @@ iteration, and a history append records the value at its position in the
 boundary. Prepared relationship changes publish after those state operations.
 Sequential and checkerboard execution share this contract; checkerboard
 evaluation and publication use the existing LocalMath execution path.
-Disabled model assignments do not publish: a later disabled assignment cannot
-undo an earlier enabled write to the same model value. Site assignments retain
+Lifecycle plan construction rejects state actions without the required participant:
+creation can initialize a new destination but cannot reset a source; removal,
+retirement, and transition can update their source but have no new destination.
+Daughter-state policies require division. `ResetLifecycleState` writes the existing
+source, whereas `InitializeLifecycleState` writes the allocated destination.
+Lifecycle value policies convert to the declared logical type. Inapplicable
+conversion methods and mismatched static-array lengths fail the transaction;
+equal-length static-array reshapes are preserved. Inexact integer and Boolean
+conversion failures are not yet covered by this checked lifecycle contract.
+Disabled model and cell assignments do not publish: a later disabled assignment cannot
+undo an earlier enabled write to the same logical value. Site assignments retain
 their entry-value fallback when disabled.
 Assignment results are converted to the declared logical type before finiteness is
 checked; conversion overflow is a failed transaction, not a published infinity.
 
-A site or model assignment stores one logical value, which need not be a
+A site, cell, or model assignment stores one logical value, which need not be a
 scalar. Supported fixed-size products retain their declared type through
 assignment, logical checkpoint storage, and ownership-change clearing.
 A zero-dimensional singleton model block retains its declared shape in
@@ -113,6 +122,31 @@ targets remain singleton model-owned blocks.
 `ClearOnOwnershipChange` clears the registered value at a changed site, not the
 whole block. Unsupported operations or storage still require explicit
 admission; these contracts do not imply support for every value type or device.
+
+Compiler extensions declare `CompilerSPI.CellAssignmentEffect(target, kind)`
+at an existing after-MCS boundary. Its domain is the runtime's finite-cell
+identity table, not the occupied lattice: each active slot of the declared kind
+and a live generation is evaluated once, independently of volume. Inactive and
+other-kind slots evaluate neither the condition nor the right-hand side and
+retain their state. The `:cell_bound_state_value` operation reads the current
+cell's declared state through `AbstractCellStageEvaluationContext`, without
+converting a cell identity into a site.
+
+Cell assignments admit same-cell reads from `:cell` state schemas and explicit
+`:model_bound_state_value` reads from singleton `:model` schemas. Model values
+are held at boundary entry, even when another model assignment updates them in
+that boundary. Site reads do not acquire a cell binding implicitly.
+Each referenced cell block must cover the complete finite-cell identity capacity;
+an insufficient or wrong-domain block is rejected before initialization can
+mutate state. Both condition and value reads must appear in the descriptor's
+declared access contract; initialization does not infer missing declarations.
+Extra allocated slots are not additional identities and remain
+outside the execution view. An empty identity table performs no cell updates.
+Logical blocks may have zero-length dimensions, retaining their declared type
+and shape through allocation, adaptation, and checkpoint storage; negative
+dimensions remain invalid. This does not admit an empty physical lattice.
+Lifecycle ordering remains the existing before/after boundary ordering; a
+transient zero-volume identity is not silently filtered out by volume.
 
 The existing operation lookup supplies `operation_callable(Val(:fixed_vector),
 v"1.0.0")` for immutable vector construction and

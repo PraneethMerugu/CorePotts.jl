@@ -36,13 +36,15 @@ function state_storage_class(schema::StateBlockSchema)
 end
 
 function _dense_shape(schema)
-    schema.shape isa Tuple &&
-        all(dimension -> dimension isa Integer && dimension > 0, schema.shape) &&
+    if schema.shape isa Tuple
+        all(dimension -> dimension isa Integer && dimension >= 0, schema.shape) ||
+            throw(ArgumentError("dense block $(schema.identity) requires nonnegative integer dimensions"))
         return Tuple(Int.(schema.shape))
-    schema.capacity > 0 && return (schema.capacity,)
+    end
+    schema.capacity >= 0 && return (schema.capacity,)
     throw(
         ArgumentError(
-            "dense block $(schema.identity) has no concrete positive shape"
+            "dense block $(schema.identity) has no concrete nonnegative shape"
         )
     )
 end
@@ -57,9 +59,11 @@ function allocate_state_block(
         )
     )
     values = if initial === nothing
-        map(CartesianIndices(_dense_shape(schema))) do _
-            _state_value_zero(schema.element_type)
+        allocated = Array{schema.element_type}(undef, _dense_shape(schema))
+        for index in eachindex(allocated)
+            allocated[index] = _state_value_zero(schema.element_type)
         end
+        allocated
     else
         converted = Array{schema.element_type}(initial)
         size(converted) == _dense_shape(schema) ||

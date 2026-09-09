@@ -19,6 +19,9 @@ AbstractEvaluatorExecutionContext end
 """Context supporting one site-stage evaluation."""
 abstract type AbstractSiteStageEvaluationContext <:
 AbstractEvaluatorExecutionContext end
+"""Context supporting one active finite-cell stage evaluation."""
+abstract type AbstractCellStageEvaluationContext <:
+AbstractEvaluatorExecutionContext end
 """Context supporting one relationship-stage evaluation."""
 abstract type AbstractRelationshipStageEvaluationContext <:
 AbstractEvaluatorExecutionContext end
@@ -65,9 +68,9 @@ struct BlockLocation{N}
                 "a block location offset must be positive"
             )
         )
-        all(>(0), shape) || throw(
+        all(>=(0), shape) || throw(
             ArgumentError(
-                "block location dimensions must be positive"
+                "block location dimensions must be nonnegative"
             )
         )
         return new{N}(Int32(offset), Int32.(shape))
@@ -251,6 +254,42 @@ OperationExpression(operation, arguments...) =
 """Concrete evaluator wrapper around one recursively typed expression."""
 struct StaticEvaluator{E <: AbstractStaticExpression}
     expression::E
+end
+
+_record_expression_requirements!(handles, parameter_count, ::LiteralExpression) =
+    nothing
+function _record_expression_requirements!(
+        handles, parameter_count, expression::ParameterExpression
+    )
+    parameter_count[] = max(parameter_count[], Int(expression.index))
+    return nothing
+end
+function _record_expression_requirements!(
+        handles, parameter_count, expression::StateExpression
+    )
+    any(==(expression.handle), handles) || push!(handles, expression.handle)
+    return nothing
+end
+_record_expression_requirements!(
+    handles, parameter_count, ::ContextExpression
+) = nothing
+function _record_expression_requirements!(
+        handles, parameter_count, expression::OperationExpression
+    )
+    foreach(expression.arguments) do argument
+        _record_expression_requirements!(handles, parameter_count, argument)
+    end
+    return nothing
+end
+function _record_expression_requirements!(
+        handles, parameter_count, expression::AbstractStaticExpression
+    )
+    throw(
+        ArgumentError(
+            "static expression requirements encountered unsupported expression " *
+                string(typeof(expression))
+        )
+    )
 end
 
 """Callable marker requesting canonical left-to-right argument folding."""

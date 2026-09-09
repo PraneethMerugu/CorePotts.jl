@@ -6,6 +6,50 @@ struct _SiteStageEvaluationContext{R, I} <:
     site::I
 end
 
+struct _CellStageEvaluationContext{R} <: AbstractCellStageEvaluationContext
+    runtime::R
+    cell::Int32
+end
+
+@inline stage_cell(context::_CellStageEvaluationContext) = context.cell
+@inline stage_site(::ModelStageSite, ::_CellStageEvaluationContext) = Int32(1)
+@inline _compiled_evaluator_parameters(context::_CellStageEvaluationContext) = context.runtime.parameters
+@inline evaluator_parameters(context::_CellStageEvaluationContext) = context.runtime.parameters
+@inline state_value(context::_CellStageEvaluationContext, handle::StateHandle, slot) =
+    @inbounds state_block(context.runtime.descriptor_state, handle).values[slot]
+
+@inline function _cell_stage_eligible(effect::CellAssignmentEffect, kind, generation)
+    return kind == effect.domain_kind && !iszero(generation)
+end
+
+function _emit_after_mcs_descriptor!(runtime, descriptor::CompiledStageDescriptor{C, V, E, AfterMCSStage}) where {C, V, E <: CellAssignmentEffect}
+    scratch = runtime.stage_buffers.after_mcs_cell[Int(descriptor.buffer_slot)]
+    T = _stage_value_type(descriptor.effect, eltype(runtime.parameters))
+    for cell in eachindex(runtime.cell_kinds)
+        if !_cell_stage_eligible(descriptor.effect, runtime.cell_kinds[cell], runtime.cell_generations[cell])
+            scratch[cell] = _state_value_zero(StageEvaluation{T})
+            continue
+        end
+        context = _CellStageEvaluationContext(runtime, Int32(cell))
+        condition = _compiled_evaluate_static(descriptor.condition, context)
+        condition isa Bool || throw(ArgumentError("cell-stage condition must return Bool"))
+        value = condition ? convert(T, _compiled_evaluate_static(descriptor.value, context)) : _state_value_zero(T)
+        _state_value_isfinite(value) || throw(DomainError(value, "cell-stage value must be finite"))
+        scratch[cell] = StageEvaluation(condition, value)
+    end
+    return runtime
+end
+
+function _apply_after_mcs_descriptor!(runtime, descriptor::CompiledStageDescriptor{C, V, E, AfterMCSStage}) where {C, V, E <: CellAssignmentEffect}
+    scratch = runtime.stage_buffers.after_mcs_cell[Int(descriptor.buffer_slot)]
+    values = state_block(runtime.descriptor_state, descriptor.effect.target).values
+    for cell in eachindex(scratch)
+        evaluation = scratch[cell]
+        evaluation.enabled && (values[cell] = evaluation.value)
+    end
+    return runtime
+end
+
 struct _RelationshipStageEvaluationContext{R, S} <:
     AbstractRelationshipStageEvaluationContext
     runtime::R

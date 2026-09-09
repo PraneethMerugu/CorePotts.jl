@@ -61,10 +61,10 @@ end
     descriptor = _metal_model_assignment_descriptor()
     gate_space = LocalMath.Space(CorePotts._CheckerboardStageGateDomain, 1)
     external_gate = LocalMath.Field(gate_space, Bool)
-    declaration = CorePotts._compile_model_assignment_law(
+    declaration = CorePotts._compile_identity_assignment_law(
         descriptor,
         (:metal_model_assignment,),
-        nothing,
+        LocalMath.Space(CorePotts._CheckerboardStageModelDomain, 1),
         external_gate,
         Float32,
     )

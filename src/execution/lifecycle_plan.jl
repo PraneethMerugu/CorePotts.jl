@@ -115,7 +115,7 @@ end
 @doc "Declare the lifecycle effect unsupported for this state." UnsupportedLifecycleState
 @doc "Write the configured retirement value." RetireToLifecycleState
 @doc "Preserve source state." PreserveLifecycleState
-@doc "Reset destination state." ResetLifecycleState
+@doc "Reset source state." ResetLifecycleState
 @doc "Evaluate one state transform." TransformLifecycleState
 @doc "Copy source state to both daughters." CopyDaughtersLifecycleState
 @doc "Preserve parent state and reset daughter state." PreserveParentResetDaughterLifecycleState
@@ -126,6 +126,24 @@ end
 
 @inline _lifecycle_state_action_bit(action::LifecycleStateAction) =
     UInt16(1) << (UInt16(action) - UInt16(1))
+
+function _validate_lifecycle_state_action(effect, action, source_handle, rule_index)
+    # Create has only a new destination; removal, retirement, and transition
+    # have only a source. Division supplies both parent and daughter identities.
+    valid = if action in (PreserveLifecycleState, UnsupportedLifecycleState)
+        true
+    elseif action === InitializeLifecycleState
+        effect in (CreateCellLifecycleEffect, DivideCellLifecycleEffect)
+    elseif action in (RetireToLifecycleState, ResetLifecycleState, TransformLifecycleState)
+        effect !== CreateCellLifecycleEffect
+    else
+        effect === DivideCellLifecycleEffect
+    end
+    valid || throw(ArgumentError(
+        "lifecycle source $source_handle state rule $rule_index: $action requires identities unavailable for $effect"
+    ))
+    return nothing
+end
 @inline _lifecycle_state_action_value(::Val{Action}) where {Action} = Action
 @inline _lifecycle_state_action_value(::Val{:initialize}) =
     InitializeLifecycleState
@@ -643,6 +661,9 @@ function LifecycleExecutionPlan(
             rule_index = Int(descriptor.state_rule_offset) + offset
             action = call_lifecycle_state_rule(
                 _lifecycle_state_rule_action, state_rules, rule_index
+            )
+            _validate_lifecycle_state_action(
+                descriptor.effect, action, descriptor.source_handle, rule_index
             )
             state_action_masks[Int(descriptor.effect)] |=
                 _lifecycle_state_action_bit(action)

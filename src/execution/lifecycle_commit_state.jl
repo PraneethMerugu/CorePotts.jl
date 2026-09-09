@@ -118,6 +118,24 @@ end
         values,
         value,
     )
+    # Heterogeneous evaluator banks can expose impossible conversion branches
+    # to device inference even when each selected policy has the correct type.
+    # StaticArrays conversion permits equal-length reshapes, but differing
+    # lengths throw even when the conversion method is applicable.
+    if !applicable(convert, eltype(values), value) ||
+            (
+            eltype(values) <: StaticArrays.StaticArray && value isa StaticArrays.StaticArray &&
+                length(eltype(values)) != length(value)
+        )
+        _set_lifecycle_status!(
+            workspace,
+            ProgramStatusEvaluator;
+            source = descriptor.source_handle,
+            anchor,
+            detail = LifecycleDetailStateValueInvalid,
+        )
+        return LifecycleEvaluationFailed()
+    end
     converted = convert(eltype(values), value)
     if !_state_value_isfinite(converted)
         _set_lifecycle_status!(

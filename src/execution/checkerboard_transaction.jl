@@ -695,6 +695,7 @@ _checkerboard_tracker_scratch(field::LocalMath.Field) = LocalMath.Field(
 function _checkerboard_tracker_validation(
         field::LocalMath.Field, ::Type{T}, tracker_index, field_index,
     ) where {T}
+    iszero(length(field.space)) && return nothing
     source = LocalMath.Space(1)
     relation = LocalMath.FixedRelation(
         source => field.space; degree = length(field.space))
@@ -744,10 +745,10 @@ function _checkerboard_transactional_tracker_group(laws_builder,
                 tracker_index, :_, index))
         for (index, (source, scratch)) in enumerate(zip(source_fields, fields)))
     laws = laws_builder(fields)
-    validations = ntuple(length(fields)) do index
+    validations = filter(!isnothing, ntuple(length(fields)) do index
         _checkerboard_tracker_validation(
             fields[index], eltype(source_fields[index]), tracker_index, index)
-    end
+    end)
     return (; tracker_index = Int32(tracker_index), source_fields, fields,
         paths, initialization_laws, laws,
         validation_laws = map(validation -> validation.law, validations),
