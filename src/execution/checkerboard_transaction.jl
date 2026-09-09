@@ -215,6 +215,50 @@ struct _CheckerboardAcceptedStatePublication{N,HasAssignments,H,A,C}
     clear_handles::C
 end
 
+struct _CheckerboardHistoryOwnershipClear end
+
+@inline function (::_CheckerboardHistoryOwnershipClear)(item::Int32, reads, parameters)
+    value = something(@inbounds getfield(reads, 1)[1].value)
+    before = something(@inbounds getfield(reads, 2)[1].value)
+    after = something(@inbounds getfield(reads, 3)[1].value)
+    return (
+        value = LocalMath.UniqueValue(
+            before == after ? value : _state_value_zero(typeof(value))
+        ),
+    )
+end
+
+function _checkerboard_history_clear_groups(accepted, ownership_scratch, gate)
+    return map(accepted.history_clear_handles) do handle
+        space = LocalMath.Space(_CheckerboardHistoryDomain, Tuple(Int.(handle_shape(handle))))
+        live = LocalMath.Field(space, _state_handle_element_type(handle))
+        shadow = LocalMath.Field(space, eltype(live))
+        site_relation = LocalMath.FixedRelation(space => accepted.lattice_space; degree = 1)
+        identity = LocalMath.IdentityRelation(space)
+        stage = LocalMath.Stage(
+            space,
+            (
+                value = LocalMath.Access(live, identity; required = true),
+                before = LocalMath.Access(accepted.ownership, site_relation; required = true),
+                after = LocalMath.Access(ownership_scratch, site_relation; required = true),
+            ),
+            (
+                LocalMath.Publication(
+                    (
+                        LocalMath.FieldPublication(
+                            shadow, identity, LocalMath.PublicationValue(:value)
+                        ),
+                    ), LocalMath.Unique(eltype(live))
+                ),
+            ),
+            LocalMath.Evaluator(_CheckerboardHistoryOwnershipClear()),
+            LocalMath.Control(; gate),
+            LocalMath.SourceOrigin(@__FILE__, @__LINE__; label = :checkerboard_history_ownership_clear),
+        )
+        return (; handle, live, shadow, site_relation, law = LocalMath.LocalLaw(stage))
+    end
+end
+
 _checkerboard_accepted_state_publication(
         ::Val{Names}, ::Val{HasAssignments}, handles, assignments,
         clear_handles) where {Names,HasAssignments} =

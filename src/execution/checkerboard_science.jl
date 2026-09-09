@@ -1125,8 +1125,12 @@ function _checkerboard_scientific_declaration(
     topology = _checkerboard_proposal_topology_declaration(
         checkerboard, proposal_offsets, seed, replica, repeat)
     inventory = _proposal_gather_inventory(descriptor_plan)
+    history_clear_handles = filter(ownership_change_handles) do handle
+        state_read_source(stage_plan, descriptor_plan.state_layout, handle).schema.domain === :history
+    end
+    site_clear_handles = filter(handle -> !(handle in history_clear_handles), ownership_change_handles)
     requirements = _checkerboard_scientific_requirements(
-        inventory, stage_plan, ownership_change_handles, tracker_plan)
+        inventory, stage_plan, site_clear_handles, tracker_plan)
     state_handles = requirements.state_handles
     terms = _compile_proposal_terms(descriptor_plan, state_handles)
     numeric_terms = _proposal_numeric_terms(terms)
@@ -1607,7 +1611,7 @@ function _checkerboard_scientific_declaration(
         scientific_evaluator, constraint_evaluator, literal_constraint,
         state_handles, state_fields,
         accepted_state_handles, accepted_state_fields,
-        ownership_change_handles,
+        ownership_change_handles = site_clear_handles, history_clear_handles,
         proposal_site_relation, model_state_relation, science_parameters, parameter_count, contact,
         contact_ranges, tracker_keys, tracker_descriptors,
         tracker_source_fields, tracker_pair_fields,

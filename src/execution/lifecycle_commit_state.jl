@@ -75,7 +75,7 @@ end
     for rule in plan.ownership_rules
         rule.action === ClearLifecycleOwnershipState || continue
         values = state_block(workspace.staged_descriptor_state, rule.handle).values
-        @inbounds values[linear] = _state_value_zero(eltype(values))
+        _clear_site_samples!(values, site)
     end
     return true
 end

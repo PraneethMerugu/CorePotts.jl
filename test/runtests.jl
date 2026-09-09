@@ -26,6 +26,7 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_logical_state_values.jl",
     "test_history_sample_storage.jl",
     "test_history_lifecycle.jl",
+    "test_history_ownership_change.jl",
     "test_completed_mcs_cadence.jl",
     "test_model_state_proposal_reads.jl",
     "test_model_state_energy.jl",

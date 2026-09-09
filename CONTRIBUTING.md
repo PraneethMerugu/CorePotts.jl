@@ -121,6 +121,19 @@ applies the existing state-policy body to each dense sample. The canonical
 Before reads the immutable bank and Planned reads the request-local candidate.
 `test_history_lifecycle.jl` defends corresponding-sample reads, real identity,
 and late-sample rollback alongside ordinary cell-state behavior.
+Site-history ownership changes use the same canonical source proof. Sequential
+copy and lifecycle publication share `_clear_site_samples!`; the checkerboard
+accepted-copy law compares live ownership with its existing candidate ownership
+and publishes every dense sample through a degree-one source-site relation.
+Its history shadows use the same transaction gate and commit order as ordinary
+state. `test_history_ownership_change.jl` covers accepted/rejected copies,
+unequal proposal batches, all retained samples, and failure rollback.
+The ordinary and Metal runners share the scientific oracles in
+`test/fixtures/history_ownership_support.jl` and `history_sample_support.jl`.
+The latter preserves explicit prehistory at initialization and exercises two-lag
+feedback with checkpoint continuation. Device continuation declares its provider
+in the compiled program before initialization; restoring then adapting that same
+program preserves the existing exact execution-identity checks.
 `stage_runtime.jl` owns sequential boundary evaluation and application;
 `checkerboard_stage_compiler.jl` lowers the same boundary-entry reads and
 ordered publications into LocalMath plans. Its evaluation and publication

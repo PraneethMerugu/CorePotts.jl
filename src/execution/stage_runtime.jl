@@ -549,6 +549,18 @@ end
     return nothing
 end
 
+@inline function _clear_site_samples!(values, site::CartesianIndex{N}) where {N}
+    cleared = _state_value_zero(eltype(values))
+    if ndims(values) == N
+        @inbounds values[site] = cleared
+    else
+        for sample in axes(values, N + 1)
+            @inbounds values[site, sample] = cleared
+        end
+    end
+    return values
+end
+
 function _clear_ownership_changed_state!(
         layout::StateLayout,
         state::AuxiliaryState,
@@ -560,16 +572,9 @@ function _clear_ownership_changed_state!(
             lifecycle.declared : nothing
         declared === :ClearOnOwnershipChange || continue
         values = state_block(state, entry.handle).values
-        @inbounds values[site] = _state_value_zero(eltype(values))
+        _clear_site_samples!(values, site)
     end
     return state
-end
-
-@inline _clear_ownership_changed_handles!(::Tuple{}, state, site) = state
-@inline function _clear_ownership_changed_handles!(handles::Tuple, state, site)
-    values = state_block(state, first(handles)).values
-    @inbounds values[site] = _state_value_zero(eltype(values))
-    return _clear_ownership_changed_handles!(Base.tail(handles), state, site)
 end
 
 function _emit_after_mcs_descriptor!(
