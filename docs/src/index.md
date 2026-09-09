@@ -49,6 +49,9 @@ and destination use the same backend. Lifecycle staged-state aliases are then
 rebound by their existing owner, and execution preparation creates fresh
 provider resources. Compiled declarations and logically immutable lifecycle
 receipts may be shared; no supported operation mutates them.
+Storage adaptation retains the topology identity computed from the canonical
+host declaration. Tracker admission uses the actual destination backend while
+preserving each tracker's adaptation hook and structural checks.
 
 The shared `fixtures/program_adaptation_support.jl` tests retain and advance
 the source and two adapted runtimes, checking ordinary state, staged inputs,

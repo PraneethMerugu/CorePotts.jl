@@ -407,26 +407,35 @@ tracker_kernel_plan(plan::TrackerExecutionPlan) =
     TrackerKernelPlan(plan.descriptors)
 tracker_kernel_plan(plan::TrackerKernelPlan) = plan
 
-function adapt_tracker_kernel_plan(to, plan::AbstractTrackerPlan)
+function adapt_tracker_kernel_plan(to, plan::AbstractTrackerPlan, backend)
     descriptors = map(plan.descriptors) do descriptor
         support = tracker_support(descriptor)
-        support.gpu || throw(ArgumentError(
-            "tracker $(tracker_quantities(descriptor)) does not declare GPU " *
-            "support (reason code $(support.reason_code))"
-        ))
+        _capability_supports_engine_backend(support, CheckerboardEngine, backend) ||
+            throw(
+            ArgumentError(
+                "tracker $(tracker_quantities(descriptor)) does not declare checkerboard $(backend) " *
+                    "support (reason code $(support.reason_code))"
+            )
+        )
         adapted = tracker_adapt(to, descriptor)
         if descriptor isa DenseScalarTrackerGroup
             eltype(adapted.descriptors) === eltype(descriptor.descriptors) ||
-                throw(ArgumentError(
+                throw(
+                ArgumentError(
                     "tracker-group adaptation changed its structural member type"
-                ))
-            eltype(adapted.source_handles) === Int32 || throw(ArgumentError(
-                "tracker-group adaptation changed its source-handle type"
-            ))
+                )
+            )
+            eltype(adapted.source_handles) === Int32 || throw(
+                ArgumentError(
+                    "tracker-group adaptation changed its source-handle type"
+                )
+            )
         else
-            typeof(adapted) === typeof(descriptor) || throw(ArgumentError(
-                "tracker adaptation changed its structural descriptor type"
-            ))
+            typeof(adapted) === typeof(descriptor) || throw(
+                ArgumentError(
+                    "tracker adaptation changed its structural descriptor type"
+                )
+            )
         end
         adapted
     end
