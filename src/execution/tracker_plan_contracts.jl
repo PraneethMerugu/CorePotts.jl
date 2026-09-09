@@ -64,18 +64,30 @@ struct SiteSumTracker{T, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression
     expression::E
     absolute_tolerance::T
     relative_tolerance::T
+
+    function SiteSumTracker{T, Q, E}(
+            quantity::Q, expression::E, absolute_tolerance, relative_tolerance
+        ) where {T, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression}
+        absolute = convert(T, absolute_tolerance)
+        relative = convert(T, relative_tolerance)
+        isfinite(absolute) && absolute >= zero(T) &&
+            isfinite(relative) && relative >= zero(T) || throw(ArgumentError(
+                "site sum comparison tolerances must be finite and nonnegative"))
+        return new{T, Q, E}(quantity, expression, absolute, relative)
+    end
 end
+
+SiteSumTracker(quantity::Q, expression::E, absolute::T, relative::T) where {
+    T, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression,
+} = SiteSumTracker{T, Q, E}(quantity, expression, absolute, relative)
 
 function SiteSumTracker(::Type{T}, quantity::Q, expression::E;
         absolute_tolerance = zero(T), relative_tolerance = zero(T)) where {
         T <: AbstractFloat, Q <: QualifiedTrackerKey, E <: AbstractStaticExpression,
     }
-    absolute = convert(T, absolute_tolerance)
-    relative = convert(T, relative_tolerance)
-    isfinite(absolute) && absolute >= zero(T) &&
-        isfinite(relative) && relative >= zero(T) || throw(ArgumentError(
-            "site sum comparison tolerances must be finite and nonnegative"))
-    return SiteSumTracker{T, Q, E}(quantity, expression, absolute, relative)
+    return SiteSumTracker{T, Q, E}(
+        quantity, expression, absolute_tolerance, relative_tolerance
+    )
 end
 """Store one scalar of type `T` per finite owner."""
 struct DenseOwnerScalarStorage{T} <: AbstractTrackerStorage end
