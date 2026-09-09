@@ -109,11 +109,9 @@ provide their execution-domain shapes without expanding parameter storage.
 Cell effects use the same boundary emission/application transaction and the
 same identity-domain publication builder as singleton model effects. Their
 distinct evaluation context reads finite-cell slots, not lattice sites.
-`program/runtime.jl` invokes the `stage_plan.jl` cell-domain validator before
-initialization. It derives expression requirements using the sole walker in
-`static_evaluator.jl`, checks declared reads, and resolves handles against the
-existing state-layout schemas and runtime identity capacity; the descriptor's
-kind and the runtime kind/generation tables remain the eligibility authorities.
+The cell-domain validator derives expression requirements using the sole
+walker in `static_evaluator.jl`; the descriptor's kind and the runtime
+kind/generation tables remain the eligibility authorities.
 Extra allocated state capacity is bound as a view over the same storage, not
 another identity registry. `test_cell_stage_execution.jl` owns once-per-cell,
 inactive-slot, structured-value, and capacity behavior.
