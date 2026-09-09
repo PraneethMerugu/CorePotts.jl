@@ -18,6 +18,22 @@ CorePotts.tracker_contract(::UnqualifiedCapabilityTracker) =
         CorePotts.LatticeLinearTrackerCost(),
     )
 
+struct GPUOnlyCapabilityTracker <: CorePotts.AbstractTrackerDescriptor end
+
+CorePotts.tracker_contract(::GPUOnlyCapabilityTracker) =
+    CorePotts.TrackerContract(
+    Val(:gpu_only_capability_tracker),
+    CorePotts.OwnershipTrackerSource(),
+    CorePotts.DenseOwnerScalarStorage{Int32}(),
+    CorePotts.AcceptedCommitTrackerVisibility(),
+    CorePotts.ClaimedOwnerExclusiveTrackerConcurrency(),
+    CorePotts.OldNewOwnerUpdateBound(),
+    CorePotts.PersistTrackerCheckpoint(),
+    CorePotts.TrackerSupport(true, true, false, true, 0x5a03),
+    CorePotts.ConstantTrackerCost(),
+    CorePotts.LatticeLinearTrackerCost(),
+)
+
 function _checkpoint_with_extensions(checkpoint, extensions)
     checksum = CorePotts._program_checkpoint_checksum(
         checkpoint.schema, checkpoint.program_fingerprint, checkpoint.snapshot,
@@ -77,7 +93,8 @@ end
     cpu_program = test_program(CorePotts.CheckerboardProgramEngine())
     cpu_report = CorePotts.program_capability_report(cpu_program)
     cpu_adapted = CorePotts._adapted_program_capability_report(
-        cpu_report, QualifiedAdapterNamespace.QualifiedArray)
+        cpu_program, cpu_report, QualifiedAdapterNamespace.QualifiedArray
+    )
     @test cpu_adapted.key.device === :QualifiedArray
     @test cpu_adapted.key.environment.adapted_backend.provider ===
           :QualifiedArray
@@ -88,7 +105,8 @@ end
     )
     provider_report = CorePotts.program_capability_report(provider_program)
     provider_adapted = CorePotts._adapted_program_capability_report(
-        provider_report, QualifiedAdapterNamespace.QualifiedArray)
+        provider_program, provider_report, QualifiedAdapterNamespace.QualifiedArray
+    )
     @test provider_adapted.key.device === :QualifiedProvider
     @test provider_adapted.key.environment.adapted_backend.provider ===
           :QualifiedProvider
@@ -97,6 +115,7 @@ end
     @test CorePotts._capability_key_fingerprint(provider_adapted.key) ==
           CorePotts._capability_key_fingerprint(
               CorePotts._adapted_program_capability_report(
+            provider_program,
                   provider_report,
                   QualifiedAdapterNamespace.QualifiedArray,
               ).key,
@@ -108,6 +127,55 @@ end
     foreign_report = CorePotts.program_capability_report(foreign_program)
     @test CorePotts._capability_key_fingerprint(foreign_report.key) !=
           CorePotts._capability_key_fingerprint(provider_report.key)
+end
+
+@testset "Array adaptation uses CPU mechanism admission" begin
+    C = CorePotts
+    base = test_program(C.CheckerboardProgramEngine())
+    for T in (Float32, Float64), backend in (
+                C.CPUProgramBackend(), C.AdaptedProgramBackend{:UnknownTestDevice}(),
+            )
+        program = capability_test_program(base; scalar_type = T, backend)
+        source = C.program_capability_report(program)
+        adapted = C._adapted_program_capability_report(program, source, Array)
+        expected = C.program_capability_report(
+            capability_test_program(
+                program; backend = C.CPUProgramBackend(),
+            )
+        )
+        @test adapted.status === C.Supported
+        @test adapted.key.backend === C.CPUBackend
+        @test adapted.key.device === :host_cpu
+        @test adapted.key.scalar_type === T
+        @test adapted.key.topology == source.key.topology
+        @test adapted.key.math_policy == source.key.math_policy
+        @test !hasproperty(adapted.key.environment, :adapted_backend)
+        @test C.capability_key_fingerprint(adapted.key) == C.capability_key_fingerprint(expected.key)
+    end
+
+    # These are cold mechanism-admission witnesses, not device execution or a
+    # test-only provider whitelist. The unknown provider remains unsupported.
+    for (descriptor, supported) in (
+            (CPUOnlyCapabilityTracker(), true), (GPUOnlyCapabilityTracker(), false),
+        )
+        plan = C.TrackerExecutionPlan((descriptor,), "storage-adaptation-support")
+        program = capability_test_program(
+            base;
+            tracker_plan = plan, backend = C.AdaptedProgramBackend{:UnknownTestDevice}(),
+        )
+        source = C.program_capability_report(program)
+        @test source.status === C.Unsupported
+        @test (source.key.mechanisms.support_family === :unsupported) == supported
+        adapted = C._adapted_program_capability_report(program, source, Array)
+        @test adapted.key.backend === C.CPUBackend
+        @test C.capability_authorizes_execution(adapted) == supported
+        @test (adapted.key.mechanisms.support_family !== :unsupported) == supported
+    end
+
+    source = C.program_capability_report(base)
+    typed_array = C._adapted_program_capability_report(base, source, Array{Float32})
+    @test typed_array.status === C.Unsupported
+    @test typed_array.key.scalar_type === Float64
 end
 
 @testset "exact checkpoints compare explicit execution contracts" begin

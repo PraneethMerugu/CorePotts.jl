@@ -62,7 +62,27 @@ inputs; abort restores the execution position through the existing
 KernelAbstractions control kernel. Alternating commit/abort and no-input-step
 regressions live in `test_program_step_inputs.jl`, while
 `test_lifecycle_receipts.jl` exercises copy-schema validation, including empty
-storage. Adaptation additionally requires the device publication tests above.
+storage. The independent transaction regression in
+`test_compiled_program_execution.jl` also exercises both bank parities.
+Device guarantees require the corresponding actual-backend execution tests,
+not CPU tests alone.
+
+`adapt_program_runtime` is a source-preserving ownership boundary, not an
+ownership transfer. Its public path copies mutable host science and proposal
+scratch; ordinary internal runtime rebuilding retains the same owner by
+default. Workspace adaptation uses the existing storage-specific Adapt
+traversal and copies array leaves, including controls and scratch when source
+and destination use the same backend. Lifecycle staged-state aliases are then
+rebound by their existing owner, and execution preparation creates fresh
+provider resources. Compiled declarations and logically immutable lifecycle
+receipts may be shared; no supported operation mutates them.
+
+The shared `fixtures/program_adaptation_support.jl` tests retain and advance
+the source and two adapted runtimes, checking ordinary state, staged inputs,
+abort, lifecycle removal, counters and receipts. The ordinary CPU entrypoint
+is `test_program_adaptation.jl`; the actual Metal entrypoint is
+`metal/corepotts_program_adaptation.jl`. Storage adaptation does not itself
+establish cross-backend checkpoint portability or bitwise trajectory parity.
 
 ## Qualified semantic randomness
 

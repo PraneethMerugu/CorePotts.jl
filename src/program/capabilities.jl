@@ -706,10 +706,11 @@ end
 function _adapted_mechanism_profile(
         program::CompiledPottsProgram,
         source::CapabilityMechanismProfile,
+        backend::CapabilityBackend,
     )
     engine = _capability_engine(program.engine)
     admitted = _capability_mechanism_family_admitted(
-        program, engine, AdaptedBackend
+        program, engine, backend
     )
     support_family, identities, authority, exact_replay =
         _capability_mechanism_support(program, admitted)
@@ -731,7 +732,8 @@ end
 
 function _adapted_program_capability_report(
         report::ProgramCapabilityReport, to,
-        mechanisms::CapabilityMechanismProfile = report.key.mechanisms,
+        mechanisms::CapabilityMechanismProfile,
+        backend::CapabilityBackend,
     )
     source = report.key
     # A compiled program may already name its logical provider contract (for
@@ -739,13 +741,19 @@ function _adapted_program_capability_report(
     # storage converter (`MtlArray`).  Preserve the declared provider across
     # storage adaptation.  CPU-origin programs have no such provider contract,
     # so their adapter identity is necessarily derived from the converter.
-    device = source.backend === AdaptedBackend ? source.device : nameof(to)
-    environment = merge(source.environment, (
-        adapted_backend = adapted_device_environment(Val(device), source),
-    ))
+    # Array storage executes on the host, even when the source runtime names
+    # a device provider. Its admission and environment must describe that CPU.
+    device = backend === CPUBackend ? :host_cpu :
+        source.backend === AdaptedBackend ? source.device : nameof(to)
+    environment = backend === CPUBackend ? _capability_environment_identity() :
+        merge(
+            source.environment, (
+                adapted_backend = adapted_device_environment(Val(device), source),
+            )
+        )
     key = ProgramCapabilityKey(
         source.engine,
-        AdaptedBackend,
+        backend,
         device,
         source.topology,
         source.scalar_type,
@@ -776,10 +784,11 @@ function _adapted_program_capability_report(
         report::ProgramCapabilityReport,
         to,
     )
+    backend = to === Array ? CPUBackend : AdaptedBackend
     mechanisms = _adapted_mechanism_profile(
-        program, report.key.mechanisms
+        program, report.key.mechanisms, backend
     )
-    return _adapted_program_capability_report(report, to, mechanisms)
+    return _adapted_program_capability_report(report, to, mechanisms, backend)
 end
 
 """Return whether a capability report admits functional execution."""

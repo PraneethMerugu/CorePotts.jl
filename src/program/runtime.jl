@@ -54,16 +54,24 @@ mutable struct ProgramRuntime{T <: AbstractFloat, N, P, C, R, TS, D, SB, EW, LW}
 end
 
 function _rebuild_program_runtime(
-        runtime::ProgramRuntime{T, N}, capability_report, engine_workspace
+        runtime::ProgramRuntime{T, N}, capability_report, engine_workspace;
+        ownership = runtime.ownership,
+        cell_kinds = runtime.cell_kinds,
+        cell_generations = runtime.cell_generations,
+        trackers = runtime.trackers,
+        relationships = runtime.relationships,
+        descriptor_state = runtime.descriptor_state,
+        proposal_contributions = runtime.proposal_contributions,
+        parameters = runtime.parameters,
     ) where {T, N}
     return ProgramRuntime{
         T,
         N,
         typeof(runtime.program),
         typeof(capability_report),
-        typeof(runtime.relationships),
-        typeof(runtime.trackers),
-        typeof(runtime.descriptor_state),
+        typeof(relationships),
+        typeof(trackers),
+        typeof(descriptor_state),
         typeof(runtime.stage_buffers),
         typeof(engine_workspace),
         typeof(runtime.lifecycle_workspace),
@@ -71,17 +79,17 @@ function _rebuild_program_runtime(
         _PROGRAM_RUNTIME_CONSTRUCTION_TOKEN,
         runtime.program,
         capability_report,
-        runtime.ownership,
-        runtime.cell_kinds,
-        runtime.cell_generations,
-        runtime.trackers,
-        runtime.relationships,
-        runtime.descriptor_state,
-        runtime.proposal_contributions,
+        ownership,
+        cell_kinds,
+        cell_generations,
+        trackers,
+        relationships,
+        descriptor_state,
+        proposal_contributions,
         runtime.stage_buffers,
         engine_workspace,
         runtime.lifecycle_workspace,
-        runtime.parameters,
+        parameters,
         runtime.seed,
         runtime.replica,
         runtime.repeat,
@@ -430,7 +438,13 @@ function initialize_program(
     return runtime
 end
 
-"""Adapt a checkerboard runtime's execution banks to device storage `to`."""
+"""
+Return an independently mutable checkerboard runtime using storage `to`.
+
+The source remains usable and unchanged, including for same-backend adaptation.
+Scientific state, counters and semantic randomness are retained; prepared
+execution resources are rebuilt for the target storage.
+"""
 function adapt_program_runtime(to, runtime::ProgramRuntime{T, N}) where {T, N}
     _require_packed_runtime_relationships(runtime.relationships)
     runtime.settled || throw(ArgumentError(
@@ -451,7 +465,15 @@ function adapt_program_runtime(to, runtime::ProgramRuntime{T, N}) where {T, N}
         to, core; capability_report
     )
     adapted = _rebuild_program_runtime(
-        runtime, capability_report, engine_workspace
+        runtime, capability_report, engine_workspace;
+        ownership = copy(runtime.ownership),
+        cell_kinds = copy(runtime.cell_kinds),
+        cell_generations = copy(runtime.cell_generations),
+        trackers = copy_tracker_state(runtime.trackers),
+        relationships = copy(runtime.relationships),
+        descriptor_state = copy_auxiliary_state(runtime.descriptor_state),
+        proposal_contributions = copy(runtime.proposal_contributions),
+        parameters = copy(runtime.parameters),
     )
     return _prepare_checkerboard_execution(adapted; queue_mcs_capacity)
 end

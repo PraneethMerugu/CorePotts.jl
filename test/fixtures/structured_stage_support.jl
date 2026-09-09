@@ -34,6 +34,7 @@ end
 function _structured_stage_runtime(
         engine, left, right; ordered = false, after_transform = nothing,
         same_target = false, conditions = (true, true), model_shape = (1,),
+        parameter_defaults = Float32[],
     )
     schemas = map((:left_signal, :right_signal)) do name
         CorePotts.StateBlockSchema(
@@ -74,14 +75,14 @@ function _structured_stage_runtime(
     stage_plan = CorePotts.StageExecutionPlan(
         (), before, after, 0, 0, "structured-stage-boundaries",
     )
-    program = test_program(engine; descriptor_plan, stage_plan, scalar_type = Float32)
+    program = test_program(engine; descriptor_plan, stage_plan, scalar_type = Float32, parameter_defaults)
     initial = CorePotts.ProgramInitialState(
         ones(Int32, 6, 6), Int16[2]; scalar_type = Float32,
         descriptor_state = CorePotts.allocate_auxiliary_state(
             layout, (fill(left, model_shape), fill(right, model_shape)),
         ),
     )
-    runtime = CorePotts.initialize_program(program, initial, Float32[], UInt64(0x7151), UInt32(1))
+    runtime = CorePotts.initialize_program(program, initial, parameter_defaults, UInt64(0x7151), UInt32(1))
     return runtime, handles
 end
 

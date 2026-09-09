@@ -11,6 +11,7 @@ const _COREPOTTS_COMPILED_PROGRAM_TESTS = (
     "test_compiled_program_extensibility_storage.jl",
 )
 const _COREPOTTS_DIRECT_TESTS = (
+    "test_program_adaptation.jl",
     "test_api_boundary.jl",
     "test_backend_conformance.jl",
     "test_downstream_spi.jl",
