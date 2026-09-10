@@ -16,6 +16,7 @@ const COREPOTTS_METAL_WITNESSES = (
     "corepotts_cell_stages.jl",
     "corepotts_history_ownership.jl",
     "corepotts_history_sampling.jl",
+    "corepotts_history_lifecycle.jl",
     "corepotts_stage_anchor_contexts.jl",
     "corepotts_cell_domain_boundaries.jl",
     "corepotts_lifecycle_value_conversion.jl",
