@@ -49,6 +49,7 @@ import ..CorePotts:
     LifecycleReceiptOrderError,
     NoCheckerboardPlan,
     ObservationSettlement,
+    InitializationSettlement,
     OccupiedComponentSlotError,
     PeriodicBoundary,
     ProgramCapabilityError,
@@ -161,7 +162,7 @@ public FinalizationSettlement, PublicStepSettlement, SaveSettlement
 public HostCallbackSettlement, CheckpointSettlement
 public IndexReadSettlement, IndexMutationSettlement
 public ComponentExchangeSettlement, ProgressSettlement
-public StatisticsSettlement, ObservationSettlement
+public StatisticsSettlement, ObservationSettlement, InitializationSettlement
 public supports_queued_program_execution
 public enqueue_program_mcs!, enqueue_program_through!, settle_program!
 public program_backend_name, adapt_program_runtime, checkerboard_plan_report

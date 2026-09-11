@@ -12,7 +12,6 @@ struct _LifecycleTriggerContext{R, I} <:
     generation::UInt32
     site::I
     occurrence::Int32
-    operation::UInt16
 end
 
 struct _LifecyclePlacementContext{R, I} <:
@@ -27,7 +26,6 @@ struct _LifecyclePlacementContext{R, I} <:
     generation::UInt32
     site::I
     occurrence::Int32
-    operation::UInt16
 end
 
 struct _LifecyclePartitionContext{R, I} <:
@@ -42,7 +40,6 @@ struct _LifecyclePartitionContext{R, I} <:
     generation::UInt32
     site::I
     occurrence::Int32
-    operation::UInt16
 end
 
 struct _LifecycleStateContext{R, P, I, H} <:
@@ -65,7 +62,6 @@ struct _LifecycleStateContext{R, P, I, H} <:
     state_handle::H
     site::I
     occurrence::Int32
-    operation::UInt16
 end
 
 """Read-only request-local planned view over one common lifecycle snapshot."""
@@ -87,7 +83,7 @@ const _LifecycleContext = Union{
 @inline lifecycle_anchor(context::_LifecycleContext) = context.anchor
 """Return the lifecycle evaluation's selected site value."""
 @inline lifecycle_site(context::_LifecycleContext) = context.site
-"""Return the canonical occurrence ordinal for a lifecycle evaluation."""
+"""Return the canonical occurrence ordinal for a lifecycle evaluation. State policies use the retained lag ordinal (zero is newest); ordinary cell state uses zero."""
 @inline lifecycle_occurrence(context::_LifecycleContext) = context.occurrence
 """Return the stable descriptor source identity."""
 @inline lifecycle_source_identity(context::_LifecycleContext) =
@@ -170,7 +166,6 @@ function _lifecycle_workspace_slice(
         context.generation,
         context.site,
         context.occurrence,
-        context.operation,
     )
 end
 
@@ -188,7 +183,6 @@ function _lifecycle_workspace_slice(
         context.generation,
         context.site,
         context.occurrence,
-        context.operation,
     )
 end
 
@@ -207,7 +201,6 @@ function _lifecycle_workspace_slice(
         context.generation,
         context.site,
         context.occurrence,
-        context.operation,
     )
 end
 
@@ -233,7 +226,6 @@ function _lifecycle_workspace_slice(
         context.state_handle,
         context.site,
         context.occurrence,
-        context.operation,
     )
 end
 
@@ -264,30 +256,32 @@ end
 @inline lifecycle_state_identity(context::_LifecycleStateContext) =
     context.state_identity
 
+@inline _lifecycle_state_sample_values(values::AbstractVector, sample::Integer) = values
+@inline _lifecycle_state_sample_values(values::AbstractMatrix, sample::Integer) =
+    view(values, :, sample)
+
 """Read the immutable pre-transaction value for the current state participant."""
 @inline function lifecycle_before_state_value(context::_LifecycleStateContext)
     index = context.source > 0 ? context.source : context.destination
-    index > 0 || return zero(eltype(state_block(
+    block = state_block(
         context.runtime.descriptor_state, context.state_handle
-    ).values))
-    return @inbounds state_block(
-        context.runtime.descriptor_state, context.state_handle
-    ).values[index]
+    ).values
+    values = _lifecycle_state_sample_values(block, size(block, 2) - context.occurrence)
+    index > 0 || return _state_value_zero(eltype(values))
+    return @inbounds values[index]
 end
 
 """Read the value planned earlier in the current lifecycle transaction."""
 @inline function lifecycle_planned_state_value(context::_LifecycleStateContext)
     index = context.role in (
-        DestinationLifecycleStateRole, DaughterLifecycleStateRole,
-    ) ? context.destination : context.source
-    values = state_block(
-        context.runtime.descriptor_state, context.state_handle
+            DestinationLifecycleStateRole, DaughterLifecycleStateRole,
+        ) ? context.destination : context.source
+    block = state_block(
+        context.planned.workspace.staged_descriptor_state, context.state_handle
     ).values
-    index > 0 || return zero(eltype(values))
-    return @inbounds state_block(
-        context.runtime.descriptor_state,
-        context.state_handle,
-    ).values[index]
+    values = _lifecycle_state_sample_values(block, size(block, 2) - context.occurrence)
+    index > 0 || return _state_value_zero(eltype(values))
+    return @inbounds values[index]
 end
 @inline _lifecycle_value_runtime(context::_LifecycleContext) = context.runtime
 @inline _lifecycle_value_runtime(context::_LifecycleStateContext) = context.planned
@@ -770,10 +764,7 @@ end
         ::ResourceOperation{:draw}, arguments, context::_LifecycleContext
     )
     T = eltype(context.runtime.parameters)
-    family = Int(arguments[1])
-    first_parameter = T(arguments[2])
-    second_parameter = T(arguments[3])
-    operation = UInt16(arguments[4])
+    operation = arguments[4]
     stream = context isa _LifecycleTriggerContext ? LifecycleTriggerStream :
         context isa _LifecyclePlacementContext ? LifecyclePlacementStream :
         context isa _LifecyclePartitionContext ? LifecyclePartitionStream :
@@ -785,10 +776,8 @@ end
     address_anchor = destination_address ? context.destination : context.anchor
     address_generation = destination_address ?
         context.destination_generation : context.generation
-    first_uniform = _lifecycle_uniform(
-        T,
-        context.runtime,
-        stream,
+    address = _lifecycle_address(
+        stream, context.runtime,
         operation,
         address_anchor,
         address_generation,
@@ -796,28 +785,11 @@ end
         destination = destination_address,
         draw = 0,
     )
-    family == 1 && return first_uniform < first_parameter
-    family == 2 && return muladd(
-        first_uniform, second_parameter - first_parameter, first_parameter
+    return _addressed_draw(
+        T, arguments,
+        _trajectory_key(context.runtime.seed, context.runtime.replica, context.runtime.repeat),
+        address
     )
-    if family == 3
-        iszero(second_parameter) && return first_parameter
-        second_uniform = _lifecycle_uniform(
-            T,
-            context.runtime,
-            stream,
-            operation,
-            address_anchor,
-            address_generation,
-            context.occurrence;
-            destination = destination_address,
-            draw = 1,
-        )
-        normal = sqrt(-T(2) * log(first_uniform)) *
-                 cos(T(2pi) * second_uniform)
-        return muladd(second_parameter, normal, first_parameter)
-    end
-    return T(NaN)
 end
 
 @inline function _compiled_resource_operation(

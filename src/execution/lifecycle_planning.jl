@@ -8,6 +8,31 @@ struct _TransitionLifecyclePlan <: _AbstractLifecyclePlanClass end
 
 struct _DivideLifecyclePlan <: _AbstractLifecyclePlanClass end
 
+@enum _LifecyclePlanningDisposition::UInt8 begin
+    _LifecyclePlanningSucceeded = 0x00
+    _LifecyclePlanningInadmissible = 0x01
+    _LifecyclePlanningStatusFailed = 0x02
+end
+
+struct _LifecyclePlanningResult
+    disposition::_LifecyclePlanningDisposition
+    detail::ProgramStatusDetailCode
+end
+
+@inline _lifecycle_planning_succeeded() = _LifecyclePlanningResult(
+    _LifecyclePlanningSucceeded, LifecycleDetailNone
+)
+@inline _lifecycle_planning_inadmissible(
+    detail::ProgramStatusDetailCode
+) = _LifecyclePlanningResult(_LifecyclePlanningInadmissible, detail)
+@inline _lifecycle_planning_status_failed() = _LifecyclePlanningResult(
+    _LifecyclePlanningStatusFailed, LifecycleDetailNone
+)
+@inline _lifecycle_planning_succeeded(result::_LifecyclePlanningResult) =
+    result.disposition === _LifecyclePlanningSucceeded
+@inline _lifecycle_planning_status_failed(result::_LifecyclePlanningResult) =
+    result.disposition === _LifecyclePlanningStatusFailed
+
 abstract type _AbstractLifecyclePartitionPlan end
 struct _RandomPlanePartitionPlan <: _AbstractLifecyclePartitionPlan end
 struct _PrincipalMajorPartitionPlan <: _AbstractLifecyclePartitionPlan end
@@ -89,23 +114,31 @@ function _plan_creation!(
         generation,
         site,
         Int32(0),
-        UInt16(descriptor.source_handle),
     )
     result = _evaluate_lifecycle_checked(
         mode, plan, descriptor.placement_evaluator, context, descriptor, workspace
     )
-    result isa LifecycleEvaluationFailed && return :status_failure
+    result isa LifecycleEvaluationFailed &&
+        return _lifecycle_planning_status_failed()
     external = descriptor.placement === ExternalLifecyclePlacement
     selection = external && result isa LifecycleSiteSelection ? result : nothing
-    external && selection === nothing && return :placement_selection_invalid
-    !external && !(result isa Integer) && return :placement_not_integral
+    external && selection === nothing && return _lifecycle_planning_inadmissible(
+        LifecycleDetailPlacementSelectionInvalid
+    )
+    !external && !(result isa Integer) && return _lifecycle_planning_inadmissible(
+        LifecycleDetailPlacementNotIntegral
+    )
     center = external ? 0 : Int(result)
     !external && !(1 <= center <= length(runtime.ownership)) &&
-        return :placement_out_of_bounds
+        return _lifecycle_planning_inadmissible(
+            LifecycleDetailPlacementOutOfBounds
+        )
     count = external ? Int(selection.count) :
         descriptor.placement === SeedStencilLifecyclePlacement ?
         Int(descriptor.stencil_count) : 1
-    count > 0 || return :placement_selection_empty
+    count > 0 || return _lifecycle_planning_inadmissible(
+        LifecycleDetailPlacementSelectionEmpty
+    )
     if count > descriptor.placement_maximum
         _set_lifecycle_status!(
             workspace,
@@ -114,7 +147,7 @@ function _plan_creation!(
             anchor,
             detail = LifecycleDetailPlacementEmissionBoundExceeded,
         )
-        return :status_failure
+        return _lifecycle_planning_status_failed()
     end
     if count > size(workspace.planned_sites, 1)
         _set_lifecycle_status!(
@@ -124,7 +157,7 @@ function _plan_creation!(
             anchor,
             detail = LifecycleDetailPlacementBoundExceeded,
         )
-        return :status_failure
+        return _lifecycle_planning_status_failed()
     end
     for position in 1:count
         selected = if external
@@ -137,17 +170,23 @@ function _plan_creation!(
         else
             center
         end
-        selected > 0 || return :placement_out_of_bounds
+        selected > 0 || return _lifecycle_planning_inadmissible(
+            LifecycleDetailPlacementOutOfBounds
+        )
         for prior in 1:(position - 1)
             @inbounds workspace.planned_sites[prior, request] == selected &&
-                return :duplicate_placement_site
+                return _lifecycle_planning_inadmissible(
+                    LifecycleDetailDuplicatePlacementSite
+                )
         end
         owner = @inbounds runtime.ownership[selected]
-        owner <= 0 || return :placement_site_unavailable
+        owner <= 0 || return _lifecycle_planning_inadmissible(
+            LifecycleDetailPlacementSiteUnavailable
+        )
         @inbounds workspace.planned_sites[position, request] = Int32(selected)
     end
     @inbounds workspace.planned_site_count[request] = Int32(count)
-    return :ok
+    return _lifecycle_planning_succeeded()
 end
 
 @inline _partition_normal(
@@ -212,11 +251,15 @@ function _label_division_sites!(
     records = _lifecycle_site_records(workspace, anchor)
     center = descriptor.point_from_centroid ?
         _cell_center(runtime, anchor) : descriptor.point
-    center === nothing && return :empty_source_cell
+    center === nothing && return _lifecycle_planning_inadmissible(
+        LifecycleDetailEmptySourceCell
+    )
     normal = _partition_normal(
         runtime, descriptor, anchor, generation, partition_plan
     )
-    normal === nothing && return :partition_geometry_invalid
+    normal === nothing && return _lifecycle_planning_inadmissible(
+        LifecycleDetailPartitionGeometryInvalid
+    )
     center_value = center::NTuple{N, T}
     normal_value = normal::NTuple{N, T}
     for record in records
@@ -232,7 +275,7 @@ function _label_division_sites!(
         @inbounds workspace.partition_scratch[position] =
             projection <= 0 ? UInt8(1) : UInt8(2)
     end
-    return :ok
+    return _lifecycle_planning_succeeded()
 end
 
 function _label_division_sites!(
@@ -262,7 +305,6 @@ function _label_division_sites!(
             generation,
             site,
             Int32(0),
-            UInt16(descriptor.source_handle),
         )
         value = _evaluate_lifecycle_checked(
             mode,
@@ -272,12 +314,15 @@ function _label_division_sites!(
             descriptor,
             workspace,
         )
-        value isa LifecycleEvaluationFailed && return :status_failure
+        value isa LifecycleEvaluationFailed &&
+            return _lifecycle_planning_status_failed()
         value isa Integer && value in (1, 2) ||
-            return :partition_label_invalid
+            return _lifecycle_planning_inadmissible(
+                LifecycleDetailPartitionLabelInvalid
+            )
         @inbounds workspace.partition_scratch[position] = UInt8(value)
     end
-    return :ok
+    return _lifecycle_planning_succeeded()
 end
 
 @inline _apply_division_side!(
@@ -400,7 +445,7 @@ function _plan_division!(
         position = Int(_lifecycle_site_position(workspace, record.site))
         @inbounds workspace.partition_scratch[position] = 0
     end
-    reason = _label_division_sites!(
+    result = _label_division_sites!(
         mode,
         runtime,
         plan,
@@ -409,7 +454,7 @@ function _plan_division!(
         descriptor,
         partition_plan,
     )
-    reason === :ok || return reason
+    _lifecycle_planning_succeeded(result) || return result
     first_count = 0
     second_count = 0
     for record in records
@@ -417,27 +462,36 @@ function _plan_division!(
         label = @inbounds workspace.partition_scratch[position]
         label == 1 ? (first_count += 1) : (second_count += 1)
     end
-    first_count > 0 && second_count > 0 || return :partition_empty_descendant
+    first_count > 0 && second_count > 0 ||
+        return _lifecycle_planning_inadmissible(
+            LifecycleDetailPartitionEmptyDescendant
+        )
     _apply_division_side!(
         runtime, workspace, request, descriptor, side_plan
     )
     parent_connected = _partition_connected(
         runtime, plan, workspace, request, descriptor, UInt8(1)
     )
-    _lifecycle_succeeded(workspace) || return :status_failure
-    parent_connected || return :partition_parent_disconnected
+    _lifecycle_succeeded(workspace) ||
+        return _lifecycle_planning_status_failed()
+    parent_connected || return _lifecycle_planning_inadmissible(
+        LifecycleDetailPartitionParentDisconnected
+    )
     daughter_connected = _partition_connected(
         runtime, plan, workspace, request, descriptor, UInt8(2)
     )
-    _lifecycle_succeeded(workspace) || return :status_failure
-    daughter_connected || return :partition_daughter_disconnected
+    _lifecycle_succeeded(workspace) ||
+        return _lifecycle_planning_status_failed()
+    daughter_connected || return _lifecycle_planning_inadmissible(
+        LifecycleDetailPartitionDaughterDisconnected
+    )
     for record in records
         position = Int(_lifecycle_site_position(workspace, record.site))
         @inbounds workspace.partition_labels[position] =
             workspace.partition_scratch[position]
     end
     @inbounds workspace.partition_owner[anchor] = Int32(request)
-    return :ok
+    return _lifecycle_planning_succeeded()
 end
 
 function _plan_division!(
@@ -449,9 +503,13 @@ function _plan_division!(
         descriptor,
     )
     partition_plan = _lifecycle_partition_plan(descriptor.partition)
-    partition_plan === nothing && return :partition_geometry_invalid
+    partition_plan === nothing && return _lifecycle_planning_inadmissible(
+        LifecycleDetailPartitionGeometryInvalid
+    )
     side_plan = _lifecycle_side_plan(descriptor.side)
-    side_plan === nothing && return :partition_geometry_invalid
+    side_plan === nothing && return _lifecycle_planning_inadmissible(
+        LifecycleDetailPartitionGeometryInvalid
+    )
     return _plan_division!(
         mode,
         runtime,
@@ -555,7 +613,8 @@ end
     )
     anchor = @inbounds workspace.anchor[request]
     return _lifecycle_retire_volume(runtime, anchor) == 0 ?
-        :ok : :retire_nonempty
+        _lifecycle_planning_succeeded() :
+        _lifecycle_planning_inadmissible(LifecycleDetailRetireNonempty)
 end
 
 @inline _lifecycle_retire_volume(runtime, anchor) =
@@ -563,7 +622,7 @@ end
 
 @inline _plan_lifecycle_effect!(
     mode, runtime, plan, workspace, request, descriptor, ::_RemoveLifecyclePlan
-) = :ok
+) = _lifecycle_planning_succeeded()
 
 @inline _plan_lifecycle_effect!(
     mode,
@@ -573,7 +632,7 @@ end
     request,
     descriptor,
     ::_TransitionLifecyclePlan,
-) = :ok
+) = _lifecycle_planning_succeeded()
 
 @inline function _plan_lifecycle_effect!(
         mode,
@@ -630,13 +689,13 @@ function _plan_lifecycle_request_effect_only!(
             _set_lifecycle_status!(
                 workspace, ProgramStatusStaleGeneration; anchor
             )
-            return :status_failure
+            return _lifecycle_planning_status_failed()
         end
     end
-    reason = _plan_lifecycle_effect!(
+    result = _plan_lifecycle_effect!(
         mode, runtime, plan, workspace, request, descriptor, plan_class
     )
-    return reason
+    return result
 end
 
 function _plan_lifecycle_request_effect!(
@@ -651,13 +710,16 @@ function _plan_lifecycle_request_effect!(
         Int(workspace.descriptor[request])
     ]
     anchor = @inbounds workspace.anchor[request]
-    reason = _plan_lifecycle_request_effect_only!(
+    result = _plan_lifecycle_request_effect_only!(
         mode, runtime, plan, workspace, request, plan_class
     )
-    reason === :ok && !_lifecycle_relationships_admissible(
+    _lifecycle_planning_succeeded(result) &&
+        !_lifecycle_relationships_admissible(
         runtime, plan, descriptor, anchor
-    ) && (reason = :relationship_policy_rejected)
-    return reason
+    ) && (result = _lifecycle_planning_inadmissible(
+        LifecycleDetailRelationshipPolicyRejected
+    ))
+    return result
 end
 
 function _plan_lifecycle_request!(
@@ -681,7 +743,9 @@ function _plan_lifecycle_request!(
     elseif descriptor.effect === DivideCellLifecycleEffect
         _DivideLifecyclePlan()
     else
-        return :unknown_effect
+        return _lifecycle_planning_inadmissible(
+            LifecycleDetailUnknownEffect
+        )
     end
     return _plan_lifecycle_request_effect!(
         mode, runtime, plan, workspace, request, plan_class
@@ -701,17 +765,16 @@ function _plan_and_filter_lifecycle_requests!(
         descriptor = @inbounds plan.descriptors[
             Int(workspace.descriptor[request])
         ]
-        reason = _plan_lifecycle_request!(
+        result = _plan_lifecycle_request!(
             mode, runtime, plan, workspace, request
         )
-        reason === :status_failure && return false
-        reason === :ok && continue
+        _lifecycle_planning_status_failed(result) && return false
+        _lifecycle_planning_succeeded(result) && continue
         if descriptor.on_inadmissible === FilterLifecycleInadmissible
             @inbounds begin
                 workspace.active[request] = false
                 workspace.filtered[request] = true
-                workspace.filtered_detail[request] =
-                    _lifecycle_detail_code(reason)
+                workspace.filtered_detail[request] = result.detail
             end
         else
             return _set_lifecycle_status!(
@@ -719,7 +782,7 @@ function _plan_and_filter_lifecycle_requests!(
                 ProgramStatusInadmissible;
                 source = descriptor.source_handle,
                 anchor = @inbounds(workspace.anchor[request]),
-                detail = _lifecycle_detail_code(reason),
+                detail = result.detail,
             )
         end
     end

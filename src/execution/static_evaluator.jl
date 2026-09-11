@@ -9,31 +9,34 @@ abstract type AbstractContextualOperation end
 abstract type AbstractEvaluatorExecutionContext end
 """Cold context used to validate evaluator construction without scientific execution."""
 abstract type AbstractProbeEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting before/after Hamiltonian evaluation."""
 abstract type AbstractHamiltonianEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting proposal-scoped scientific evaluation."""
 abstract type AbstractProposalEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting one site-stage evaluation."""
 abstract type AbstractSiteStageEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
+"""Context supporting one active finite-cell stage evaluation."""
+abstract type AbstractCellStageEvaluationContext <:
+AbstractEvaluatorExecutionContext end
 """Context supporting one relationship-stage evaluation."""
 abstract type AbstractRelationshipStageEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting lifecycle-trigger evaluation."""
 abstract type AbstractLifecycleTriggerEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting lifecycle-placement evaluation."""
 abstract type AbstractLifecyclePlacementEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting lifecycle-partition evaluation."""
 abstract type AbstractLifecyclePartitionEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 """Context supporting lifecycle state-transform evaluation."""
 abstract type AbstractLifecycleStateTransformEvaluationContext <:
-              AbstractEvaluatorExecutionContext end
+AbstractEvaluatorExecutionContext end
 
 abstract type AbstractStorageRepresentation end
 
@@ -60,12 +63,16 @@ struct BlockLocation{N}
     function BlockLocation(
             offset::Integer, shape::NTuple{N, <:Integer}
         ) where {N}
-        offset > 0 || throw(ArgumentError(
-            "a block location offset must be positive"
-        ))
-        all(>(0), shape) || throw(ArgumentError(
-            "block location dimensions must be positive"
-        ))
+        0 < offset <= typemax(Int32) || throw(
+            ArgumentError(
+                "a block location offset must be positive and fit Int32"
+            )
+        )
+        all(dimension -> 0 <= dimension <= typemax(Int32), shape) || throw(
+            ArgumentError(
+                "block location dimensions must be nonnegative and fit Int32"
+            )
+        )
         return new{N}(Int32(offset), Int32.(shape))
     end
 end
@@ -118,8 +125,8 @@ StateHandle(
     shape::Tuple,
 ) where {Representation <: AbstractStorageRepresentation} =
     StateHandle{Representation}(
-        bank, slot, BlockLocation(offset, shape)
-    )
+    bank, slot, BlockLocation(offset, shape)
+)
 StateHandle(slot::Integer) =
     StateHandle{DefaultStateStorageRepresentation}(1, slot)
 StateHandle(bank::Integer, slot::Integer) =
@@ -167,8 +174,8 @@ WorkspaceHandle(
     shape::Tuple,
 ) where {Representation <: AbstractStorageRepresentation} =
     WorkspaceHandle{Representation}(
-        bank, slot, BlockLocation(offset, shape)
-    )
+    bank, slot, BlockLocation(offset, shape)
+)
 WorkspaceHandle(slot::Integer) =
     WorkspaceHandle{DefaultWorkspaceStorageRepresentation}(1, slot)
 WorkspaceHandle(bank::Integer, slot::Integer) =
@@ -188,6 +195,14 @@ handle_representation(
 handle_representation(
     ::WorkspaceHandle{Representation}
 ) where {Representation} = Representation
+
+_state_handle_element_type(
+    ::StateHandle{
+        StateStorageRepresentation{
+            ElementType, Dimensions, Layout, Adaptation,
+        },
+    },
+) where {ElementType, Dimensions, Layout, Adaptation} = ElementType
 
 function Base.getproperty(
         handle::Union{StateHandle, WorkspaceHandle}, name::Symbol
@@ -210,7 +225,7 @@ struct ParameterExpression{T <: AbstractFloat} <: AbstractStaticExpression
         }
         0 <= index <= typemax(Int32) ||
             throw(ArgumentError("parameter expression index is out of range"))
-        new{T}(default, Int32(index))
+        return new{T}(default, Int32(index))
     end
 end
 
@@ -241,6 +256,55 @@ struct StaticEvaluator{E <: AbstractStaticExpression}
     expression::E
 end
 
+_record_expression_requirements!(handles, parameter_count, ::LiteralExpression) =
+    nothing
+function _record_expression_requirements!(
+        handles, parameter_count, expression::ParameterExpression
+    )
+    parameter_count[] = max(parameter_count[], Int(expression.index))
+    return nothing
+end
+function _record_expression_requirements!(
+        handles, parameter_count, expression::StateExpression
+    )
+    any(==(expression.handle), handles) || push!(handles, expression.handle)
+    return nothing
+end
+_record_expression_requirements!(
+    handles, parameter_count, ::ContextExpression
+) = nothing
+function _record_expression_requirements!(
+        handles, parameter_count, expression::OperationExpression
+    )
+    foreach(expression.arguments) do argument
+        _record_expression_requirements!(handles, parameter_count, argument)
+    end
+    return nothing
+end
+function _record_expression_requirements!(
+        handles, parameter_count, expression::AbstractStaticExpression
+    )
+    throw(
+        ArgumentError(
+            "static expression requirements encountered unsupported expression " *
+                string(typeof(expression))
+        )
+    )
+end
+
+"""
+    expression_state_handles(expression::AbstractStaticExpression)
+
+Return the distinct state read handles in expression traversal order. The
+ordinary expression-requirements walker remains the sole authority; this cold
+query does not validate domains, authorize writes, or retain a read registry.
+"""
+function expression_state_handles(expression::AbstractStaticExpression)
+    handles = StateHandle[]
+    _record_expression_requirements!(handles, Ref(0), expression)
+    return Tuple(handles)
+end
+
 """Callable marker requesting canonical left-to-right argument folding."""
 struct OrderedFold{F}
     operation::F
@@ -249,6 +313,26 @@ end
 """Comparison preserving the compiled floating-point profile for mixed integer/float inputs."""
 struct NumericComparison{F}
     operation::F
+end
+
+# Arity fixes the vector length; the kernel captures no constructor type value.
+struct FixedVectorConstruction end
+@inline (::FixedVectorConstruction)(arguments...) = StaticArrays.SVector(arguments)
+
+struct ProductFieldProjection{Ordinal} end
+@inline (::ProductFieldProjection{Ordinal})(value::NamedTuple) where {Ordinal} =
+    getfield(value, Ordinal)
+
+function OperationExpression(
+        ::typeof(getfield), arguments::Tuple{E, LiteralExpression{I}},
+    ) where {E <: AbstractStaticExpression, I <: Integer}
+    ordinal = last(arguments).value
+    !(ordinal isa Bool) && ordinal > 0 || throw(ArgumentError("product field requires a positive literal ordinal"))
+    # A heterogeneous product needs the proven field selection in the callable
+    # type. Consume the cold literal here, before any execution path diverges.
+    operation = ProductFieldProjection{Int(ordinal)}()
+    values = (first(arguments),)
+    return OperationExpression{typeof(operation), typeof(values)}(operation, values)
 end
 
 @inline function (comparison::NumericComparison)(left, right)
@@ -381,6 +465,8 @@ for (identity, contexts) in (
             AbstractLifecyclePlacementEvaluationContext,
         ),
         :draw => (
+            AbstractSiteStageEvaluationContext,
+            AbstractCellStageEvaluationContext,
             AbstractLifecycleTriggerEvaluationContext,
             AbstractLifecyclePlacementEvaluationContext,
             AbstractLifecyclePartitionEvaluationContext,
@@ -417,6 +503,11 @@ for (identity, operation) in (
         :exponential => exp,
         :logarithm => log,
         :square_root => sqrt,
+        :sine => sin,
+        :cosine => cos,
+        :fixed_vector => FixedVectorConstruction(),
+        :fixed_index => getindex,
+        :product_field => getfield,
     )
     @eval operation_callable(
         ::Val{$(QuoteNode(identity))}, version::VersionNumber
@@ -497,7 +588,7 @@ end
     )
     index = expression.index
     return index == 0 ? expression.default :
-           @inbounds evaluator_parameters(context)[index]
+        @inbounds evaluator_parameters(context)[index]
 end
 
 @inline evaluate_expression(
@@ -535,7 +626,7 @@ end
     )
     index = expression.index
     return index == 0 ? expression.default :
-           @inbounds _compiled_evaluator_parameters(context)[index]
+        @inbounds _compiled_evaluator_parameters(context)[index]
 end
 
 @inline _compiled_evaluate_expression(
@@ -612,12 +703,12 @@ end
     operation::QualifiedTrackerOperation
 )(arguments::Tuple, context) =
     qualified_tracker_operation_call(
-        operation.operation,
-        arguments,
-        context,
-        operation.quantity,
-        operation.source_handle,
-    )
+    operation.operation,
+    arguments,
+    context,
+    operation.quantity,
+    operation.source_handle,
+)
 
 operation_context_supported(
     operation::QualifiedTrackerOperation,
@@ -625,7 +716,7 @@ operation_context_supported(
 ) = operation_context_supported(operation.operation, context)
 
 struct EvaluatorProbeContext{P, V, S, W} <:
-       AbstractProbeEvaluationContext
+    AbstractProbeEvaluationContext
     parameters::P
     values::V
     states::S

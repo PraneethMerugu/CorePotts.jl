@@ -1,252 +1,134 @@
-@testset "semantic Philox known answers and address isolation" begin
-    contract = CorePotts.Philox4x32x10V2()
-    seed = UInt64(0x123456789abcdef0)
-    addresses = (
-        CorePotts.RNGAddress(
-            stream = CorePotts.ProposalRecipientStream,
-            mcs = 0,
-            entity = 1,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.ProposalDirectionStream,
-            mcs = 7,
-            subround = 2,
-            operation = 3,
-            entity = 19,
-            draw = 1,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 11,
-            operation = 5,
-            entity = 29,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.CheckerboardColorOrderStream,
-            mcs = 23,
-            subround = 1,
-            operation = 5,
-            entity_kind = CorePotts.GlobalEntity,
-            entity = 4,
-        ),
-    )
-    expected = (
-        (0xd5435ca6, 0xe6f8d826, 0x0a5be497, 0x655d2e74),
-        (0x868780c6, 0xd8f3722f, 0x32d0eed7, 0xa67c75ea),
-        (0x1da796db, 0xbb662cea, 0x65d4ed06, 0x91036c89),
-        (0x3719387b, 0x66108d4d, 0x3c826416, 0xb29ecb59),
-    )
+include(joinpath(@__DIR__, "fixtures", "philox64_oracle.jl"))
 
-    # This is intentionally Core-owned. Raw words are part of the versioned
-    # implementation contract, but are not widened into the package API.
-    @test map(
-        address -> CorePotts._rng_words(contract, seed, address),
-        addresses,
-    ) == expected
-    @test reverse(map(
-        address -> CorePotts._rng_words(contract, seed, address),
-        reverse(addresses),
-    )) == expected
-
-    semantic_coordinates = [
-        (stream, mcs, subround, entity, draw)
-        for stream in (
-            CorePotts.ProposalRecipientStream,
-            CorePotts.ProposalDirectionStream,
-            CorePotts.AcceptanceStream,
-            CorePotts.CheckerboardColorOrderStream,
+@testset "qualified Philox arithmetic and semantic addresses" begin
+    contract = CorePotts.Philox4x64x10V3()
+    trajectory = CorePotts._trajectory_key(0x123456789abcdef0, UInt32(7), UInt32(11))
+    namespace = CorePotts.RNGNamespace((0xe4c62a4c88894cc8, 0xad3a75efc86c53b9))
+    operations = CorePotts.rng_operation_keys(
+        (
+            (namespace = namespace, identity = "cell/process/noise"),
+            (namespace = namespace, identity = "cell/process/other-noise"),
         )
-        for mcs in 0:2
-        for subround in 0:1
-        for entity in 1:4
-        for draw in 0:1
-    ]
-    @test allunique(semantic_coordinates)
-    raw_words = map(semantic_coordinates) do coordinates
-        stream, mcs, subround, entity, draw = coordinates
-        CorePotts._rng_words(
-            contract,
-            seed,
-            CorePotts.RNGAddress(
-                stream = stream,
-                mcs = mcs,
-                subround = subround,
-                entity = entity,
-                draw = draw,
-            ),
-        )
+    )
+    @testset "independent multiplication and upstream generator answers" begin
+        for (a, b) in PhiloxReference.multiplication_inputs()
+            @test CorePotts._multiply_high_low64(a, b) == PhiloxReference.multiply_oracle(a, b)
+        end
+        for (counter, key, expected) in PhiloxReference.KNOWN_ANSWERS
+            @test CorePotts.philox4x64_10(counter, key) == expected
+            @test PhiloxReference.philox_oracle(counter, key) == expected
+        end
+        counters, keys = PhiloxReference.generator_inputs()
+        for i in eachindex(counters)
+            @test CorePotts.philox4x64_10(counters[i], keys[i]) ==
+                PhiloxReference.philox_oracle(counters[i], keys[i])
+        end
     end
-    @test allunique(raw_words)
-    @test all(stream -> UInt8(stream) <= 0x0f, instances(CorePotts.RNGStream))
-
-    kind_draw_addresses = (
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            entity_kind = CorePotts.GlobalEntity,
-            draw = 1,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            entity_kind = CorePotts.DestinationEntity,
-            draw = 0,
-        ),
+    @testset "all trajectory coordinates remain represented" begin
+        @test trajectory == (0x123456789abcdef0, 0x0000000b00000007)
+        for seed in (UInt64(0), typemax(UInt64)), replica in (UInt32(0), typemax(UInt32)),
+                repeat in (UInt32(0), typemax(UInt32))
+            key = CorePotts._trajectory_key(seed, replica, repeat)
+            @test key[1] == seed
+            @test key[2] % UInt32 == replica
+            @test (key[2] >> 32) % UInt32 == repeat
+        end
+    end
+    base = (
+        stream = CorePotts.ScheduledProcessDrawStream, operation = operations[1],
+        mcs = 9, subround = 3, entity_kind = CorePotts.CellEntity, entity = 7,
+        generation = 13, invocation = 2, draw = 5, retry = 1,
     )
-    @test CorePotts._rng_words(contract, seed, kind_draw_addresses[1]) !=
-        CorePotts._rng_words(contract, seed, kind_draw_addresses[2])
-
-    minimum_words = ntuple(_ -> UInt32(0), 4)
-    maximum_words = ntuple(_ -> typemax(UInt32), 4)
-    @test 0.0f0 < CorePotts._uniform_open01_from_words(
-        Float32, minimum_words
-    ) < 1.0f0
-    @test 0.0f0 < CorePotts._uniform_open01_from_words(
-        Float32, maximum_words
-    ) < 1.0f0
-    @test 0.0 < CorePotts._uniform_open01_from_words(
-        Float64, minimum_words
-    ) < 1.0
-    @test 0.0 < CorePotts._uniform_open01_from_words(
-        Float64, maximum_words
-    ) < 1.0
-
-    old_collision_seed = UInt64(0xa2598acb81de843f)
-    @test CorePotts._trajectory_seed(UInt64(0), UInt32(1), UInt32(1)) !=
-        CorePotts._trajectory_seed(
-            old_collision_seed, UInt32(2), UInt32(1)
+    address = CorePotts.RNGAddress(; base...)
+    expected_counter = (
+        0x0003000000000009, 0x0000000500000007,
+        0x000000000000000d, 0x030e000100000002,
+    )
+    @test CorePotts._rng_counter(address) == expected_counter
+    expected_key = (
+        trajectory[1] ⊻ operations[1].words[1],
+        trajectory[2] ⊻ operations[1].words[2],
+    )
+    @test CorePotts._rng_key(trajectory, operations[1]) == expected_key
+    @test CorePotts._rng_words(contract, trajectory, address) ==
+        PhiloxReference.philox_oracle(expected_counter, expected_key)
+    @testset "counter coordinates and operation keys do not alias" begin
+        encoded = Set()
+        for operation in operations, stream in instances(CorePotts.RNGStream),
+                kind in (CorePotts.SiteEntity, CorePotts.CellEntity, CorePotts.DestinationEntity),
+                mcs in 0:1, subround in 0:1, entity in 1:2, generation in 0:1,
+                invocation in 0:1, draw in 0:1, retry in 0:1
+            item = CorePotts.RNGAddress(;
+                operation, stream, entity_kind = kind,
+                mcs, subround, entity, generation, invocation, draw, retry
+            )
+            push!(encoded, (CorePotts._rng_key(trajectory, operation), CorePotts._rng_counter(item)))
+        end
+        @test length(encoded) == 2 * length(instances(CorePotts.RNGStream)) * 3 * 2^7
+        maximum = CorePotts.RNGAddress(;
+            stream = CorePotts.ScheduledProcessDrawStream,
+            operation = operations[1], entity_kind = CorePotts.CellEntity,
+            mcs = CorePotts._RNG_MAX_MCS, subround = typemax(UInt16),
+            entity = typemax(UInt32), generation = typemax(UInt64),
+            invocation = typemax(UInt32), draw = typemax(UInt32), retry = typemax(UInt16)
         )
-
-    base = CorePotts.RNGAddress(
-        stream = CorePotts.AcceptanceStream,
-        mcs = 9,
-        subround = 1,
-        operation = 4,
-        entity_kind = CorePotts.CellEntity,
-        entity = 7,
-        generation = 3,
-        invocation = 0,
-        draw = 2,
-    )
-    base_words = CorePotts._rng_words(contract, seed, base)
-    changed = (
-        CorePotts.RNGAddress(
-            stream = CorePotts.ProposalDirectionStream,
-            mcs = 9,
-            subround = 1,
-            operation = 4,
-            entity_kind = CorePotts.CellEntity,
-            entity = 7,
-            generation = 3,
-            invocation = 0,
-            draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 10,
-            subround = 1,
-            operation = 4,
-            entity_kind = CorePotts.CellEntity,
-            entity = 7,
-            generation = 3,
-            invocation = 0,
-            draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 9,
-            subround = 1,
-            operation = 4,
-            entity_kind = CorePotts.CellEntity,
-            entity = 7,
-            generation = 4,
-            invocation = 0,
-            draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 9,
-            subround = 1,
-            operation = 4,
-            entity_kind = CorePotts.CellEntity,
-            entity = 7,
-            generation = 3,
-            invocation = 1,
-            draw = 2,
-        ),
-    )
-    @test all(
-        address -> CorePotts._rng_words(contract, seed, address) != base_words,
-        changed,
-    )
-
-    isolation_base = CorePotts.RNGAddress(
-        stream = CorePotts.AcceptanceStream,
-        mcs = 9,
-        subround = 1,
-        operation = 4,
-        entity_kind = CorePotts.SiteEntity,
-        entity = 7,
-        generation = 3,
-        invocation = 1,
-        draw = 2,
-    )
-    coordinate_extrema = (
-        CorePotts.RNGAddress(
-            stream = CorePotts.ProposalDirectionStream,
-            mcs = 9, subround = 1, operation = 4,
-            entity_kind = CorePotts.SiteEntity, entity = 7,
-            generation = 3, invocation = 1, draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = CorePotts._RNG_MAX_MCS, subround = 1, operation = 4,
-            entity_kind = CorePotts.SiteEntity, entity = 7,
-            generation = 3, invocation = 1, draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 9, subround = typemax(UInt8), operation = 4,
-            entity_kind = CorePotts.SiteEntity, entity = 7,
-            generation = 3, invocation = 1, draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 9, subround = 1, operation = CorePotts._RNG_MAX_OPERATION,
-            entity_kind = CorePotts.SiteEntity, entity = 7,
-            generation = 3, invocation = 1, draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 9, subround = 1, operation = 4,
-            entity_kind = CorePotts.CellEntity, entity = 7,
-            generation = 3, invocation = 1, draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 9, subround = 1, operation = 4,
-            entity_kind = CorePotts.SiteEntity, entity = typemax(UInt32),
-            generation = 3, invocation = 1, draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 9, subround = 1, operation = 4,
-            entity_kind = CorePotts.SiteEntity, entity = 7,
-            generation = typemax(UInt64), invocation = 1, draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 9, subround = 1, operation = 4,
-            entity_kind = CorePotts.SiteEntity, entity = 7,
-            generation = 3, invocation = typemax(UInt8), draw = 2,
-        ),
-        CorePotts.RNGAddress(
-            stream = CorePotts.AcceptanceStream,
-            mcs = 9, subround = 1, operation = 4,
-            entity_kind = CorePotts.SiteEntity, entity = 7,
-            generation = 3, invocation = 1, draw = CorePotts._RNG_MAX_DRAW,
-        ),
-    )
-    isolation_words = CorePotts._rng_words(contract, seed, isolation_base)
-    @test all(coordinate_extrema) do address
-        CorePotts._rng_words(contract, seed, address) != isolation_words
+        @test CorePotts._rng_counter(maximum) ==
+            (typemax(UInt64), typemax(UInt64), typemax(UInt64), 0x030effffffffffff)
+    end
+    @testset "checked bounds and absent operations" begin
+        @test_throws ArgumentError CorePotts.RNGAddress(; merge(base, (operation = CorePotts.RNGOperationKey(),))...)
+        for invalid in (
+                (mcs = -1,), (mcs = CorePotts._RNG_MAX_MCS + 1,),
+                (subround = 65536,), (entity = UInt64(typemax(UInt32)) + 1,),
+                (generation = UInt128(typemax(UInt64)) + 1,),
+                (invocation = UInt64(typemax(UInt32)) + 1,),
+                (draw = UInt64(typemax(UInt32)) + 1,), (retry = 65536,),
+                (entity_kind = CorePotts.ModelEntity,),
+            )
+            @test_throws ArgumentError CorePotts.RNGAddress(; merge(base, invalid)...)
+        end
+    end
+    @testset "open endpoints and independent rejection retries" begin
+        minimum_words = ntuple(_ -> UInt64(0), 4)
+        maximum_words = ntuple(_ -> typemax(UInt64), 4)
+        for T in (Float32, Float64)
+            @test zero(T) < CorePotts._uniform_open01_from_words(T, minimum_words) < one(T)
+            @test zero(T) < CorePotts._uniform_open01_from_words(T, maximum_words) < one(T)
+        end
+        @test CorePotts.bounded_uint(contract, trajectory, address, UInt32(1)) == UInt32(0)
+        @test_throws ArgumentError CorePotts.bounded_uint(contract, trajectory, address, UInt32(0))
+        bound = UInt32(0x80000001)
+        threshold = mod(-bound, bound)
+        # Find an ordinary deterministic address with at least one rejected candidate.
+        rejecting = first(
+            filter(0:100) do draw
+                item = CorePotts.RNGAddress(; merge(base, (draw = draw, retry = 0))...)
+                (CorePotts._rng_word(contract, trajectory, item) >> 32) < threshold
+            end
+        )
+        item = CorePotts.RNGAddress(; merge(base, (draw = rejecting, retry = 0))...)
+        retry = UInt16(0)
+        expected = UInt32(0)
+        while true
+            candidate = CorePotts.RNGAddress(; merge(base, (draw = rejecting, retry = retry))...)
+            words = PhiloxReference.philox_oracle(CorePotts._rng_counter(candidate), expected_key)
+            word = (words[1] >> 32) % UInt32
+            if word >= threshold
+                expected = mod(word, bound)
+                break
+            end
+            retry += UInt16(1)
+        end
+        @test retry > 0
+        @test CorePotts.bounded_uint(contract, trajectory, item, bound) == expected
+        @test CorePotts._with_retry(item, retry).invocation == item.invocation
+        last_rejection = first(
+            filter(0:100) do draw
+                candidate = CorePotts.RNGAddress(; merge(base, (draw = draw, retry = typemax(UInt16)))...)
+                (CorePotts._rng_word(contract, trajectory, candidate) >> 32) < threshold
+            end
+        )
+        exhausted = CorePotts.RNGAddress(; merge(base, (draw = last_rejection, retry = typemax(UInt16)))...)
+        @test_throws ArgumentError CorePotts.bounded_uint(contract, trajectory, exhausted, bound)
     end
 end

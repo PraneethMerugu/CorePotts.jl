@@ -45,13 +45,6 @@ const _LIFECYCLE_STATUS_DETAILS = (
         LifecycleDetailAcceptanceZeroTemperatureDrive,
 )
 
-@inline function _lifecycle_detail_code(reason::Symbol)
-    for pair in _LIFECYCLE_STATUS_DETAILS
-        first(pair) === reason && return last(pair)
-    end
-    return LifecycleDetailNone
-end
-
 function _program_status_detail_symbol(detail::ProgramStatusDetailCode)
     for pair in _LIFECYCLE_STATUS_DETAILS
         last(pair) === detail && return first(pair)
@@ -115,12 +108,7 @@ struct BackendLifecycleExecution <: AbstractLifecycleExecutionMode end
 @inline function _lifecycle_due(
         descriptor::LifecycleDescriptor, next_mcs::Int
     )
-    descriptor.cadence === EveryMCSLifecycleCadence && return true
-    descriptor.cadence === AtMCSLifecycleCadence &&
-        return next_mcs == descriptor.cadence_value
-    descriptor.cadence === PeriodicLifecycleCadence &&
-        return rem(next_mcs, Int(descriptor.cadence_value)) == 0
-    return false
+    return _completed_mcs_due(descriptor.cadence, descriptor.cadence_value, next_mcs)
 end
 
 @inline function _lifecycle_context_site(runtime, workspace, anchor::Int32)

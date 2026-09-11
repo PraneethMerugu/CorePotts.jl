@@ -11,17 +11,19 @@ function _reference_checkerboard_proposal(state, color, attempt_round, item)
         stream = CorePotts.ProposalDirectionStream,
         mcs = state.mcs + 1,
         subround = color,
-        operation = 2,
+        operation = CorePotts._CORE_RNG_OPERATIONS.proposal_direction,
         entity_kind = CorePotts.SiteEntity,
         entity = semantic_id,
         draw = 0,
     )
-    direction = Int(CorePotts.bounded_uint(
-        CorePotts.Philox4x32x10V2(),
-        CorePotts._trajectory_seed(state.seed, state.replica, state.repeat),
-        direction_address,
-        UInt32(size(state.program.proposal_offsets, 2)),
-    )) + 1
+    direction = Int(
+        CorePotts.bounded_uint(
+            CorePotts.Philox4x64x10V3(),
+            CorePotts._trajectory_key(state.seed, state.replica, state.repeat),
+            direction_address,
+            UInt32(size(state.program.proposal_offsets, 2)),
+        )
+    ) + 1
     target = CartesianIndices(state.ownership)[Int(target_linear)]
     coordinates = ntuple(Val(2)) do axis
         raw = target[axis] + Int(state.program.proposal_offsets[axis, direction])
@@ -32,7 +34,7 @@ function _reference_checkerboard_proposal(state, color, attempt_round, item)
     end
     source = any(iszero, coordinates) ? nothing : CartesianIndex(coordinates)
     source_linear = source === nothing ? Int32(0) :
-                    Int32(LinearIndices(state.ownership)[source])
+        Int32(LinearIndices(state.ownership)[source])
     old_owner = state.ownership[target]
     new_owner = source === nothing ? old_owner : state.ownership[source]
     actionable = source !== nothing && old_owner != new_owner
@@ -41,27 +43,32 @@ function _reference_checkerboard_proposal(state, color, attempt_round, item)
             stream = CorePotts.CheckerboardPriorityStream,
             mcs = state.mcs + 1,
             subround = color,
-            operation = 4,
+            operation = CorePotts._CORE_RNG_OPERATIONS.checkerboard_priority,
             entity_kind = CorePotts.SiteEntity,
             entity = semantic_id,
             draw = 0,
         )
-        CorePotts._rng_word(
-            CorePotts.Philox4x32x10V2(),
-            CorePotts._trajectory_seed(state.seed, state.replica, state.repeat),
-            priority_address,
-        )
+        (
+            CorePotts._rng_word(
+                CorePotts.Philox4x64x10V3(),
+                CorePotts._trajectory_key(state.seed, state.replica, state.repeat),
+                priority_address,
+            ) >> 32
+        ) % UInt32
     else
         UInt32(0)
     end
-    return (; target_site = target_linear, source_site = source_linear,
-        old_owner, new_owner, priority, semantic_id)
+    return (;
+        target_site = target_linear, source_site = source_linear,
+        old_owner, new_owner, priority, semantic_id,
+    )
 end
 
 function _reference_checkerboard_disposition(
-        state, descriptor_plan, proposal, color)
+        state, descriptor_plan, proposal, color
+    )
     actionable = proposal.source_site != Int32(0) &&
-                 proposal.old_owner != proposal.new_owner
+        proposal.old_owner != proposal.new_owner
     actionable || return CorePotts._PROGRAM_CHECKERBOARD_NULL
     CorePotts._extinction_copy_admitted(
         state, proposal.old_owner, proposal.new_owner
@@ -119,21 +126,21 @@ function _reference_checkerboard_disposition(
             stream = CorePotts.AcceptanceStream,
             mcs = state.mcs + 1,
             subround = color,
-            operation = 3,
+            operation = CorePotts._CORE_RNG_OPERATIONS.acceptance,
             entity_kind = CorePotts.SiteEntity,
             entity = proposal.semantic_id,
             draw = 0,
         )
         draw = CorePotts.uniform_open01(
             Float64,
-            CorePotts.Philox4x32x10V2(),
-            CorePotts._trajectory_seed(state.seed, state.replica, state.repeat),
+            CorePotts.Philox4x64x10V3(),
+            CorePotts._trajectory_key(state.seed, state.replica, state.repeat),
             address,
         )
         accepted = log(draw) < result.log_ratio
     end
     return accepted ? CorePotts._PROGRAM_CHECKERBOARD_ACCEPTED :
-           CorePotts._PROGRAM_CHECKERBOARD_ENERGY
+        CorePotts._PROGRAM_CHECKERBOARD_ENERGY
 end
 
 function _order_sensitive_descriptor_plan()
@@ -145,14 +152,14 @@ function _order_sensitive_descriptor_plan()
     values = (1.0e16, -1.0e16, 1.0)
     descriptors = [
         CorePotts.ProposalDescriptor(
-            CorePotts.StaticEvaluator(CorePotts.LiteralExpression(value)),
-            access,
-            support,
-            (),
-            (),
-            CorePotts.ProposalEnergyDriveRole(),
-            source,
-        ) for (source, value) in enumerate(values)
+                CorePotts.StaticEvaluator(CorePotts.LiteralExpression(value)),
+                access,
+                support,
+                (),
+                (),
+                CorePotts.ProposalEnergyDriveRole(),
+                source,
+            ) for (source, value) in enumerate(values)
     ]
     groups = (
         CorePotts.ProposalDescriptorGroup(
@@ -174,7 +181,8 @@ end
 
 function _run_test_proposal_segment!(execution, state, color, attempt, count)
     return CorePotts._execute_compiled_checkerboard_color!(
-        execution, state, color, attempt, count)
+        execution, state, color, attempt, count
+    )
 end
 
 function _reference_conjunctive_dispositions(
@@ -189,8 +197,10 @@ function _reference_conjunctive_dispositions(
             key > 0 || continue
             incumbent = get(winners, key, (UInt32(0), typemax(Int32)))
             if candidate[1] > incumbent[1] ||
-                    (candidate[1] == incumbent[1] &&
-                     candidate[2] < incumbent[2])
+                    (
+                    candidate[1] == incumbent[1] &&
+                        candidate[2] < incumbent[2]
+                )
                 winners[key] = candidate
             end
         end
@@ -206,6 +216,20 @@ function _reference_conjunctive_dispositions(
         selected || (result[item] = CorePotts._PROGRAM_CHECKERBOARD_CONFLICT)
     end
     return result
+end
+
+function _reference_color_dispositions(state, descriptor_plan, proposals, color)
+    dispositions = [
+        _reference_checkerboard_disposition(state, descriptor_plan, proposal, color)
+            for proposal in proposals
+    ]
+    return _reference_conjunctive_dispositions(
+        getproperty.(proposals, :old_owner),
+        getproperty.(proposals, :new_owner),
+        getproperty.(proposals, :priority),
+        getproperty.(proposals, :semantic_id),
+        dispositions,
+    )
 end
 
 @testset "proposal records and deterministic folds match an independent scalar oracle" begin
@@ -234,15 +258,16 @@ end
     active_count = Int(workspace.color_sizes[color])
     expected_proposals = [
         _reference_checkerboard_proposal(
-            state, color, attempt_round, item
-        ) for item in 1:active_count
+                state, color, attempt_round, item
+            ) for item in 1:active_count
     ]
     @test CorePotts._descriptor_source_count(
         program.descriptor_plan
     ) == 3
-    actionable = findfirst(proposal ->
+    actionable = findfirst(
+        proposal ->
         proposal.source_site != Int32(0) &&
-        proposal.old_owner != proposal.new_owner,
+            proposal.old_owner != proposal.new_owner,
         expected_proposals,
     )
     @test actionable !== nothing
@@ -261,12 +286,17 @@ end
         contributions, program.descriptor_plan, context
     )
     @test contributions[1].drive_energy +
-          contributions[2].drive_energy +
-          contributions[3].drive_energy == 1.0
+        contributions[2].drive_energy +
+        contributions[3].drive_energy == 1.0
     @test contributions[1].drive_energy +
-          contributions[3].drive_energy +
-          contributions[2].drive_energy == 0.0
+        contributions[3].drive_energy +
+        contributions[2].drive_energy == 0.0
 
+    # A complete color includes arbitration and publication. Evaluate the
+    # independent oracle before that publication changes its scientific input.
+    expected_dispositions = _reference_color_dispositions(
+        state, program.descriptor_plan, expected_proposals, color
+    )
     wait(CorePotts._clear_checkerboard_bulk!(execution, state))
     receipt = _run_test_proposal_segment!(
         execution,
@@ -277,20 +307,17 @@ end
     )
     wait(receipt)
     published_proposals = map(1:active_count) do item
-        (; target_site = workspace.target_sites[item],
+        (;
+            target_site = workspace.target_sites[item],
             source_site = workspace.source_sites[item],
             old_owner = workspace.old_owners[item],
             new_owner = workspace.new_owners[item],
             priority = workspace.priorities[item],
-            semantic_id = workspace.semantic_ids[item])
+            semantic_id = workspace.semantic_ids[item],
+        )
     end
     @test published_proposals == expected_proposals
-    published_dispositions = [
-        _reference_checkerboard_disposition(
-            state, program.descriptor_plan, proposal, color)
-        for proposal in published_proposals
-    ]
-    @test workspace.dispositions[1:active_count] == published_dispositions
+    @test workspace.dispositions[1:active_count] == expected_dispositions
 end
 
 @testset "conjunctive arbitration applies two-key all-wins selection" begin
@@ -310,31 +337,27 @@ end
     workspace = execution.core
     color = 1
     active_count = Int(workspace.color_sizes[color])
-    @test all(prepared -> prepared isa LocalMath.PreparedPlan,
-        execution.color_laws.prepared)
-    @test length(LocalMath.storage(
-        execution.color_laws.prepared[1],
-        execution.color_laws.declaration.winners,
-    )) == length(workspace.state.cell_kinds) == 4
+    @test all(
+        prepared -> prepared isa LocalMath.PreparedPlan,
+        execution.color_laws.prepared
+    )
+    @test length(
+            LocalMath.storage(
+                execution.color_laws.prepared[1],
+                execution.color_laws.declaration.winners,
+            )
+        ) == length(workspace.state.cell_kinds) == 4
+    proposals = map(1:active_count) do item
+        _reference_checkerboard_proposal(workspace.state, color, 1, item)
+    end
+    expected = _reference_color_dispositions(
+        workspace.state, program.descriptor_plan, proposals, color
+    )
     wait(CorePotts._clear_checkerboard_bulk!(execution, workspace.state))
     receipt = CorePotts._execute_compiled_checkerboard_color!(
-        execution, workspace.state, color, 1, active_count)
+        execution, workspace.state, color, 1, active_count
+    )
     wait(receipt)
-    initial = map(1:active_count) do item
-        proposal = (; target_site = workspace.target_sites[item],
-            source_site = workspace.source_sites[item],
-            old_owner = workspace.old_owners[item],
-            new_owner = workspace.new_owners[item],
-            priority = workspace.priorities[item],
-            semantic_id = workspace.semantic_ids[item])
-        _reference_checkerboard_disposition(
-            workspace.state, program.descriptor_plan, proposal, color)
-    end
-    expected = _reference_conjunctive_dispositions(
-        workspace.old_owners[1:active_count],
-        workspace.new_owners[1:active_count],
-        workspace.priorities[1:active_count],
-        workspace.semantic_ids[1:active_count], initial)
     @test workspace.dispositions[1:active_count] == expected
 end
 
@@ -373,7 +396,16 @@ end
     )
     descriptor = CorePotts.CompiledStageDescriptor(
         CorePotts.StaticEvaluator(CorePotts.LiteralExpression(true)),
-        CorePotts.StaticEvaluator(CorePotts.LiteralExpression(7.0)),
+        CorePotts.StaticEvaluator(
+            CorePotts.OperationExpression(
+                +,
+                CorePotts.OperationExpression(
+                    CorePotts.operation_callable(Val(:proposal_bound_state_value), v"1.0.0"),
+                    CorePotts.StateExpression(handle),
+                ),
+                CorePotts.LiteralExpression(7.0),
+            )
+        ),
         CorePotts.SiteAssignmentEffect(handle),
         CorePotts.AcceptedCopyStage(),
         CorePotts.ResourceAccess(
@@ -417,11 +449,13 @@ end
     CorePotts.advance_mcs!(runtime)
     marker = CorePotts.state_block(runtime.descriptor_state, handle).values
     execution = CorePotts._inspect_checkerboard_execution(
-        runtime.engine_workspace)
+        runtime.engine_workspace
+    )
     @test execution.identity.provider === :KernelAbstractions
     @test !isempty(execution.color_mechanics)
     @test runtime.accepted > 0
     @test any(==(7.0), marker)
+    @test sum(marker) == 7.0 * runtime.accepted
 
 end
 
@@ -463,15 +497,15 @@ end
     )
     relationship_descriptor_plan(sources, fingerprint) =
         CorePotts.DescriptorExecutionPlan(
-            (),
-            CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
-            CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]),
-            (),
-            Any[sources...],
-            0,
-            fingerprint,
-            CorePotts.HamiltonianDomainResources(0, 0),
-        )
+        (),
+        CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
+        CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]),
+        (),
+        Any[sources...],
+        0,
+        fingerprint,
+        CorePotts.HamiltonianDomainResources(0, 0),
+    )
     program = test_program(
         CorePotts.CheckerboardProgramEngine();
         relationships = relationship_schemas,
@@ -499,32 +533,38 @@ end
     edge = only(findall(relationship.active))
     @test runtime.accepted > 0
     @test (relationship.endpoint_a[edge], relationship.endpoint_b[edge]) ==
-          (Int32(1), Int32(2))
+        (Int32(1), Int32(2))
     @test relationship.payload[1][edge] == 4.0
 
     ordered_descriptor(payload, source_handle, buffer_slot) =
         CorePotts.CompiledStageDescriptor(
-            descriptor.condition,
-            descriptor.value,
-            CorePotts.RelationshipCreateEffect(
-                1,
-                effect.endpoint_a,
-                effect.endpoint_b,
-                (CorePotts.StaticEvaluator(
+        descriptor.condition,
+        descriptor.value,
+        CorePotts.RelationshipCreateEffect(
+            1,
+            effect.endpoint_a,
+            effect.endpoint_b,
+            (
+                CorePotts.StaticEvaluator(
                     CorePotts.LiteralExpression(payload)
-                ),),
+                ),
             ),
-            descriptor.stage,
-            descriptor.access,
-            descriptor.support,
-            source_handle,
-            buffer_slot,
-        )
+        ),
+        descriptor.stage,
+        descriptor.access,
+        descriptor.support,
+        source_handle,
+        buffer_slot,
+    )
     permuted_stage_plan = CorePotts.StageExecutionPlan(
-        (CorePotts.StageDescriptorGroup([
-            ordered_descriptor(11.0, 1, 2),
-            ordered_descriptor(22.0, 2, 1),
-        ]),),
+        (
+            CorePotts.StageDescriptorGroup(
+                [
+                    ordered_descriptor(11.0, 1, 2),
+                    ordered_descriptor(22.0, 2, 1),
+                ]
+            ),
+        ),
         (),
         (),
         2,
@@ -616,20 +656,31 @@ end
     declaration = portable.engine_workspace.color_laws.declaration
     relationship_group = only(declaration.relationship_groups)
     @test keys(relationship_group.live_fields) ==
-          keys(CorePotts._packed_relationship_science(
-              adapted.state.relationships.banks[1]))
+        keys(
+        CorePotts._packed_relationship_science(
+            adapted.state.relationships.banks[1]
+        )
+    )
     @test keys(relationship_group.shadow_fields) ==
         keys(relationship_group.live_fields)
-    @test all(zip(values(relationship_group.shadow_fields),
-            values(relationship_group.live_fields))) do pair
+    @test all(
+        zip(
+            values(relationship_group.shadow_fields),
+            values(relationship_group.live_fields)
+        )
+    ) do pair
         first(pair) != last(pair)
     end
     inspection = CorePotts.LocalMath.inspect(
-        first(portable.engine_workspace.color_laws.prepared))
+        first(portable.engine_workspace.color_laws.prepared)
+    )
     labels = map(stage -> stage.origin.label, inspection.stages)
     @test :checkerboard_relationship_settlement in labels
-    @test any(label -> startswith(
-        String(label), "checkerboard_relationship_commit_"), labels)
+    @test any(
+        label -> startswith(
+            String(label), "checkerboard_relationship_commit_"
+        ), labels
+    )
 
     nonfinite_effect = CorePotts.RelationshipCreateEffect(
         1,
@@ -692,8 +743,10 @@ end
     @test receipt.failure isa CorePotts.LifecycleEvaluatorFailure
     @test receipt.committed_mcs == 0
     @test !any(only(receipt.snapshot.relationships).active)
-    @test all(prepared -> prepared isa LocalMath.PreparedPlan,
-        nonfinite.engine_workspace.color_laws.prepared)
+    @test all(
+        prepared -> prepared isa LocalMath.PreparedPlan,
+        nonfinite.engine_workspace.color_laws.prepared
+    )
 
     second_schema = CorePotts.RelationshipStoreSchema(
         4, 2, (
@@ -721,10 +774,14 @@ end
         2,
     )
     cross_bank_stage_plan = CorePotts.StageExecutionPlan(
-        (CorePotts.StageDescriptorGroup([
-            descriptor,
-            later_nonfinite_descriptor,
-        ]),),
+        (
+            CorePotts.StageDescriptorGroup(
+                [
+                    descriptor,
+                    later_nonfinite_descriptor,
+                ]
+            ),
+        ),
         (),
         (),
         2,
@@ -765,26 +822,33 @@ end
         CorePotts.LifecycleDetailNonfiniteResult
     @test cross_bank_receipt.committed_mcs == 0
     @test cross_bank_receipt.snapshot.ownership == ownership
-    @test all(relationship -> !any(relationship.active),
-        cross_bank_receipt.snapshot.relationships)
+    @test all(
+        relationship -> !any(relationship.active),
+        cross_bank_receipt.snapshot.relationships
+    )
 end
 
 @testset "checkerboard rejects undeclared host stage callbacks" begin
+    count = Ref(0)
     program = test_program(
         CorePotts.CheckerboardProgramEngine();
-        stage_plan = unsupported_host_callback_stage_plan(Ref(0)),
+        descriptor_plan = empty_descriptor_plan(; source_table = Any[:host_callback]),
+        stage_plan = unsupported_host_callback_stage_plan(count),
     )
     error = try
         CorePotts.initialize_program(
-        program, test_initial(), Float64[], UInt64(0xa11c), UInt32(1)
+            program, test_initial(), Float64[], UInt64(0xa11c), UInt32(1)
         )
         nothing
     catch caught
         caught
     end
     @test error isa ArgumentError
-    @test occursin("does not support UnsupportedHostCallbackEffect",
-        sprint(showerror, error))
+    @test occursin(
+        "does not support UnsupportedHostCallbackEffect",
+        sprint(showerror, error)
+    )
+    @test count[] == 0
 end
 
 @testset "checkerboard configuration preflight is atomic" begin
@@ -801,8 +865,10 @@ end
     destination = CorePotts._checkerboard_state_at_mcs(destination, 0)
     color_prepared = execution.color_laws.prepared
     destination_ownership = copy(destination.ownership)
-    @test all(prepared -> prepared isa LocalMath.PreparedPlan,
-        color_prepared)
+    @test all(
+        prepared -> prepared isa LocalMath.PreparedPlan,
+        color_prepared
+    )
     @test_throws ArgumentError CorePotts._enqueue_checkerboard_mcs!(
         execution, 0; workgroup_size = 0
     )
@@ -817,7 +883,8 @@ end
         Int(workspace.color_sizes[1]),
     )
     @test_throws ArgumentError CorePotts._preflight_checkerboard_mcs!(
-        execution, 0)
+        execution, 0
+    )
     wait(receipt)
     @test isnothing(CorePotts._preflight_checkerboard_mcs!(execution, 0))
     @test workspace.execution.submitted_mcs == 0
@@ -838,9 +905,11 @@ end
     )
     extensions = merge(
         checkpoint.extensions,
-        (; CorePotts = merge(
-            core, (; execution_lowering = obsolete_execution)
-        )),
+        (;
+            CorePotts = merge(
+                core, (; execution_lowering = obsolete_execution)
+            ),
+        ),
     )
     checksum = CorePotts._program_checkpoint_checksum(
         checkpoint.schema,

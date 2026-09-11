@@ -730,25 +730,36 @@ end
     end
 end
 @testset "initialization uses the semantic RNG address" begin
+    operation = only(
+        CorePotts.rng_operation_keys(
+            (
+                (
+                    namespace =
+                        CorePotts.RNGNamespace((0xe4c62a4c88894cc8, 0xad3a75efc86c53b9)),
+                    identity = "initialization/layout/site-seeding",
+                ),
+            )
+        )
+    )
     first_draw = CorePotts.initialization_bounded(
-        UInt64(0x1234), UInt32(1), UInt32(1), 1, 0, 17
+        UInt64(0x1234), UInt32(1), UInt32(1), operation, 0, 17
     )
     repeated_draw = CorePotts.initialization_bounded(
-        UInt64(0x1234), UInt32(1), UInt32(1), 1, 0, 17
+        UInt64(0x1234), UInt32(1), UInt32(1), operation, 0, 17
     )
     next_draw = CorePotts.initialization_bounded(
-        UInt64(0x1234), UInt32(1), UInt32(1), 1, 1, 17
+        UInt64(0x1234), UInt32(1), UInt32(1), operation, 1, 17
     )
     retry_draw = CorePotts.initialization_bounded(
-        UInt64(0x1234), UInt32(1), UInt32(2), 1, 0, 17
+        UInt64(0x1234), UInt32(1), UInt32(2), operation, 0, 17
     )
     @test 1 <= first_draw <= 17
     @test first_draw == repeated_draw
     @test 1 <= next_draw <= 17
     @test 1 <= retry_draw <= 17
-    @test CorePotts._trajectory_seed(
+    @test CorePotts._trajectory_key(
         UInt64(0x1234), UInt32(1), UInt32(1)
-    ) != CorePotts._trajectory_seed(
+    ) != CorePotts._trajectory_key(
         UInt64(0x1234), UInt32(1), UInt32(2)
     )
 end

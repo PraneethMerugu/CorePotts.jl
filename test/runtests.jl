@@ -11,20 +11,52 @@ const _COREPOTTS_COMPILED_PROGRAM_TESTS = (
     "test_compiled_program_extensibility_storage.jl",
 )
 const _COREPOTTS_DIRECT_TESTS = (
+    "test_program_adaptation.jl",
     "test_api_boundary.jl",
     "test_backend_conformance.jl",
     "test_downstream_spi.jl",
     "test_rng_contract.jl",
+    "test_rng_operations.jl",
+    "test_rng_program_continuation.jl",
+    "test_scheduled_process_draws.jl",
     "test_scientific_reference.jl",
     "test_surface_tracker_contract.jl",
     "test_scientific_geometry_contract.jl",
     "test_relationship_access_contract.jl",
     "test_descriptor_state_spi.jl",
+    "test_logical_state_values.jl",
+    "test_history_sample_storage.jl",
+    "test_history_lifecycle.jl",
+    "test_history_ownership_change.jl",
+    "test_completed_mcs_cadence.jl",
+    "test_model_state_proposal_reads.jl",
+    "test_model_state_energy.jl",
+    "test_empty_logical_storage.jl",
+    "test_cell_stage_execution.jl",
+    "test_stage_anchor_contexts.jl",
+    "test_cell_stage_lifecycle.jl",
+    "test_cell_stage_transactions.jl",
+    "test_cell_stage_domain_boundaries.jl",
+    "test_logical_state_lifecycle.jl",
+    "test_lifecycle_value_conversion.jl",
+    "test_lifecycle_rule_composition.jl",
+    "test_lifecycle_scalar_retirement.jl",
+    "test_lifecycle_numeric_conversion.jl",
+    "test_lifecycle_integer_conversion_bounds.jl",
+    "test_lifecycle_product_conversion.jl",
+    "test_lifecycle_identity_capacity.jl",
+    "test_logical_ownership_change.jl",
+    "test_structured_stage_transactions.jl",
+    "test_site_assignment_conversion.jl",
+    "test_stage_relationship_snapshot.jl",
     "test_acceptance.jl",
     "test_capabilities.jl",
     "test_lifecycle_selection_decisions.jl",
     "test_lifecycle_receipts.jl",
     "test_localmath_compiler_boundary.jl",
+    "test_fixed_vector_operations.jl",
+    "test_trigonometric_operations.jl",
+    "test_product_field_operations.jl",
     "test_checkerboard_read_groups.jl",
     "test_compiler_flagship_benchmark.jl",
 )
@@ -38,7 +70,7 @@ const _COREPOTTS_TEST_DIRECTORY = @__DIR__
 testsuite = Dict{String, Expr}(
     replace(file, r"^test_|\.jl$" => "") =>
         :(include(joinpath($(_COREPOTTS_TEST_DIRECTORY), $file)))
-    for file in _COREPOTTS_DIRECT_TESTS
+        for file in _COREPOTTS_DIRECT_TESTS
 )
 
 for file in _COREPOTTS_COMPILED_PROGRAM_TESTS
@@ -49,14 +81,18 @@ end
 
 testsuite["inventory"] = quote
     @testset "ordinary test runner owns every CorePotts test file" begin
-        discovered = Set(filter(
-            name -> startswith(name, "test_") && endswith(name, ".jl"),
-            readdir($(_COREPOTTS_TEST_DIRECTORY)),
-        ))
-        included = Set((
-            $(_COREPOTTS_DIRECT_TESTS)...,
-            $(_COREPOTTS_COMPILED_PROGRAM_TESTS)...,
-        ))
+        discovered = Set(
+            filter(
+                name -> startswith(name, "test_") && endswith(name, ".jl"),
+                readdir($(_COREPOTTS_TEST_DIRECTORY)),
+            )
+        )
+        included = Set(
+            (
+                $(_COREPOTTS_DIRECT_TESTS)...,
+                $(_COREPOTTS_COMPILED_PROGRAM_TESTS)...,
+            )
+        )
         exclusions = Set($(_COREPOTTS_TEST_HELPER_EXCLUSIONS))
         @test isempty(intersect(included, exclusions))
         @test union(included, exclusions) == discovered
@@ -66,9 +102,11 @@ testsuite["inventory"] = quote
         witness_directory = joinpath(
             $(_COREPOTTS_TEST_DIRECTORY), "backend_conformance"
         )
-        discovered = Set(filter(
-            name -> endswith(name, ".jl"), readdir(witness_directory)
-        ))
+        discovered = Set(
+            filter(
+                name -> endswith(name, ".jl"), readdir(witness_directory)
+            )
+        )
         @test discovered == Set($(_COREPOTTS_DEVICE_CONFORMANCE_WITNESSES))
     end
 end
@@ -120,12 +158,16 @@ end
 init_code = quote
     import CorePotts
     import LocalMath
-    include(joinpath(
-        $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "compiled_program_support.jl"
-    ))
-    include(joinpath(
-        $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "lifecycle_selection_oracle.jl"
-    ))
+    include(
+        joinpath(
+            $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "compiled_program_support.jl"
+        )
+    )
+    include(
+        joinpath(
+            $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "lifecycle_selection_oracle.jl"
+        )
+    )
     const _COREPOTTS_COMPILED_PROGRAM_TESTS =
         $(_COREPOTTS_COMPILED_PROGRAM_TESTS)
 end

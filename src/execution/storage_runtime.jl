@@ -1,5 +1,30 @@
 # Mechanism-free state/workspace allocation, adaptation, and logical codecs.
 
+# Logical products are one stored value, not additional storage dimensions.
+_state_value_zero(::Type{T}) where {T} = zero(T)
+_state_value_zero(::Type{T}) where {T <: Tuple} =
+    map(_state_value_zero, fieldtypes(T))
+_state_value_zero(::Type{NamedTuple{Names, T}}) where {Names, T} =
+    NamedTuple{Names}(_state_value_zero(T))
+
+@inline function _state_value_isfinite(value)
+    return try
+        isfinite(value)
+    catch
+        true
+    end
+end
+@inline _state_value_isfinite(value::AbstractFloat) = isfinite(value)
+@inline _state_value_isfinite(::Integer) = true
+@inline _state_value_isfinite(value::Complex) =
+    _state_value_isfinite(real(value)) && _state_value_isfinite(imag(value))
+@inline _state_value_isfinite(::Tuple{}) = true
+@inline _state_value_isfinite(value::Tuple) =
+    _state_value_isfinite(first(value)) && _state_value_isfinite(Base.tail(value))
+@inline _state_value_isfinite(value::NamedTuple) = _state_value_isfinite(values(value))
+@inline _state_value_isfinite(value::StaticArrays.StaticArray) =
+    all(_state_value_isfinite, value)
+
 function state_storage_class(schema::StateBlockSchema)
     dimensions = schema.shape isa Tuple ? length(schema.shape) : 1
     return StateStorageRepresentation{
@@ -11,30 +36,42 @@ function state_storage_class(schema::StateBlockSchema)
 end
 
 function _dense_shape(schema)
-    schema.shape isa Tuple &&
-        all(dimension -> dimension isa Integer && dimension > 0, schema.shape) &&
+    if schema.shape isa Tuple
+        all(dimension -> dimension isa Integer && dimension >= 0, schema.shape) ||
+            throw(ArgumentError("dense block $(schema.identity) requires nonnegative integer dimensions"))
         return Tuple(Int.(schema.shape))
-    schema.capacity > 0 && return (schema.capacity,)
-    throw(ArgumentError(
-        "dense block $(schema.identity) has no concrete positive shape"
-    ))
+    end
+    schema.capacity >= 0 && return (schema.capacity,)
+    throw(
+        ArgumentError(
+            "dense block $(schema.identity) has no concrete nonnegative shape"
+        )
+    )
 end
 
 function allocate_state_block(
         schema::StateBlockSchema, initial = nothing
     )
     schema.initialization in (:provided_or_zero, :declared) ||
-        throw(ArgumentError(
+        throw(
+        ArgumentError(
             "unsupported state initialization policy $(schema.initialization)"
-        ))
+        )
+    )
     values = if initial === nothing
-        zeros(schema.element_type, _dense_shape(schema))
+        allocated = Array{schema.element_type}(undef, _dense_shape(schema))
+        for index in eachindex(allocated)
+            allocated[index] = _state_value_zero(schema.element_type)
+        end
+        allocated
     else
         converted = Array{schema.element_type}(initial)
         size(converted) == _dense_shape(schema) ||
-            throw(ArgumentError(
+            throw(
+            ArgumentError(
                 "initial state shape for $(schema.identity) is incompatible"
-            ))
+            )
+        )
         converted
     end
     block = DenseStateBlock(values)
@@ -49,14 +86,15 @@ function validate_state_block(
         throw(ArgumentError("state block shape is incompatible with its schema"))
     eltype(block.values) === schema.element_type ||
         throw(ArgumentError("state block element type is incompatible"))
-    if schema.validation === :shape_and_finite &&
-            eltype(block.values) <: AbstractFloat
-        all(isfinite, block.values) ||
+    if schema.validation === :shape_and_finite
+        all(_state_value_isfinite, block.values) ||
             throw(ArgumentError("state block contains a nonfinite value"))
     elseif !(schema.validation in (:shape_and_finite, :prelaunch))
-        throw(ArgumentError(
-            "unsupported state validation policy $(schema.validation)"
-        ))
+        throw(
+            ArgumentError(
+                "unsupported state validation policy $(schema.validation)"
+            )
+        )
     end
     return nothing
 end
@@ -83,7 +121,7 @@ function encode_state_checkpoint(
     schema.checkpoint_codec in (:logical_copy, :reconstruct_from_initial) ||
         throw(ArgumentError("unsupported state checkpoint codec"))
     return schema.checkpoint_codec === :logical_copy ?
-           copy(block.values) : nothing
+        copy(block.values) : nothing
 end
 
 function reconstruct_state_block(
@@ -178,8 +216,8 @@ function _assemble_block_banks(entries, blocks)
     for bank_index in 1:maximum_bank
         selected_pairs = [
             (entry, block)
-            for (entry, block) in zip(entries, blocks)
-            if handle_bank(entry.handle) == bank_index
+                for (entry, block) in zip(entries, blocks)
+                if handle_bank(entry.handle) == bank_index
         ]
         isempty(selected_pairs) &&
             error("compiled block-bank ordinals must be contiguous")
@@ -220,7 +258,7 @@ function allocate_auxiliary_state(
         throw(ArgumentError("initial auxiliary-state tuple has the wrong length"))
     blocks = map(
         (entry, initial) ->
-            allocate_state_block(entry.schema, initial),
+        allocate_state_block(entry.schema, initial),
         layout.entries,
         initial_values,
     )
@@ -256,9 +294,11 @@ end
 function _require_auxiliary_copy_compatible(
         destination::AuxiliaryState, source::AuxiliaryState
     )
-    length(destination.banks) == length(source.banks) || throw(ArgumentError(
-        "auxiliary states have incompatible bank counts"
-    ))
+    length(destination.banks) == length(source.banks) || throw(
+        ArgumentError(
+            "auxiliary states have incompatible bank counts"
+        )
+    )
     for (destination_bank, source_bank) in zip(
             destination.banks, source.banks
         )
@@ -354,15 +394,19 @@ function reconstruct_auxiliary_state(
         checkpoint::AuxiliaryStateCheckpoint,
     )
     length(layout.entries) == length(checkpoint.entries) ||
-        throw(ArgumentError(
+        throw(
+        ArgumentError(
             "auxiliary-state checkpoint entry count is incompatible"
-        ))
+        )
+    )
     blocks = map(layout.entries, checkpoint.entries) do entry, encoded
         encoded.identity == entry.schema.identity &&
             encoded.version == entry.schema.version ||
-            throw(ArgumentError(
+            throw(
+            ArgumentError(
                 "auxiliary-state checkpoint schema is incompatible"
-            ))
+            )
+        )
         reconstruct_state_block(entry.schema, encoded.payload)
     end
     return AuxiliaryState(
@@ -374,7 +418,7 @@ inspect_auxiliary_state(
     layout::StateLayout, state::Union{Nothing, AuxiliaryState} = nothing
 ) = map(layout.entries) do entry
     block = state === nothing ? nothing :
-            state_block(state, entry.handle)
+        state_block(state, entry.handle)
     merge(
         (handle = entry.handle,),
         inspect_state_block(entry.schema, block),
@@ -386,7 +430,7 @@ inspect_runtime_workspaces(
     workspaces::Union{Nothing, RuntimeWorkspaces} = nothing,
 ) = map(layout.entries) do entry
     block = workspaces === nothing ? nothing :
-            workspace_block(workspaces, entry.handle)
+        workspace_block(workspaces, entry.handle)
     merge(
         (handle = entry.handle,),
         inspect_workspace_block(entry.schema, block),

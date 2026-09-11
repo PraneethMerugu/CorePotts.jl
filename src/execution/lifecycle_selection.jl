@@ -600,14 +600,14 @@ end
     end
 
     high_water = Int32(0)
-    for cell in eachindex(reads.cell_generations)
+    for cell in Int32(1):reads.cell_capacity
         generation = @inbounds reads.cell_generations[cell]
-        !iszero(generation) && (high_water = max(high_water, Int32(cell)))
+        !iszero(generation) && (high_water = max(high_water, cell))
     end
     @inbounds selection.high_water[1] = high_water
     free_count = Int32(0)
     for class in UInt32(0):UInt32(1)
-        for cell in eachindex(reads.cell_kinds)
+        for cell in Int32(1):reads.cell_capacity
             kind = @inbounds reads.cell_kinds[cell]
             generation = @inbounds reads.cell_generations[cell]
             recycled = iszero(kind) && !iszero(generation)
@@ -616,9 +616,10 @@ end
             free_count += Int32(1)
             @inbounds begin
                 selection.free_cells.records[free_count] = _LifecycleFreeCell(
-                    Int32(1), Int32(cell), generation,
-                    (class, Int32(cell)), Int32(cell))
-                selection.free_cells.source_item[free_count] = Int32(cell)
+                    Int32(1), cell, generation,
+                    (class, cell), cell
+                )
+                selection.free_cells.source_item[free_count] = cell
                 selection.free_cells.source_lane[free_count] = Int32(1)
             end
         end
@@ -822,6 +823,9 @@ function _prepare_lifecycle_selection(
         gate;
         lease_capacity::Integer = 1,
     )
+    length(science.cell_kinds) == plan.cell_capacity &&
+        length(science.cell_generations) == plan.cell_capacity ||
+        throw(ArgumentError("lifecycle selection identity storage must match the declared cell capacity"))
     backend = KernelAbstractions.get_backend(science.ownership)
     runtime = science
     relationships = runtime.relationships
@@ -862,6 +866,7 @@ function _prepare_lifecycle_selection(
         demands = selection.demands,
         cell_kinds = runtime.cell_kinds,
         cell_generations = runtime.cell_generations,
+        cell_capacity = plan.cell_capacity,
         high_water = selection.high_water,
         free_cells = selection.free_cells,
         allocation = selection.allocation,

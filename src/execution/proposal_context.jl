@@ -284,6 +284,8 @@ struct _ProposalEvaluationContext{R, I} <:
     subround::Int
 end
 
+@inline stage_site(::ModelStageSite, ::_ProposalEvaluationContext) = Int32(1)
+
 @inline evaluator_parameters(context::_ProposalEvaluationContext) =
     _proposal_science_parameters(context.runtime)
 @inline _compiled_evaluator_parameters(context::_ProposalEvaluationContext) =
@@ -567,43 +569,16 @@ end
         context::_ProposalEvaluationContext,
     )
     T = eltype(context.runtime.parameters)
-    family = Int(arguments[1])
-    first_parameter = T(arguments[2])
-    second_parameter = T(arguments[3])
-    operation = UInt16(arguments[4])
-    first_uniform = _program_uniform(
-        T,
-        context.runtime,
-        ExplicitProposalDrawStream,
-        operation,
-        context.attempt;
-        subround = context.subround,
-        draw = 0,
+    operation = arguments[4]
+    address = _program_address(
+        ExplicitProposalDrawStream, context.runtime.mcs + 1, operation,
+        context.attempt; subround = context.subround, draw = 0
     )
-    if family == 1
-        return first_uniform < first_parameter
-    elseif family == 2
-        return muladd(
-            first_uniform,
-            second_parameter - first_parameter,
-            first_parameter,
-        )
-    elseif family == 3
-        iszero(second_parameter) && return first_parameter
-        second_uniform = _program_uniform(
-            T,
-            context.runtime,
-            ExplicitProposalDrawStream,
-            operation,
-            context.attempt;
-            subround = context.subround,
-            draw = 1,
-        )
-        normal = sqrt(-T(2) * log(first_uniform)) *
-                 cos(T(2pi) * second_uniform)
-        return muladd(second_parameter, normal, first_parameter)
-    end
-    return T(NaN)
+    return _addressed_draw(
+        T, arguments,
+        _trajectory_key(context.runtime.seed, context.runtime.replica, context.runtime.repeat),
+        address
+    )
 end
 
 @inline function state_value(

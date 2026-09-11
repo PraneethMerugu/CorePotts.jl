@@ -8,16 +8,6 @@ end
 @doc "Apply one lifecycle descriptor to the model domain." ModelLifecycleDomain
 @doc "Apply one lifecycle descriptor to a selected cell-kind domain." CellKindLifecycleDomain
 
-"""Cadence at which a lifecycle descriptor becomes due."""
-@enum LifecycleCadenceCode::UInt8 begin
-    EveryMCSLifecycleCadence = 0x01
-    AtMCSLifecycleCadence = 0x02
-    PeriodicLifecycleCadence = 0x03
-end
-@doc "Run at every completed MCS." EveryMCSLifecycleCadence
-@doc "Run at one specified MCS." AtMCSLifecycleCadence
-@doc "Run at a fixed positive MCS cadence." PeriodicLifecycleCadence
-
 """Core-owned scientific lifecycle effect."""
 @enum LifecycleEffectCode::UInt8 begin
     CreateCellLifecycleEffect = 0x01
@@ -115,7 +105,7 @@ end
 @doc "Declare the lifecycle effect unsupported for this state." UnsupportedLifecycleState
 @doc "Write the configured retirement value." RetireToLifecycleState
 @doc "Preserve source state." PreserveLifecycleState
-@doc "Reset destination state." ResetLifecycleState
+@doc "Reset source state." ResetLifecycleState
 @doc "Evaluate one state transform." TransformLifecycleState
 @doc "Copy source state to both daughters." CopyDaughtersLifecycleState
 @doc "Preserve parent state and reset daughter state." PreserveParentResetDaughterLifecycleState
@@ -126,6 +116,24 @@ end
 
 @inline _lifecycle_state_action_bit(action::LifecycleStateAction) =
     UInt16(1) << (UInt16(action) - UInt16(1))
+
+function _validate_lifecycle_state_action(effect, action, source_handle, rule_index)
+    # Create has only a new destination; removal, retirement, and transition
+    # have only a source. Division supplies both parent and daughter identities.
+    valid = if action in (PreserveLifecycleState, UnsupportedLifecycleState)
+        true
+    elseif action === InitializeLifecycleState
+        effect in (CreateCellLifecycleEffect, DivideCellLifecycleEffect)
+    elseif action in (RetireToLifecycleState, ResetLifecycleState, TransformLifecycleState)
+        effect !== CreateCellLifecycleEffect
+    else
+        effect === DivideCellLifecycleEffect
+    end
+    valid || throw(ArgumentError(
+        "lifecycle source $source_handle state rule $rule_index: $action requires identities unavailable for $effect"
+    ))
+    return nothing
+end
 @inline _lifecycle_state_action_value(::Val{Action}) where {Action} = Action
 @inline _lifecycle_state_action_value(::Val{:initialize}) =
     InitializeLifecycleState
@@ -348,8 +356,22 @@ struct LifecycleStateRule{H <: StateHandle, T <: AbstractFloat}
     rounding::LifecycleRoundingCode
     parent_distribution::UInt8
     daughter_distribution::UInt8
-    parent_draw::UInt16
-    daughter_draw::UInt16
+    parent_draw::RNGOperationKey
+    daughter_draw::RNGOperationKey
+end
+
+_contains_lifecycle_draw(::AbstractStaticExpression) = false
+_contains_lifecycle_draw(expression::OperationExpression) =
+    expression.operation isa ResourceOperation{:draw} || any(_contains_lifecycle_draw, expression.arguments)
+
+function _lifecycle_rule_contains_draw(evaluators::LifecycleEvaluatorStorage, rule::LifecycleStateRule)
+    for index in (rule.evaluator_a, rule.evaluator_b, rule.evaluator_c, rule.evaluator_d)
+        iszero(index) && continue
+        slot = evaluators.slots[index]
+        evaluator = evaluators.banks[slot.bank].values[slot.slot]
+        _contains_lifecycle_draw(evaluator.expression) && return true
+    end
+    return false
 end
 
 struct LifecycleStateRuleSlot
@@ -457,7 +479,7 @@ struct LifecycleDescriptor{N, T <: AbstractFloat}
     domain::LifecycleDomainCode
     domain_kind::Int16
     trigger_evaluator::Int32
-    cadence::LifecycleCadenceCode
+    cadence::CompletedMCSCadence
     cadence_value::Int32
     effect::LifecycleEffectCode
     priority::Int32
@@ -476,8 +498,8 @@ struct LifecycleDescriptor{N, T <: AbstractFloat}
     point::NTuple{N, T}
     normal::NTuple{N, T}
     side::LifecycleSideCode
-    geometry_draw::UInt16
-    side_draw::UInt16
+    geometry_draw::RNGOperationKey
+    side_draw::RNGOperationKey
     parent_kind::Int16
     daughter_kind::Int16
     state_rule_offset::Int32
@@ -603,31 +625,50 @@ function LifecycleExecutionPlan(
         SO <: AbstractVector{<:NTuple{N, Int16}},
         R <: LifecycleRelationStorage{N},
     }
-    cell_capacity > 0 || throw(ArgumentError(
-        "lifecycle cell capacity must be positive"
-    ))
-    maximum_requests >= 0 || throw(ArgumentError(
-        "lifecycle request bound cannot be negative"
-    ))
+    cell_capacity > 0 || throw(
+        ArgumentError(
+            "lifecycle cell capacity must be positive"
+        )
+    )
+    maximum_requests >= 0 || throw(
+        ArgumentError(
+            "lifecycle request bound cannot be negative"
+        )
+    )
+    for descriptor in descriptors
+        _validate_completed_mcs_cadence(descriptor.cadence, descriptor.cadence_value)
+    end
     iszero(maximum_requests) && return NoLifecycleExecutionPlan()
-    maximum_requests <= typemax(Int32) || throw(ArgumentError(
-        "lifecycle request bound exceeds Int32"
-    ))
-    maximum_placement_sites > 0 || throw(ArgumentError(
-        "lifecycle placement-site bound must be positive"
-    ))
-    maximum_placement_sites <= typemax(Int32) || throw(ArgumentError(
-        "lifecycle placement-site bound exceeds Int32"
-    ))
-    maximum_policy_workspace >= 0 || throw(ArgumentError(
-        "lifecycle policy-workspace bound cannot be negative"
-    ))
-    maximum_policy_workspace <= typemax(Int32) || throw(ArgumentError(
-        "lifecycle policy-workspace bound exceeds Int32"
-    ))
-    length(forbid_extinction) > 0 || throw(ArgumentError(
-        "lifecycle extinction table cannot be empty"
-    ))
+    maximum_requests <= typemax(Int32) || throw(
+        ArgumentError(
+            "lifecycle request bound exceeds Int32"
+        )
+    )
+    maximum_placement_sites > 0 || throw(
+        ArgumentError(
+            "lifecycle placement-site bound must be positive"
+        )
+    )
+    maximum_placement_sites <= typemax(Int32) || throw(
+        ArgumentError(
+            "lifecycle placement-site bound exceeds Int32"
+        )
+    )
+    maximum_policy_workspace >= 0 || throw(
+        ArgumentError(
+            "lifecycle policy-workspace bound cannot be negative"
+        )
+    )
+    maximum_policy_workspace <= typemax(Int32) || throw(
+        ArgumentError(
+            "lifecycle policy-workspace bound exceeds Int32"
+        )
+    )
+    length(forbid_extinction) > 0 || throw(
+        ArgumentError(
+            "lifecycle extinction table cannot be empty"
+        )
+    )
     owned_forbid_extinction = Tuple(forbid_extinction)
     effect_mask = UInt8(0)
     division_variant_mask = UInt16(0)
@@ -636,13 +677,18 @@ function LifecycleExecutionPlan(
     for descriptor in descriptors
         effect_mask |= _lifecycle_effect_bit(descriptor.effect)
         descriptor.effect === DivideCellLifecycleEffect &&
-            (division_variant_mask |= _lifecycle_division_variant_bit(
+            (
+            division_variant_mask |= _lifecycle_division_variant_bit(
                 descriptor.partition, descriptor.side
-            ))
+            )
+        )
         for offset in 0:(Int(descriptor.state_rule_count) - 1)
             rule_index = Int(descriptor.state_rule_offset) + offset
             action = call_lifecycle_state_rule(
                 _lifecycle_state_rule_action, state_rules, rule_index
+            )
+            _validate_lifecycle_state_action(
+                descriptor.effect, action, descriptor.source_handle, rule_index
             )
             state_action_masks[Int(descriptor.effect)] |=
                 _lifecycle_state_action_bit(action)

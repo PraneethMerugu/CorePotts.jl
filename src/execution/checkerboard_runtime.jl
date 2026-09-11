@@ -168,6 +168,7 @@ function _prepare_checkerboard_execution(
         canonical_plan = runtime.program.checkerboard_plan,
         canonical_proposal_offsets = runtime.program.proposal_offsets,
         canonical_stage_plan = runtime.program.stage_plan,
+        state_layout = runtime.program.descriptor_plan.state_layout,
     )
     identity = _checkerboard_execution_identity(
         workspace,
@@ -415,7 +416,7 @@ function program_execution_report(program::CompiledPottsProgram)
         shape = program.shape,
         attempts_per_site = program.attempts_per_site,
         trackers = tracker_plan_report(program.tracker_plan),
-        rng = :Philox4x32x10V2,
+        rng = :Philox4x64x10V3,
         numerical_policy = (
             math = :accurate,
             reductions = :deterministic,

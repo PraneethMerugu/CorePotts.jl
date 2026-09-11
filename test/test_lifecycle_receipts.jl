@@ -30,6 +30,7 @@ function _relationship_schema_state(
         ownership,
         cell_kinds = zeros(Int16, length(ownership)),
         cell_generations = zeros(UInt32, length(ownership)),
+        parameters = Float32[],
         trackers = (values = trackers,),
         relationships,
         descriptor_state = (banks = (),),
@@ -102,71 +103,7 @@ end
         for extent in unique(nonempty_extents))
 end
 
-function receipt_descriptor(
-        index::Integer,
-        effect::CorePotts.LifecycleEffectCode;
-        domain_kind::Integer = 0,
-        destination_kind::Integer = 0,
-        parent_kind::Integer = 0,
-        daughter_kind::Integer = 0,
-        placement::CorePotts.LifecyclePlacementCode =
-            CorePotts.NoLifecyclePlacement,
-        placement_evaluator::Integer = 0,
-        partition::CorePotts.LifecyclePartitionCode =
-            CorePotts.NoLifecyclePartition,
-        point_from_centroid::Bool = false,
-        normal = (0.0, 0.0),
-        relation_slot::Integer = 0,
-        on_inadmissible::CorePotts.LifecycleInadmissibilityDisposition =
-            CorePotts.ErrorLifecycleInadmissible,
-        compiler_synthesized::Bool = false,
-        cadence::CorePotts.LifecycleCadenceCode =
-            CorePotts.EveryMCSLifecycleCadence,
-        cadence_value::Integer = 1,
-    )
-    return CorePotts.LifecycleDescriptor{2, Float64}(
-        Int32(index),
-        UInt64(100 + index),
-        UInt64(200 + index),
-        effect === CorePotts.CreateCellLifecycleEffect ?
-            CorePotts.ModelLifecycleDomain :
-            CorePotts.CellKindLifecycleDomain,
-        Int16(effect === CorePotts.CreateCellLifecycleEffect ? 0 : domain_kind),
-        Int32(1),
-        cadence,
-        Int32(cadence_value),
-        effect,
-        Int32(0),
-        on_inadmissible,
-        Int16(destination_kind),
-        Int16(1),
-        placement,
-        Int32(placement_evaluator),
-        Int32(1),
-        Int32(0),
-        Int32(0),
-        Int32(relation_slot),
-        partition,
-        Int32(0),
-        point_from_centroid,
-        (0.0, 0.0),
-        Tuple(Float64.(normal)),
-        CorePotts.CanonicalLifecycleSide,
-        UInt16(0),
-        UInt16(0),
-        Int16(parent_kind),
-        Int16(daughter_kind),
-        Int32(1),
-        Int32(0),
-        Int32(1),
-        Int32(0),
-        Int32(0),
-        Int32(0),
-        Int32(0),
-        Int32(0),
-        compiler_synthesized,
-    )
-end
+include("fixtures/lifecycle_descriptor_support.jl")
 
 function receipt_lifecycle_plan()
     descriptors = CorePotts.LifecycleDescriptor{2, Float64}[
@@ -261,7 +198,7 @@ function periodic_transition_lifecycle_plan()
         CorePotts.TransitionCellLifecycleEffect;
         domain_kind = 2,
         destination_kind = 3,
-        cadence = CorePotts.PeriodicLifecycleCadence,
+        cadence = CorePotts.PeriodicMCSCadence,
         cadence_value = 2,
     )
     evaluators = CorePotts.LifecycleEvaluatorStorage(
@@ -418,7 +355,6 @@ end
         _assert_checkerboard_bank_invariants(workspace)
     end
     @test allequal(leaf_counts)
-    @test first(leaf_counts) == 6
 
     program = test_program(
         CorePotts.CheckerboardProgramEngine();

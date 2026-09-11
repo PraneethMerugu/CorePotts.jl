@@ -32,6 +32,8 @@ end
 HamiltonianEvaluationContext(view, anchor, proposal) =
     HamiltonianEvaluationContext(view, anchor, proposal, nothing)
 
+@inline stage_site(::ModelStageSite, ::HamiltonianEvaluationContext) = Int32(1)
+
 @inline evaluator_parameters(context::HamiltonianEvaluationContext) =
     _proposal_science_parameters(context.view.runtime)
 @inline _compiled_evaluator_parameters(

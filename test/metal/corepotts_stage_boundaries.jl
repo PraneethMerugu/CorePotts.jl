@@ -161,10 +161,12 @@ function _metal_model_assignment_descriptor()
         :qualified,
         true,
     )
-    handle = only(CorePotts.StateLayout([schema]).entries).handle
+    layout = CorePotts.StateLayout([schema])
+    handle = only(layout.entries).handle
     read_model = CorePotts.OperationExpression(
         CorePotts.operation_callable(
-            Val(:model_bound_state_value), v"1.0.0"),
+            Val(:model_bound_state_value), v"1.0.0"
+        ),
         CorePotts.StateExpression(handle),
     )
     value = CorePotts.OperationExpression(
@@ -188,36 +190,42 @@ function _metal_model_assignment_descriptor()
         1,
         1,
     )
-    return descriptor
+    return descriptor, layout
 end
 
 @testset "CorePotts model-stage compiler executes through LocalMath on Metal" begin
     Metal.allowscalar(false)
     backend = Metal.MetalBackend()
-    descriptor = _metal_model_assignment_descriptor()
+    descriptor, layout = _metal_model_assignment_descriptor()
+    stage_plan = CorePotts.StageExecutionPlan((), (CorePotts.StageDescriptorGroup([descriptor]),), (), 0, 0, "metal-model-assignment")
     gate_space = LocalMath.Space(CorePotts._CheckerboardStageGateDomain, 1)
     external_gate = LocalMath.Field(gate_space, Bool)
-    declaration = CorePotts._compile_model_assignment_law(
+    declaration = CorePotts._compile_identity_assignment_law(
         descriptor,
         (:metal_model_assignment,),
-        nothing,
+        LocalMath.Space(CorePotts._CheckerboardStageModelDomain, 1),
         external_gate,
+        layout,
+        stage_plan,
+        (UInt64(0), UInt64(0)),
+        CorePotts._SCHEDULED_BEFORE_LIFECYCLE,
         Float32,
     )
     model_storage = Metal.MtlArray(Float32[2])
     status_storage = Metal.MtlArray(
-        CorePotts.ProgramStatus[CorePotts.ProgramStatus()])
+        CorePotts.ProgramStatus[CorePotts.ProgramStatus()]
+    )
     prepared = LocalMath.prepare(
-        declaration.law,
+        LocalMath.sequence(declaration.evaluation, declaration.publication),
         only(declaration.fields) => model_storage,
-        declaration.scratch => LocalMath.Allocate(0.0f0),
+        declaration.scratch => LocalMath.Allocate(CorePotts.StageEvaluation(false, 0.0f0)),
         declaration.status_field => status_storage,
         declaration.initial_gate => LocalMath.Allocate(false),
         declaration.refreshed_gate => LocalMath.Allocate(false),
         external_gate => Metal.MtlArray(Bool[true]);
         backend,
     )
-    wait(LocalMath.execute!(prepared; parameters = (mcs = Int64(1),)))
+    wait(LocalMath.execute!(prepared; parameters = (mcs = Int64(1), invocation = UInt32(0))))
     @test Array(model_storage) == Float32[3]
     @test Array(status_storage)[1].code === CorePotts.ProgramStatusSuccess
 end

@@ -98,13 +98,18 @@ function _schema_layout_entries(
         counts[bank] += 1
         shape = schema.shape isa Tuple ? Tuple(Int.(schema.shape)) :
                 (Int(schema.capacity),)
-        handle = handle_type(
-            representation,
-            bank,
-            counts[bank],
-            offsets[bank] + 1,
-            shape,
-        )
+        handle = try
+            handle_type(
+                representation,
+                bank,
+                counts[bank],
+                offsets[bank] + 1,
+                shape,
+            )
+        catch exception
+            exception isa ArgumentError || rethrow()
+            throw(ArgumentError("storage schema $(schema.identity): $(sprint(showerror, exception))"))
+        end
         offsets[bank] += prod(shape)
         push!(entries, entry_type(handle, schema))
     end

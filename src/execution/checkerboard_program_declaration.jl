@@ -598,6 +598,7 @@ function _program_state_copy_schema(state)
         _program_state_copy_leaf(:ownership, state.ownership),
         _program_state_copy_leaf(:cell_kinds, state.cell_kinds),
         _program_state_copy_leaf(:cell_generations, state.cell_generations),
+        _program_state_copy_leaf(:parameters, state.parameters),
     ]
     for (index, tracker) in enumerate(state.trackers.values)
         if tracker isa CellMomentsState
@@ -981,7 +982,7 @@ function _prepare_localmath_checkerboard_initialization(
 end
 
 function _prepare_core_checkerboard_mechanics(
-        workspace, validated, queue_mcs_capacity, canonical_stage_plan)
+        workspace, validated, queue_mcs_capacity, canonical_stage_plan, state_layout)
     state = workspace.state
     maximum_batch = Int32(validated.maximum_batch)
     gates = (
@@ -997,7 +998,7 @@ function _prepare_core_checkerboard_mechanics(
         "checkerboard preparation requires the Core-owned stage plan"))
     stage_boundaries = _prepare_checkerboard_stage_boundaries(
         workspace, canonical_stage_plan, validated.backend,
-        queue_mcs_capacity)
+        queue_mcs_capacity, state_layout)
     return (; clear_report = initialization,
         stage_boundaries, lifecycle_reductions, gates)
 end
@@ -1008,6 +1009,7 @@ function _prepare_localmath_checkerboard_mechanics(
         canonical_plan = nothing,
         canonical_proposal_offsets = workspace.state.program.proposal_offsets,
         canonical_stage_plan = nothing,
+        state_layout,
     )
     state = workspace.state
     plan = state.program.checkerboard_plan
@@ -1020,7 +1022,7 @@ function _prepare_localmath_checkerboard_mechanics(
         "host and adapted checkerboard mechanical capacities disagree",
     )
     return _prepare_core_checkerboard_mechanics(
-        workspace, validated, queue_mcs_capacity, canonical_stage_plan)
+        workspace, validated, queue_mcs_capacity, canonical_stage_plan, state_layout)
 end
 
 struct _CheckerboardClaimSite end
@@ -1073,6 +1075,7 @@ end
         relationships,
         descriptor_state,
         lifecycle_workspace,
+        parameters = state.parameters,
     )
     program_status = lifecycle_workspace isa LifecycleWorkspace ?
                      lifecycle_workspace.status : state.program_status
@@ -1087,7 +1090,7 @@ end
         lifecycle_workspace,
         state.lifecycle_control,
         program_status,
-        state.parameters,
+        parameters,
         state.seed,
         state.replica,
         state.repeat,

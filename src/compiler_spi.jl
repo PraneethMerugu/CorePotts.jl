@@ -14,6 +14,13 @@ or inspect validated compiler IR; runtime and device integration belongs to
 """
 module CompilerSPI
 
+import ..CorePotts: RNGNamespace, RNGOperationKey, rng_operation_keys
+public RNGNamespace, RNGOperationKey, rng_operation_keys
+import ..CorePotts: AbstractCellStageEvaluationContext, CellAssignmentEffect, BoundCellStateValueOperation, stage_cell
+public AbstractCellStageEvaluationContext, CellAssignmentEffect, BoundCellStateValueOperation, stage_cell
+import ..CorePotts: history_source, history_sample_handle, state_read_source, expression_state_handles
+public history_source, history_sample_handle, state_read_source, expression_state_handles
+
 import ..CorePotts:
     AbstractCompiledStage,
     AbstractContextualOperation,
@@ -45,7 +52,7 @@ import ..CorePotts:
     AcceptedCopyStage,
     AcceptedCommitTrackerVisibility,
     AfterMCSStage,
-    AtMCSLifecycleCadence,
+    AtMCSCadence,
     BoundSiteFootprintAnchor,
     BoundedNeighborhoodTrackerCost,
     CanonicalLifecycleSide,
@@ -82,7 +89,7 @@ import ..CorePotts:
     EmptyDescriptorPayload,
     EmptyFootprint,
     ErrorLifecycleInadmissible,
-    EveryMCSLifecycleCadence,
+    EveryMCSCadence,
     ExactLifecycleRounding,
     ExclusiveWriteAccess,
     ExternalLifecyclePartition,
@@ -100,7 +107,7 @@ import ..CorePotts:
     IteratedSiteAssignmentEffect,
     IterationSiteFootprintAnchor,
     IterationStageSite,
-    LifecycleCadenceCode,
+    CompletedMCSCadence,
     LifecycleConflictCode,
     LifecycleDescriptor,
     LifecycleDomainCode,
@@ -142,7 +149,7 @@ import ..CorePotts:
     ParameterDomainConstraint,
     ParameterExpression,
     ParentLifecycleStateRole,
-    PeriodicLifecycleCadence,
+    PeriodicMCSCadence,
     PreserveCompatibleLifecycleRelationship,
     PreserveLifecycleOwnershipState,
     PreserveLifecycleState,
@@ -268,7 +275,6 @@ import ..CorePotts:
     relation_neighbor_site,
     relation_offsets,
     relationship_degree,
-    rng_operation_limit,
     site_owner,
     stage_site,
     state_block,
@@ -345,8 +351,8 @@ public OwnerScalarDelta, OldNewOwnerScalarDelta, OwnerMomentsDelta
 public TrackerSourceView, TrackerSupport, QualifiedTrackerKey
 public QualifiedTrackerOperation, TrackerContract, TrackerExecutionPlan
 public LifecycleDomainCode, ModelLifecycleDomain, CellKindLifecycleDomain
-public LifecycleCadenceCode, EveryMCSLifecycleCadence, AtMCSLifecycleCadence
-public PeriodicLifecycleCadence, LifecycleEffectCode
+public CompletedMCSCadence, EveryMCSCadence, AtMCSCadence
+public PeriodicMCSCadence, LifecycleEffectCode
 public CreateCellLifecycleEffect, RemoveCellLifecycleEffect
 public RetireCellLifecycleEffect, TransitionCellLifecycleEffect
 public DivideCellLifecycleEffect, LifecycleInadmissibilityDisposition
@@ -406,7 +412,7 @@ public proposal_source_kind, proposal_source_owner, proposal_source_site
 public proposal_target_kind, proposal_target_owner, proposal_target_site
 public qualified_tracker_operation_call
 public relation_count, relation_neighbor_site, relation_offsets
-public relationship_degree, rng_operation_limit, site_owner, stage_site
+public relationship_degree, site_owner, stage_site
 public state_block, state_schema_metadata, state_value
 public tracker_contract, tracker_adapt, tracker_checkpoint_policy
 public tracker_concurrency, tracker_inspection, tracker_instances

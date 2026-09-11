@@ -351,6 +351,33 @@ function CompiledPottsProgram(
         !(resolved_checkerboard_plan isa NoCheckerboardPlan) && throw(
             ArgumentError("sequential programs cannot carry a checkerboard plan")
         )
+    _validate_descriptor_state_domains(descriptor_plan, stage_plan)
+    _validate_stage_state_domains(stage_plan, descriptor_plan.state_layout, descriptor_plan.source_table, kind_count, medium_mask)
+    ownership_targets = lifecycle_plan isa LifecycleExecutionPlan ?
+        (ownership_change_handles..., (rule.handle for rule in lifecycle_plan.ownership_rules)...) :
+        ownership_change_handles
+    _validate_state_write_handles(descriptor_plan.state_layout, ownership_targets, :ownership_change)
+    for handle in ownership_targets
+        entry = state_read_source(stage_plan, descriptor_plan.state_layout, handle)
+        source = entry.schema.domain === :history ?
+            history_source(stage_plan, descriptor_plan.state_layout, handle) : entry
+        source.schema.domain === :site && source.schema.shape == shape ||
+            throw(ArgumentError("ownership-change policies require lattice-shaped site state or retained site samples"))
+    end
+    if lifecycle_plan isa LifecycleExecutionPlan
+        for bank in lifecycle_plan.state_rules.banks, rule in bank
+            _validate_state_write_handles(descriptor_plan.state_layout, (rule.handle,), :lifecycle_state_policy)
+            entry = state_read_source(stage_plan, descriptor_plan.state_layout, rule.handle)
+            source = entry.schema.domain === :history ?
+                history_source(stage_plan, descriptor_plan.state_layout, rule.handle) : entry
+            source.schema.domain === :cell && length(source.schema.shape) == 1 ||
+                throw(ArgumentError("cell lifecycle state policies require cell-owned state or retained cell samples"))
+            entry.schema.domain === :history && (
+                rule.action === RedrawDaughtersLifecycleState ||
+                    _lifecycle_rule_contains_draw(lifecycle_plan.evaluators, rule)
+            ) && throw(ArgumentError("stochastic history lifecycle policies require explicit retained-sample correlation semantics"))
+        end
+    end
     owned_proposal_offsets = copy(proposal_offsets)
     owned_medium_mask = copy(medium_mask)
     owned_parameter_defaults = copy(parameter_defaults)

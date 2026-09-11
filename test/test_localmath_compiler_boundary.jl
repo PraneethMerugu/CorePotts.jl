@@ -261,7 +261,7 @@ function _compiler_test_gathered_context(;
         source, target, target_linear,
         old_owner, new_owner, old_kind, new_kind,
         volumes, semantic = Int32(1), mcs = Int64(1), color = Int32(1),
-        trajectory_seed = UInt64(1), scalar_zero = 0.0,
+        trajectory_key = (UInt64(1), UInt64(0)), scalar_zero = 0.0,
         parameters = (), state_values = (),
         contact_sites, contact_owners, contact_kinds,
         reverse_contact_sites, reverse_contact_owners, reverse_contact_kinds,
@@ -271,6 +271,29 @@ function _compiler_test_gathered_context(;
         moment_first = (), moment_second = (), moment_descriptor = nothing,
         relationship_resources = (),
     )
+end
+
+@testset "compiled draws retain their declared Boolean or numerical result" begin
+    context = _compiler_test_gathered_context()
+    namespace = CorePotts.CompilerSPI.RNGNamespace((0xe4c62a4c88894cc8, 0xad3a75efc86c53b9))
+    key = only(
+        CorePotts.CompilerSPI.rng_operation_keys(
+            (
+                (namespace = namespace, identity = "compiler/proposal/draw-result"),
+            )
+        )
+    )
+    operation = CorePotts.ResourceOperation{:draw}()
+    for family in (1, 2, 3)
+        arguments = (Int32(family), 0.25, 0.5, key)
+        expression = CorePotts.OperationExpression(
+            operation, map(CorePotts.LiteralExpression, arguments)...
+        )
+        compiled = CorePotts._compile_proposal_expression(expression, 1, ())
+        value = @inferred CorePotts._execute_proposal_scalar(compiled, context)
+        @test typeof(value) == (family == 1 ? Bool : Float64)
+        @test value === CorePotts.apply_resource_operation(operation, arguments, context)
+    end
 end
 
 _compiler_test_tracker_plan() = CorePotts.TrackerExecutionPlan(
@@ -489,22 +512,25 @@ end
             target = values.schedule[item][color]
             semantic = target
             address = CorePotts._program_address(
-                CorePotts.ProposalDirectionStream, 1, 2, semantic;
+                CorePotts.ProposalDirectionStream, 1, CorePotts._CORE_RNG_OPERATIONS.proposal_direction, semantic;
                 subround = color)
             direction = Int(CorePotts.bounded_uint(
-                CorePotts.Philox4x32x10V2(),
-                declaration.evaluator.trajectory_seed,
+                    CorePotts.Philox4x64x10V3(),
+                    declaration.evaluator.trajectory_key,
                 address, UInt32(2))) + 1
             expected_source = CorePotts._checkerboard_neighbor_linear(
                 checkerboard.shape, checkerboard.periodic, target,
                 declaration.evaluator.offsets[direction])
             priority_address = CorePotts._program_address(
-                CorePotts.CheckerboardPriorityStream, 1, 4, semantic;
+                CorePotts.CheckerboardPriorityStream, 1, CorePotts._CORE_RNG_OPERATIONS.checkerboard_priority, semantic;
                 subround = color)
-            expected_priority = CorePotts._rng_word(
-                CorePotts.Philox4x32x10V2(),
-                declaration.evaluator.trajectory_seed,
-                priority_address)
+            expected_priority = (
+                CorePotts._rng_word(
+                    CorePotts.Philox4x64x10V3(),
+                    declaration.evaluator.trajectory_key,
+                    priority_address
+                ) >> 32
+            ) % UInt32
             @test values.sites[item] == (target, expected_source)
             @test values.semantic[item] == semantic
             @test values.priority[item] == expected_priority
@@ -1105,13 +1131,17 @@ end
 
     addresses = map(Int32(1):Int32(2)) do site
         CorePotts.RNGAddress(; stream = CorePotts.AcceptanceStream,
-            mcs = 4, subround = 1, operation = 2,
+            mcs = 4, subround = 1, operation = CorePotts._CORE_RNG_OPERATIONS.acceptance,
             entity_kind = CorePotts.SiteEntity, entity = site,
             generation = 7, draw = 0)
     end
     @test addresses[1].entity == UInt32(1)
-    @test CorePotts.uniform_open01(Float32, CorePotts.Philox4x32x10V2(),
-        UInt64(0x1234), addresses[1]) !=
-        CorePotts.uniform_open01(Float32, CorePotts.Philox4x32x10V2(),
-            UInt64(0x1234), addresses[2])
+    @test CorePotts.uniform_open01(
+        Float32, CorePotts.Philox4x64x10V3(),
+        (UInt64(0x1234), UInt64(0)), addresses[1]
+    ) !=
+        CorePotts.uniform_open01(
+        Float32, CorePotts.Philox4x64x10V3(),
+        (UInt64(0x1234), UInt64(0)), addresses[2]
+    )
 end

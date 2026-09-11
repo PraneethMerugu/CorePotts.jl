@@ -28,6 +28,8 @@ function _checkerboard_color_declaration(
     initial_gate = LocalMath.Field(gate_space, Bool)
     refreshed_gate = LocalMath.Field(gate_space, Bool)
     terminal_gate = LocalMath.Field(gate_space, Bool)
+    history_clear_groups = _checkerboard_history_clear_groups(
+        accepted, ownership_scratch, terminal_gate)
     relationship_groups = _checkerboard_relationship_groups(
         accepted, relationships, accepted.relationship_bank_fields,
         terminal_gate)
@@ -242,7 +244,10 @@ function _checkerboard_color_declaration(
     )
     validation_laws = accepted_validation_stage === nothing ? () :
         (LocalMath.LocalLaw(accepted_validation_stage),)
-    state_laws = (LocalMath.LocalLaw(accepted_state_stage),)
+    # The candidate ownership already includes exactly the accepted copies.
+    # Comparing it with the live snapshot also handles partial proposal batches.
+    state_laws = (LocalMath.LocalLaw(accepted_state_stage),
+        (group.law for group in history_clear_groups)...)
     # Private shadows always begin as exact live-state snapshots. Only the
     # fallible transformations and shadow-to-live commits are gate-controlled.
     state_initialization_laws = (
@@ -252,6 +257,8 @@ function _checkerboard_color_declaration(
                 Symbol(:checkerboard_state_shadow_initialize_, index))
             for (index, (source, scratch)) in enumerate(zip(
                 accepted.accepted_state_fields, state_scratch)))...,
+        Tuple(_checkerboard_field_copy_law(group.live, group.shadow, nothing,
+                :checkerboard_history_shadow_initialize) for group in history_clear_groups)...,
     )
     state_commit_laws = (
         _checkerboard_field_copy_law(ownership_scratch, accepted.ownership,
@@ -260,6 +267,8 @@ function _checkerboard_color_declaration(
                 Symbol(:checkerboard_state_commit_, index))
             for (index, (scratch, destination)) in enumerate(zip(
                 state_scratch, accepted.accepted_state_fields)))...,
+        Tuple(_checkerboard_field_copy_law(group.shadow, group.live, terminal_gate,
+                :checkerboard_history_commit) for group in history_clear_groups)...,
     )
     report_initialization_law = _checkerboard_field_copy_law(
         report, report_scratch, nothing, :checkerboard_report_initialize)
@@ -304,7 +313,7 @@ function _checkerboard_color_declaration(
         law, winners, status, report, report_scratch,
         ownership_scratch, state_scratch, external_gate,
         initial_gate, refreshed_gate, terminal_gate, owner_relation,
-        status_relation, report_route, relationship_groups, tracker_groups))
+        status_relation, report_route, relationship_groups, tracker_groups, history_clear_groups))
 end
 
 function _checkerboard_color_schedule(
@@ -322,27 +331,47 @@ end
 
 _checkerboard_state_field_bindings(::Tuple{}, ::Tuple{}, state) = ()
 function _checkerboard_state_field_bindings(fields::Tuple, handles::Tuple, state)
+    field = first(fields)
+    values = state_block(state.descriptor_state, first(handles)).values
+    storage = field.space isa LocalMath.Space{_CheckerboardModelDomain} ?
+        BlockView(values.storage, values.offset, (1,)) : values
     return (
-        first(fields) => state_block(
-            state.descriptor_state, first(handles)).values,
+        field => storage,
         _checkerboard_state_field_bindings(
             Base.tail(fields), Base.tail(handles), state)...,
     )
 end
 
+function _checkerboard_history_clear_bindings(groups, state)
+    return Tuple(
+        binding for group in groups for binding in begin
+                values = state_block(state.descriptor_state, group.handle).values
+                site_count = length(state.ownership)
+                endpoints = reshape(Int32[mod1(index, site_count) for index in 1:length(values)], 1, :)
+                execution_endpoints = _checkerboard_similar(state.parameters, Int32, size(endpoints)...)
+                copyto!(execution_endpoints, endpoints)
+                (
+                    group.live => values,
+                    group.shadow => LocalMath.Allocate(_checkerboard_storage_zero(group.shadow)),
+                    group.site_relation => execution_endpoints,
+                )
+            end
+    )
+end
 
-_checkerboard_parameter_binding(::Nothing, state, extent) = ()
+
+_checkerboard_parameter_binding(::Nothing, state, shape) = ()
 function _checkerboard_parameter_binding(
-        field::LocalMath.Field{T}, state, extent,
+        field::LocalMath.Field{T}, state, shape,
     ) where {T<:Tuple}
     N = fieldcount(T)
     N > 0 && all(==(fieldtype(T, 1)), fieldtypes(T)) || throw(ArgumentError(
         "checkerboard parameter fields require a nonempty homogeneous tuple"))
     return (field => _checkerboard_parameter_view(
-        state.parameters, Val(N), extent),)
+        state.parameters, Val(N), shape),)
 end
 
-_checkerboard_storage_zero(::Type{T}) where {T} = zero(T)
+_checkerboard_storage_zero(::Type{T}) where {T} = _state_value_zero(T)
 @generated function _checkerboard_storage_zero(::Type{T}) where {T<:Tuple}
     types = fieldtypes(T)
     return Expr(:tuple, (
@@ -556,9 +585,16 @@ function _checkerboard_color_bindings(
     volumes = tracker_values(
         state.program.tracker_plan, state.trackers, Val(:cell_volume))
     parameter_binding = _checkerboard_parameter_binding(
-        declaration.science_parameters, state, maximum_batch)
+        declaration.science_parameters, state, (maximum_batch,))
     state_bindings = _checkerboard_state_field_bindings(
         declaration.state_fields, declaration.state_handles, state)
+    model_state_binding = if declaration.model_state_relation === nothing
+        ()
+    else
+        endpoints = _checkerboard_similar(state.parameters, Int32, 2, maximum_batch)
+        fill!(endpoints, Int32(1))
+        (declaration.model_state_relation => endpoints,)
+    end
     contact_bindings = _checkerboard_contact_bindings(declaration.contact)
     tracker_source_bindings = Tuple(pair for pair in
         _checkerboard_tracker_source_bindings(
@@ -608,6 +644,8 @@ function _checkerboard_color_bindings(
             _checkerboard_storage_zero(declaration.volumes)),
         parameter_binding...,
         state_bindings...,
+        _checkerboard_history_clear_bindings(declaration.history_clear_groups, state)...,
+        model_state_binding...,
         contact_bindings...,
         tracker_source_bindings...,
         moment_source_bindings...,

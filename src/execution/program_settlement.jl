@@ -13,6 +13,7 @@
     ProgressSettlement = 0x09
     StatisticsSettlement = 0x0a
     ObservationSettlement = 0x0b
+    InitializationSettlement = 0x0c
 end
 """Settlement requested before runtime finalization."""
 FinalizationSettlement
@@ -36,6 +37,8 @@ ProgressSettlement
 StatisticsSettlement
 """Settlement requested to materialize a scientific observation."""
 ObservationSettlement
+"""Settlement of an unpublished MCS-zero history initialization candidate."""
+InitializationSettlement
 
 """Requested publication reason and whether a complete snapshot is required."""
 struct ProgramSettlementRequest
@@ -47,7 +50,11 @@ ProgramSettlementRequest(
     reason::ProgramSettlementReason; full_snapshot::Bool = false
 ) = ProgramSettlementRequest(reason, full_snapshot)
 
-"""Result of draining queued work and optionally materializing a logical snapshot."""
+"""
+Result of draining queued work and optionally materializing a logical snapshot.
+A successful `InitializationSettlement` snapshot is the validated inactive candidate;
+ordinary settlements and failed initialization return the active scientific bank.
+"""
 struct ProgramSettlementReceipt{S, F, L}
     submitted_mcs::Int
     drained_mcs::Int
@@ -302,13 +309,23 @@ function _settle_program_after_wait!(
             Int32(0), Int32(committed), :committed_submission_mismatch
         ))
     end
+    initializing = request.reason === InitializationSettlement
+    if initializing && !(submitted == committed == previous_drained == 0)
+        throw(ArgumentError("history initialization settlement requires the initial MCS-zero boundary"))
+    end
     if failure !== nothing
-        0 < status.mcs <= submitted || throw(LifecycleInvariantFailure(
-            status.source, status.anchor, :invalid_failure_mcs
-        ))
-        committed < status.mcs || throw(LifecycleInvariantFailure(
-            status.source, status.anchor, :failure_after_publication
-        ))
+        if !(initializing && status.mcs == 0)
+            0 < status.mcs <= submitted || throw(
+                LifecycleInvariantFailure(
+                    status.source, status.anchor, :invalid_failure_mcs
+                )
+            )
+            committed < status.mcs || throw(
+                LifecycleInvariantFailure(
+                    status.source, status.anchor, :failure_after_publication
+                )
+            )
+        end
     end
 
     active_state = _settlement_active_state(workspace, active_bank)
@@ -327,7 +344,8 @@ function _settle_program_after_wait!(
         execution.lifecycle_transfer_count += 1
     end
     snapshot = if request.full_snapshot
-        value = _materialize_program_bank(active_state, committed)
+        snapshot_state = initializing && failure === nothing ? before_state : active_state
+        value = _materialize_program_bank(snapshot_state, committed)
         execution.materialized_mcs = committed
         execution.snapshot_transfer_count += 1
         value
@@ -345,6 +363,68 @@ function _settle_program_after_wait!(
         lifecycle_receipt,
         snapshot,
     )
+end
+
+"""
+    initialize_history!(runtime)
+
+Capture only histories whose declared cadence is `AtMCSCadence` at zero, after
+the initial source values have settled. Replace each newest sample while
+preserving older prehistory. This does not execute ordinary boundary processes,
+advance time, or change scientific counters. Capture uses an unpublished candidate
+and the ordinary validated state publisher, so a failure leaves active state unchanged.
+
+Call once when explicitly deferring `initialize_program`'s automatic fresh capture.
+Checkpoint restoration never calls this operation automatically.
+"""
+function initialize_history!(runtime::ProgramRuntime)
+    runtime.settled && runtime.mcs == 0 || throw(
+        ArgumentError(
+            "history initialization requires a settled MCS-zero boundary"
+        )
+    )
+    program_failed(runtime) && throw(
+        ArgumentError(
+            "cannot initialize history after a terminal scientific failure"
+        )
+    )
+    descriptors = Tuple(
+        descriptor for descriptor in _history_descriptors(runtime.program.stage_plan)
+            if _completed_mcs_due(descriptor.effect.cadence, descriptor.effect.cadence_value, 0)
+    )
+    isempty(descriptors) && return runtime
+    execution = runtime.engine_workspace
+    if execution isa SequentialTransactionWorkspace
+        candidate = execution.descriptor_state
+        copyto_auxiliary_state!(candidate, runtime.descriptor_state)
+        for descriptor in descriptors
+            _apply_history_effect!(candidate, descriptor.effect, 0)
+        end
+        return update_program_descriptor_state!(runtime, candidate)
+    end
+    execution isa _CheckerboardExecutionWorkspace || throw(
+        ArgumentError(
+            "history initialization requires a prepared program execution workspace"
+        )
+    )
+    workspace = execution.core
+    position = workspace.execution
+    position.submitted_mcs == position.drained_mcs == position.committed_mcs == 0 ||
+        throw(ArgumentError("history initialization cannot cross queued or committed MCS work"))
+    _, candidate, _ = _checkerboard_transaction_banks(workspace, 0)
+    entries = Tuple(
+        entry for entry in (execution.stage_boundaries.before..., execution.stage_boundaries.after...)
+            if entry.effect isa ShiftAppendEffect &&
+            _completed_mcs_due(entry.effect.cadence, entry.effect.cadence_value, 0)
+    )
+    runtime.settled = false
+    _clear_checkerboard_bulk!(execution, candidate; completed_mcs = 0)
+    _execute_compiled_stage_boundary!(execution, entries, candidate; completed_mcs = 0)
+    receipt = settle_program!(execution, ProgramSettlementRequest(InitializationSettlement; full_snapshot = true))
+    runtime.failure_status = receipt.status
+    runtime.settled = true
+    receipt.failure === nothing || throw(receipt.failure)
+    return update_program_descriptor_state!(runtime, receipt.snapshot.descriptor_state)
 end
 
 function _checkerboard_settlement_events(

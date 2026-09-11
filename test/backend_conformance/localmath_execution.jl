@@ -28,6 +28,28 @@ function _boundary_descriptor_plan(branch::Symbol)
             ),
             CorePotts.ProposalDriveRole(),
         )
+    elseif branch in (:explicit_draw, :explicit_uniform)
+        predicate = branch === :explicit_draw
+        namespace = CorePotts.CompilerSPI.RNGNamespace((0xe4c62a4c88894cc8, 0xad3a75efc86c53b9))
+        key = only(
+            CorePotts.CompilerSPI.rng_operation_keys(
+                (
+                    (namespace = namespace, identity = "conformance/proposal/$branch"),
+                )
+            )
+        )
+        (
+            CorePotts.StaticEvaluator(
+                CorePotts.OperationExpression(
+                    CorePotts.ResourceOperation{:draw}(),
+                    CorePotts.LiteralExpression(Int32(predicate ? 1 : 2)),
+                    CorePotts.LiteralExpression(predicate ? 0.5f0 : 2.0f0),
+                    CorePotts.LiteralExpression(predicate ? 0.0f0 : 4.0f0),
+                    CorePotts.LiteralExpression(key),
+                )
+            ),
+            predicate ? CorePotts.ProposalConstraintRole() : CorePotts.ProposalDriveRole(),
+        )
     elseif branch === :provider_failure
         (
             CorePotts.StaticEvaluator(CorePotts.OperationExpression(
@@ -210,8 +232,9 @@ function run_localmath_checkerboard_vertical(
         device_array;
         backend_name,
         mcs_count = 12,
+        branch = :neutral,
     )
-    program = _boundary_program((6, 6); branch = :neutral)
+    program = _boundary_program((6, 6); branch)
     initial = _boundary_initial((6, 6))
     seed = UInt64(0x1ca1)
     replica = UInt32(3)
@@ -240,6 +263,8 @@ function run_localmath_checkerboard_vertical(
         committed_mcs = device_receipt.committed_mcs,
         continuation_mcs = mcs_count + 2,
         continuation_checksum,
+        accepted = device_receipt.counters.accepted,
+        constraint_rejections = device_receipt.counters.constraint_rejections,
         ownership_checksum = sum(
             index * Int(owner) for (index, owner) in
                 enumerate(device_receipt.snapshot.ownership)
@@ -296,16 +321,22 @@ function run_localmath_checkerboard_failures(
         provider_program = _boundary_program(
             (6, 6); branch = :provider_failure
         )
-        provider_runtime = _localmath_canonical_runtime(
-            device_array, provider_program, initial, seed, replica
+        # Provider failure poisons its preparing task's scope. Keep the
+        # deliberate failure in its own owner task so later fixtures remain usable.
+        provider_failure = fetch(
+            @async begin
+                provider_runtime = _localmath_canonical_runtime(
+                    device_array, provider_program, initial, seed, replica
+                )
+                try
+                    CorePotts.enqueue_program_mcs!(provider_runtime)
+                    CorePotts.settle_program!(provider_runtime, request)
+                    nothing
+                catch error
+                    error
+                end
+            end
         )
-        provider_failure = try
-            CorePotts.enqueue_program_mcs!(provider_runtime)
-            CorePotts.settle_program!(provider_runtime, request)
-            nothing
-        catch error
-            error
-        end
         @test provider_failure isa CorePotts.LifecycleBackendFailure
         @test provider_failure.first_possible_mcs == 1
         @test provider_failure.last_possible_mcs == 1

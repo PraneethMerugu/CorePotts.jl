@@ -75,9 +75,85 @@ end
     for rule in plan.ownership_rules
         rule.action === ClearLifecycleOwnershipState || continue
         values = state_block(workspace.staged_descriptor_state, rule.handle).values
-        @inbounds values[linear] = zero(eltype(values))
+        _clear_site_samples!(values, site)
     end
     return true
+end
+
+@inline _lifecycle_value_convertible(::Type{T}, value) where {T} =
+    applicable(convert, T, value)
+
+@inline function _lifecycle_value_convertible(::Type{T}, value::Real) where {T <: Integer}
+    return applicable(convert, T, value) && isinteger(value) &&
+        typemin(T) <= value <= typemax(T)
+end
+
+@inline _lifecycle_value_convertible(::Type{Bool}, value::Real) =
+    applicable(convert, Bool, value) && (iszero(value) || isone(value))
+
+@inline _lifecycle_value_convertible(::Type{Bool}, value::Union{Float32, Float64}) =
+    applicable(convert, Bool, value) && !issubnormal(value) && (iszero(value) || isone(value))
+
+@inline function _lifecycle_value_convertible(
+        ::Type{T}, value::F,
+    ) where {T <: Union{Signed, Unsigned}, F <: Union{Float32, Float64}}
+    # Preserve convert's exact interval without promoting Float32 comparisons
+    # to Float64 on devices. The upper endpoint is exclusive: typemax(T)
+    # itself can round up when represented by the source floating-point type.
+    lower = F(typemin(T))
+    upper = F(typemax(T))
+    if T <: Unsigned || sizeof(T) < sizeof(F)
+        upper += one(F)
+    end
+    # Floating comparisons can flush subnormals to zero on devices. Base's
+    # bit classification rejects these nonintegers while preserving both zeros.
+    return applicable(convert, T, value) && !issubnormal(value) &&
+        lower <= value < upper && isinteger(value)
+end
+
+@inline function _lifecycle_value_convertible(
+        ::Type{T}, value::StaticArrays.StaticArray,
+    ) where {T <: StaticArrays.StaticArray}
+    return applicable(convert, T, value) && length(T) == length(value) &&
+        all(component -> _lifecycle_value_convertible(eltype(T), component), value)
+end
+
+# Retain field types in specialization: a runtime tuple of DataType values is
+# not a device value inside heterogeneous evaluator-bank dispatch.
+@inline function _lifecycle_product_values_convertible(
+        ::Type{T}, components::Tuple, ::Val{I},
+    ) where {T, I}
+    I > fieldcount(T) && return true
+    return _lifecycle_value_convertible(fieldtype(T, I), getfield(components, I)) &&
+        _lifecycle_product_values_convertible(T, components, Val(I + 1))
+end
+
+@inline function _lifecycle_value_convertible(
+        ::Type{T}, value::Union{Tuple, NamedTuple},
+    ) where {T <: Union{Tuple, NamedTuple}}
+    return applicable(convert, T, value) && fieldcount(T) == length(value) &&
+        _lifecycle_product_values_convertible(T, values(value), Val(1))
+end
+
+_convert_lifecycle_state_value(::Type{T}, value) where {T} = convert(T, value)
+
+@generated function _convert_lifecycle_product_values(
+        ::Type{T}, components::Tuple,
+    ) where {T}
+    # A literal tuple avoids dynamic tail splats in the full device caller.
+    # Only target field types shape code; all runtime conversion stays native.
+    fields = map(1:fieldcount(T)) do index
+        :(_convert_lifecycle_state_value($(fieldtype(T, index)), getfield(components, $index)))
+    end
+    return Expr(:tuple, fields...)
+end
+
+@inline function _convert_lifecycle_state_value(
+        ::Type{T}, value::Union{Tuple, NamedTuple},
+    ) where {T <: Union{Tuple, NamedTuple}}
+    # Admission already checked names, arity and every numerical leaf.
+    converted = _convert_lifecycle_product_values(T, values(value))
+    return convert(T, converted)::T
 end
 
 @inline function _coerce_lifecycle_state_value(
@@ -96,11 +172,7 @@ end
         )
         return LifecycleEvaluationFailed()
     end
-    finite = try
-        isfinite(converted)
-    catch
-        true
-    end
+    finite = _state_value_isfinite(converted)
     finite || begin
         _set_lifecycle_status!(
             workspace,
@@ -122,8 +194,22 @@ end
         values,
         value,
     )
-    converted = convert(eltype(values), value)
-    if converted isa AbstractFloat && !isfinite(converted)
+    # Heterogeneous evaluator banks can expose impossible conversion branches
+    # to device inference even when each selected policy has the correct type.
+    # Validate exact numeric leaves and logical product shapes before calling
+    # convert; equally sized static arrays may still reshape.
+    if !_lifecycle_value_convertible(eltype(values), value)
+        _set_lifecycle_status!(
+            workspace,
+            ProgramStatusEvaluator;
+            source = descriptor.source_handle,
+            anchor,
+            detail = LifecycleDetailStateValueInvalid,
+        )
+        return LifecycleEvaluationFailed()
+    end
+    converted = _convert_lifecycle_state_value(eltype(values), value)::eltype(values)
+    if !_state_value_isfinite(converted)
         _set_lifecycle_status!(
             workspace,
             ProgramStatusEvaluator;
@@ -148,6 +234,7 @@ end
         source,
         destination,
         role,
+        sample,
     )
     source_generation = source > 0 ?
         @inbounds(runtime.cell_generations[source]) : UInt32(0)
@@ -186,8 +273,7 @@ end
         rule.source_identity,
         rule.handle,
         _lifecycle_context_site(runtime, workspace, anchor),
-        Int32(0),
-        UInt16(descriptor.source_handle),
+        Int32(size(state_block(runtime.descriptor_state, rule.handle).values, 2) - sample),
     )
     return _evaluate_lifecycle_checked(
         mode, plan, evaluator, context, descriptor, workspace
@@ -201,7 +287,7 @@ end
         family::UInt8,
         first_parameter::T,
         second_parameter::T,
-        operation::UInt16,
+        operation::RNGOperationKey,
         destination::Int32,
         generation::UInt32,
         daughter::Bool,
@@ -278,6 +364,32 @@ function _apply_lifecycle_state_rule_action!(
     values = state_block(
         workspace.staged_descriptor_state, rule.handle
     ).values
+    for sample in 1:size(values, 2)
+        succeeded = _apply_lifecycle_state_sample!(
+            rule, mode, runtime, plan, workspace, descriptor, request,
+            source, destination, action_plan, sample,
+            _lifecycle_state_sample_values(values, sample),
+        )
+        succeeded || return false
+    end
+    return true
+end
+
+function _apply_lifecycle_state_sample!(
+        rule,
+        mode::AbstractLifecycleExecutionMode,
+        runtime,
+        plan,
+        workspace,
+        descriptor,
+        request::Int,
+        source::Int32,
+        destination::Int32,
+        action_plan::Val,
+        sample::Int,
+        values,
+    )
+    action = _lifecycle_state_action_value(action_plan)
     source_generation = source > 0 ?
         @inbounds(runtime.cell_generations[source]) : UInt32(0)
     destination_generation = destination > 0 ?
@@ -285,7 +397,7 @@ function _apply_lifecycle_state_rule_action!(
     if action === InitializeLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, DestinationLifecycleStateRole,
+            source, destination, DestinationLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -296,7 +408,7 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === RetireToLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, SourceLifecycleStateRole,
+            source, destination, SourceLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -309,7 +421,7 @@ function _apply_lifecycle_state_rule_action!(
     elseif action in (ResetLifecycleState, TransformLifecycleState)
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, SourceLifecycleStateRole,
+            source, destination, SourceLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -322,7 +434,7 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === PreserveParentResetDaughterLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, DaughterLifecycleStateRole,
+            source, destination, DaughterLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -333,12 +445,12 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === ResetBothLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, ParentLifecycleStateRole,
+            source, destination, ParentLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_b = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_b, request,
-            source, destination, DaughterLifecycleStateRole,
+            source, destination, DaughterLifecycleStateRole, sample,
         )
         value_b isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -356,7 +468,7 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === SplitConservativelyLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, ParentLifecycleStateRole,
+            source, destination, ParentLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         fraction_valid = _lifecycle_fraction_valid(mode, value_a)
@@ -394,12 +506,12 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === TransformDaughtersLifecycleState
         value_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, ParentLifecycleStateRole,
+            source, destination, ParentLifecycleStateRole, sample,
         )
         value_a isa LifecycleEvaluationFailed && return false
         value_b = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_b, request,
-            source, destination, DaughterLifecycleStateRole,
+            source, destination, DaughterLifecycleStateRole, sample,
         )
         value_b isa LifecycleEvaluationFailed && return false
         value_a = _coerce_lifecycle_state_value(
@@ -417,22 +529,22 @@ function _apply_lifecycle_state_rule_action!(
     elseif action === RedrawDaughtersLifecycleState
         first_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_a, request,
-            source, destination, ParentLifecycleStateRole,
+            source, destination, ParentLifecycleStateRole, sample,
         )
         first_a isa LifecycleEvaluationFailed && return false
         second_a = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_b, request,
-            source, destination, ParentLifecycleStateRole,
+            source, destination, ParentLifecycleStateRole, sample,
         )
         second_a isa LifecycleEvaluationFailed && return false
         first_b = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_c, request,
-            source, destination, DaughterLifecycleStateRole,
+            source, destination, DaughterLifecycleStateRole, sample,
         )
         first_b isa LifecycleEvaluationFailed && return false
         second_b = _state_rule_value(
             mode, runtime, plan, workspace, descriptor, rule, rule.evaluator_d, request,
-            source, destination, DaughterLifecycleStateRole,
+            source, destination, DaughterLifecycleStateRole, sample,
         )
         second_b isa LifecycleEvaluationFailed && return false
         T = eltype(runtime.parameters)
@@ -524,28 +636,28 @@ function _apply_lifecycle_state_rule!(
     )
     action === PreserveParentResetDaughterLifecycleState &&
         return _apply_lifecycle_state_rule_action!(
-            rule, mode, runtime, plan, workspace, descriptor, request, source,
-            destination, Val(PreserveParentResetDaughterLifecycleState),
-        )
+        rule, mode, runtime, plan, workspace, descriptor, request, source,
+        destination, Val(PreserveParentResetDaughterLifecycleState),
+    )
     action === ResetBothLifecycleState && return _apply_lifecycle_state_rule_action!(
         rule, mode, runtime, plan, workspace, descriptor, request, source,
         destination, Val(ResetBothLifecycleState),
     )
     action === SplitConservativelyLifecycleState &&
         return _apply_lifecycle_state_rule_action!(
-            rule, mode, runtime, plan, workspace, descriptor, request, source,
-            destination, Val(SplitConservativelyLifecycleState),
-        )
+        rule, mode, runtime, plan, workspace, descriptor, request, source,
+        destination, Val(SplitConservativelyLifecycleState),
+    )
     action === TransformDaughtersLifecycleState &&
         return _apply_lifecycle_state_rule_action!(
-            rule, mode, runtime, plan, workspace, descriptor, request, source,
-            destination, Val(TransformDaughtersLifecycleState),
-        )
+        rule, mode, runtime, plan, workspace, descriptor, request, source,
+        destination, Val(TransformDaughtersLifecycleState),
+    )
     action === RedrawDaughtersLifecycleState &&
         return _apply_lifecycle_state_rule_action!(
-            rule, mode, runtime, plan, workspace, descriptor, request, source,
-            destination, Val(RedrawDaughtersLifecycleState),
-        )
+        rule, mode, runtime, plan, workspace, descriptor, request, source,
+        destination, Val(RedrawDaughtersLifecycleState),
+    )
     return _set_lifecycle_status!(
         workspace,
         ProgramStatusInvariant;

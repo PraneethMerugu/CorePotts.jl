@@ -222,7 +222,7 @@ end
         T,
         runtime,
         AcceptanceStream,
-        3,
+        _CORE_RNG_OPERATIONS.acceptance,
         attempt_identity;
         subround,
     )
@@ -324,7 +324,7 @@ function _attempt!(
     direction = _program_bounded(
         runtime,
         ProposalDirectionStream,
-        2,
+        _CORE_RNG_OPERATIONS.proposal_direction,
         attempt_identity,
         size(program.proposal_offsets, 2);
         subround,
@@ -348,7 +348,7 @@ function _advance_sequential!(runtime::ProgramRuntime)
     indices = CartesianIndices(runtime.ownership)
     for attempt in 1:attempts
         target_linear = _program_bounded(
-            runtime, ProposalRecipientStream, 1, attempt, site_count
+            runtime, ProposalRecipientStream, _CORE_RNG_OPERATIONS.proposal_recipient, attempt, site_count
         )
         _attempt!(runtime, indices[target_linear], attempt, 0)
         program_failed(runtime) && return nothing
@@ -358,11 +358,11 @@ end
 
 function _after_mcs!(runtime::ProgramRuntime{T, N}) where {T, N}
     _execute_after_mcs_stage!(
-        runtime, runtime.program.stage_plan.before_lifecycle
+        runtime, runtime.program.stage_plan.before_lifecycle, _SCHEDULED_BEFORE_LIFECYCLE
     )
     execute_lifecycle!(runtime)
     _execute_after_mcs_stage!(
-        runtime, runtime.program.stage_plan.after_lifecycle
+        runtime, runtime.program.stage_plan.after_lifecycle, _SCHEDULED_AFTER_LIFECYCLE
     )
     return nothing
 end
@@ -646,7 +646,8 @@ end
         constraint_rejections::UInt64, energy_rejections::UInt64,
         retired::UInt64,
     )
-    if @index(Global, Linear) == 1
+    index = @index(Global, Linear)
+    if index == 1
         @inbounds begin
             control.counters[_LIFECYCLE_CONTROL_ACTIVE_BANK] = bank
             control.counters[_LIFECYCLE_CONTROL_COMMITTED_MCS] = committed

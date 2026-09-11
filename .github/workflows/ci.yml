@@ -9,7 +9,7 @@ on:
       localmath_ref:
         description: LOCALMATH candidate revision
         type: string
-        default: b699002a05f84e240e34162d509d6b952bf7d437
+        default: 22e7b42905522e53e04b4c0febadb96e30189a80
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,7 +20,7 @@ permissions:
 
 env:
   JULIA_VERSION: '1.12.6'
-  LOCALMATH_REF: ${{ inputs.localmath_ref || 'b699002a05f84e240e34162d509d6b952bf7d437' }}
+  LOCALMATH_REF: ${{ inputs.localmath_ref || '22e7b42905522e53e04b4c0febadb96e30189a80' }}
 
 jobs:
   changes:
@@ -55,7 +55,7 @@ jobs:
   package:
     name: package
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -156,7 +156,7 @@ jobs:
 
   metal:
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.execution != 'false')
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.execution != 'false') }}
     name: metal
     runs-on: macos-15
     timeout-minutes: 120

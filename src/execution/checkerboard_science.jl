@@ -1,3 +1,5 @@
+struct _CheckerboardModelDomain end
+
 # LocalMath topology, bounded gathers, and scientific proposal evaluation.
 
 struct _CheckerboardProposalDomain end
@@ -8,7 +10,7 @@ struct _CheckerboardGeometryEvaluator{N,O}
     shape::NTuple{N,Int}
     periodic::NTuple{N,Bool}
     offsets::O
-    trajectory_seed::UInt64
+    trajectory_key::NTuple{2, UInt64}
     site_count::Int32
 end
 
@@ -39,17 +41,22 @@ end
     target = @inbounds target_options[color]
     semantic = (attempt_round - Int32(1)) * evaluator.site_count + target
     direction_address = _program_address(
-        ProposalDirectionStream, Int(mcs), 2, semantic; subround = color)
+        ProposalDirectionStream, Int(mcs), _CORE_RNG_OPERATIONS.proposal_direction, semantic; subround = color
+    )
     direction = Int(bounded_uint(
-        Philox4x32x10V2(), evaluator.trajectory_seed,
+            Philox4x64x10V3(), evaluator.trajectory_key,
         direction_address, UInt32(length(evaluator.offsets)))) + 1
     source = _checkerboard_neighbor_linear(
         evaluator.shape, evaluator.periodic, target,
         getfield(evaluator.offsets, direction))
     priority_address = _program_address(
-        CheckerboardPriorityStream, Int(mcs), 4, semantic; subround = color)
-    priority = _rng_word(
-        Philox4x32x10V2(), evaluator.trajectory_seed, priority_address)
+        CheckerboardPriorityStream, Int(mcs), _CORE_RNG_OPERATIONS.checkerboard_priority, semantic; subround = color
+    )
+    priority = (
+        _rng_word(
+            Philox4x64x10V3(), evaluator.trajectory_key, priority_address
+        ) >> 32
+    ) % UInt32
     return (
         target = LocalMath.UniqueValue(target),
         sites = LocalMath.UniqueValue((target, source)),
@@ -128,7 +135,7 @@ function _checkerboard_geometry_declaration(
         plan.shape,
         plan.periodic,
         _proposal_offsets_tuple(proposal_offsets, length(plan.shape)),
-        _trajectory_seed(seed, replica, repeat),
+        _trajectory_key(seed, replica, repeat),
         Int32(prod(plan.shape; init = 1)),
     )
     stage = LocalMath.Stage(
@@ -332,7 +339,7 @@ struct _CheckerboardProposalContextPlan{
         RelationshipSchemas, ReadLayout,
     }
     shape::NTuple{N, Int}
-    trajectory_seed::UInt64
+    trajectory_key::NTuple{2, UInt64}
     state_handles::Handles
     contact_ranges::Ranges
     tracker_descriptors::TrackerDescriptors
@@ -532,10 +539,10 @@ end
 end
 
 struct _CheckerboardParameterView{
-        N,T,A<:AbstractVector{T},
-    } <: AbstractVector{NTuple{N,T}}
+        P, N, T, A <: AbstractVector{T},
+    } <: AbstractArray{NTuple{P, T}, N}
     values::A
-    extent::Int
+    shape::NTuple{N, Int}
 end
 
 struct _GatheredRelationshipSchema{P,D,N}
@@ -816,36 +823,47 @@ end
 end
 
 function _checkerboard_parameter_view(
-        values::AbstractVector{T}, ::Val{N}, extent::Integer,
-    ) where {T,N}
-    length(values) >= N || throw(ArgumentError(
-        "checkerboard parameter storage is shorter than its compiled schema"))
-    extent >= 0 || throw(ArgumentError(
-        "checkerboard parameter view extent cannot be negative"))
-    return _CheckerboardParameterView{N,T,typeof(values)}(
-        values, Int(extent))
+        values::AbstractVector{T}, ::Val{P}, shape::NTuple{N, <:Integer},
+    ) where {T, P, N}
+    length(values) >= P || throw(
+        ArgumentError(
+            "checkerboard parameter storage is shorter than its compiled schema"
+        )
+    )
+    all(>=(0), shape) || throw(
+        ArgumentError(
+            "checkerboard parameter view dimensions cannot be negative"
+        )
+    )
+    return _CheckerboardParameterView{P, N, T, typeof(values)}(
+        values, map(Int, shape)
+    )
 end
 
 Base.IndexStyle(::Type{<:_CheckerboardParameterView}) = IndexLinear()
-Base.size(view::_CheckerboardParameterView) = (view.extent,)
-Base.length(view::_CheckerboardParameterView) = view.extent
-Base.strides(::_CheckerboardParameterView) = (1,)
+Base.size(view::_CheckerboardParameterView) = view.shape
+Base.length(view::_CheckerboardParameterView) = prod(view.shape)
+Base.strides(view::_CheckerboardParameterView{P, N}) where {P, N} = ntuple(Val(N)) do dimension
+    dimension == 1 && return 1
+    return prod(view.shape[index] for index in 1:(dimension - 1))
+end
 @inline function Base.getindex(
-        view::_CheckerboardParameterView{N}, index::Int,
-    ) where {N}
+        view::_CheckerboardParameterView{P}, index::Int,
+    ) where {P}
     @boundscheck checkbounds(view, index)
-    return ntuple(N) do slot
+    return ntuple(P) do slot
         @inbounds view.values[slot]
     end
 end
 KernelAbstractions.get_backend(view::_CheckerboardParameterView) =
     KernelAbstractions.get_backend(view.values)
-Adapt.adapt_structure(to, view::_CheckerboardParameterView{N}) where {N} =
+Adapt.adapt_structure(to, view::_CheckerboardParameterView{P}) where {P} =
     _checkerboard_parameter_view(
-        Adapt.adapt(to, view.values), Val(N), view.extent)
+    Adapt.adapt(to, view.values), Val(P), view.shape
+)
 
 @inline _checkerboard_cartesian_site(
-    shape::NTuple{1,<:Integer}, linear::Int32,
+    shape::NTuple{1, <:Integer}, linear::Int32,
 ) = CartesianIndex(linear)
 @inline function _checkerboard_cartesian_site(
         shape::NTuple{2,<:Integer}, linear::Int32)
@@ -1022,7 +1040,7 @@ end
         semantic,
         mcs = getfield(parameters, 1),
         color = getfield(parameters, 2),
-        trajectory_seed = plan.trajectory_seed,
+        trajectory_key = plan.trajectory_key,
         scalar_zero = zero(T),
         parameters = science_parameters,
         state_values,
@@ -1107,8 +1125,12 @@ function _checkerboard_scientific_declaration(
     topology = _checkerboard_proposal_topology_declaration(
         checkerboard, proposal_offsets, seed, replica, repeat)
     inventory = _proposal_gather_inventory(descriptor_plan)
+    history_clear_handles = filter(ownership_change_handles) do handle
+        state_read_source(stage_plan, descriptor_plan.state_layout, handle).schema.domain === :history
+    end
+    site_clear_handles = filter(handle -> !(handle in history_clear_handles), ownership_change_handles)
     requirements = _checkerboard_scientific_requirements(
-        inventory, stage_plan, ownership_change_handles, tracker_plan)
+        inventory, stage_plan, site_clear_handles, tracker_plan)
     state_handles = requirements.state_handles
     terms = _compile_proposal_terms(descriptor_plan, state_handles)
     numeric_terms = _proposal_numeric_terms(terms)
@@ -1174,21 +1196,34 @@ function _checkerboard_scientific_declaration(
         kinetic_modifier = LocalMath.Field(topology.source_space, T),
         constraints_allowed = LocalMath.Field(topology.source_space, Bool),
     )
-    all(handle -> Tuple(Int.(handle_shape(handle))) == checkerboard.shape,
-        state_handles) || throw(ArgumentError(
-            "checkerboard proposal state fields must match the lattice shape"))
+    model_space = LocalMath.Space(_CheckerboardModelDomain, 1)
     state_fields = map(state_handles) do handle
-        LocalMath.Field(topology.lattice_space,
-            _state_handle_element_type(handle))
+        entry = state_read_source(stage_plan, descriptor_plan.state_layout, handle)
+        shape = Tuple(Int.(handle_shape(handle)))
+        domain = if entry.schema.domain === :model
+            prod(shape; init = 1) == 1 || throw(ArgumentError("model proposal state requires one logical value"))
+            model_space
+        else
+            entry.schema.domain === :site && shape == checkerboard.shape ||
+                throw(ArgumentError("checkerboard proposal state requires a declared model value or lattice-shaped site state"))
+            topology.lattice_space
+        end
+        LocalMath.Field(domain, _state_handle_element_type(handle))
     end
     accepted_state_handles = requirements.accepted_state_handles
     accepted_state_fields = map(accepted_state_handles) do handle
         slot = findfirst(==(handle), state_handles)
         slot === nothing && error("accepted state handle was not gathered")
+        getfield(state_fields, slot).space == topology.lattice_space ||
+            throw(ArgumentError("accepted-copy state publication requires site-owned storage"))
         getfield(state_fields, slot)
     end
     proposal_site_relation = LocalMath.IndexRelation(
         topology.sites => topology.lattice_space; optional = true)
+    # Both proposal endpoints see the same sole model value. The relation
+    # repeats an address, not the scientific state or its ownership.
+    model_state_relation = any(field -> field.space == model_space, state_fields) ?
+        LocalMath.FixedRelation(topology.source_space => model_space; degree = 2) : nothing
     parameter_count = max(
         requirements.parameter_count, Int(minimum_parameter_count))
     science_parameters = iszero(parameter_count) ? nothing :
@@ -1313,16 +1348,16 @@ function _checkerboard_scientific_declaration(
                 LocalMath.LocalLaw(reverse_kind_stage)))
     end
     state_accesses = map(state_fields) do field
-        LocalMath.Access(field, proposal_site_relation; required = false)
+        LocalMath.Access(field, field.space == model_space ? model_state_relation : proposal_site_relation; required = false)
     end
     contact_state_accesses = contact === nothing ? () : map(state_fields) do field
-        LocalMath.Access(field, contact.relation; required = false)
+        LocalMath.Access(field, field.space == model_space ? model_state_relation : contact.relation; required = false)
     end
     reverse_contact_state_accesses = contact === nothing ? () : map(state_fields) do field
-        LocalMath.Access(field, contact.reverse_relation; required = false)
+        LocalMath.Access(field, field.space == model_space ? model_state_relation : contact.reverse_relation; required = false)
     end
     affected_contact_state_accesses = contact === nothing ? () : map(state_fields) do field
-        LocalMath.Access(field, contact.affected_relation; required = false)
+        LocalMath.Access(field, field.space == model_space ? model_state_relation : contact.affected_relation; required = false)
     end
     state_names = ntuple(
         index -> Symbol(:proposal_state_, index), length(state_fields))
@@ -1473,7 +1508,7 @@ function _checkerboard_scientific_declaration(
     )
     proposal_context = _CheckerboardProposalContextPlan(
         checkerboard.shape,
-        _trajectory_seed(seed, replica, repeat),
+        _trajectory_key(seed, replica, repeat),
         state_handles,
         contact_ranges,
         tracker_descriptors,
@@ -1576,8 +1611,8 @@ function _checkerboard_scientific_declaration(
         scientific_evaluator, constraint_evaluator, literal_constraint,
         state_handles, state_fields,
         accepted_state_handles, accepted_state_fields,
-        ownership_change_handles,
-        proposal_site_relation, science_parameters, parameter_count, contact,
+        ownership_change_handles = site_clear_handles, history_clear_handles,
+        proposal_site_relation, model_state_relation, science_parameters, parameter_count, contact,
         contact_ranges, tracker_keys, tracker_descriptors,
         tracker_source_fields, tracker_pair_fields,
         moment_descriptor, moment_source_fields,

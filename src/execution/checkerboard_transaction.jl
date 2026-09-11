@@ -15,7 +15,7 @@ _acceptance_temperature(scalar::CompiledScalar{T}) where {T} =
 ) where {Index} = getfield(parameters, Index)
 
 struct _CompiledProposalAcceptanceEvaluator{HasParameters,Constraint,T,F,R}
-    trajectory_seed::UInt64
+    trajectory_key::NTuple{2, UInt64}
     temperature::T
     forbid_extinction::F
     retire_at_zero::R
@@ -23,11 +23,12 @@ end
 
 
 _compiled_proposal_acceptance_evaluator(
-    ::Val{HasParameters}, ::Val{Constraint}, trajectory_seed,
+    ::Val{HasParameters}, ::Val{Constraint}, trajectory_key,
     temperature, forbid, retire,
 ) where {HasParameters,Constraint} = _CompiledProposalAcceptanceEvaluator{
     HasParameters,Constraint,typeof(temperature),typeof(forbid),typeof(retire)}(
-        trajectory_seed, temperature, forbid, retire)
+    trajectory_key, temperature, forbid, retire
+)
 
 @inline _compiled_acceptance_parameters(reads, ::Val{false}) = ()
 @inline _compiled_acceptance_parameters(reads, ::Val{true}) =
@@ -97,11 +98,12 @@ end
                     mcs = getfield(parameters, 1)
                     color = getfield(parameters, 2)
                     address = _program_address(
-                        AcceptanceStream, mcs, 3, semantic;
+                        AcceptanceStream, mcs, _CORE_RNG_OPERATIONS.acceptance, semantic;
                         subround = color)
                     draw = uniform_open01(
-                        typeof(temperature), Philox4x32x10V2(),
-                        evaluator.trajectory_seed, address)
+                        typeof(temperature), Philox4x64x10V3(),
+                        evaluator.trajectory_key, address
+                    )
                     accepted = log(draw) < log_ratio
                 end
                 disposition = accepted ? _PROGRAM_CHECKERBOARD_ACCEPTED :
@@ -143,7 +145,7 @@ function _checkerboard_acceptance_declaration(
         Val(!iszero(scientific.parameter_count)),
         Val(scientific.literal_constraint === nothing ? nothing :
             something(scientific.literal_constraint)),
-        _trajectory_seed(seed, replica, repeat),
+        _trajectory_key(seed, replica, repeat),
         _acceptance_temperature(temperature),
         forbid_extinction,
         retire_at_zero)
@@ -213,6 +215,50 @@ struct _CheckerboardAcceptedStatePublication{N,HasAssignments,H,A,C}
     clear_handles::C
 end
 
+struct _CheckerboardHistoryOwnershipClear end
+
+@inline function (::_CheckerboardHistoryOwnershipClear)(item::Int32, reads, parameters)
+    value = something(@inbounds getfield(reads, 1)[1].value)
+    before = something(@inbounds getfield(reads, 2)[1].value)
+    after = something(@inbounds getfield(reads, 3)[1].value)
+    return (
+        value = LocalMath.UniqueValue(
+            before == after ? value : _state_value_zero(typeof(value))
+        ),
+    )
+end
+
+function _checkerboard_history_clear_groups(accepted, ownership_scratch, gate)
+    return map(accepted.history_clear_handles) do handle
+        space = LocalMath.Space(_CheckerboardHistoryDomain, Tuple(Int.(handle_shape(handle))))
+        live = LocalMath.Field(space, _state_handle_element_type(handle))
+        shadow = LocalMath.Field(space, eltype(live))
+        site_relation = LocalMath.FixedRelation(space => accepted.lattice_space; degree = 1)
+        identity = LocalMath.IdentityRelation(space)
+        stage = LocalMath.Stage(
+            space,
+            (
+                value = LocalMath.Access(live, identity; required = true),
+                before = LocalMath.Access(accepted.ownership, site_relation; required = true),
+                after = LocalMath.Access(ownership_scratch, site_relation; required = true),
+            ),
+            (
+                LocalMath.Publication(
+                    (
+                        LocalMath.FieldPublication(
+                            shadow, identity, LocalMath.PublicationValue(:value)
+                        ),
+                    ), LocalMath.Unique(eltype(live))
+                ),
+            ),
+            LocalMath.Evaluator(_CheckerboardHistoryOwnershipClear()),
+            LocalMath.Control(; gate),
+            LocalMath.SourceOrigin(@__FILE__, @__LINE__; label = :checkerboard_history_ownership_clear),
+        )
+        return (; handle, live, shadow, site_relation, law = LocalMath.LocalLaw(stage))
+    end
+end
+
 _checkerboard_accepted_state_publication(
         ::Val{Names}, ::Val{HasAssignments}, handles, assignments,
         clear_handles) where {Names,HasAssignments} =
@@ -250,7 +296,7 @@ end
     handle = first(handles)
     value = first(values)
     baseline = ownership_changed && handle in clear_handles ?
-        zero(value) : value
+        _state_value_zero(typeof(value)) : value
     result = _apply_accepted_site_assignments(
         assignments, evaluations, handle, baseline)
     return (LocalMath.ConditionalUniqueValue(result, accepted),
@@ -693,6 +739,7 @@ _checkerboard_tracker_scratch(field::LocalMath.Field) = LocalMath.Field(
 function _checkerboard_tracker_validation(
         field::LocalMath.Field, ::Type{T}, tracker_index, field_index,
     ) where {T}
+    iszero(length(field.space)) && return nothing
     source = LocalMath.Space(1)
     relation = LocalMath.FixedRelation(
         source => field.space; degree = length(field.space))
@@ -742,10 +789,10 @@ function _checkerboard_transactional_tracker_group(laws_builder,
                 tracker_index, :_, index))
         for (index, (source, scratch)) in enumerate(zip(source_fields, fields)))
     laws = laws_builder(fields)
-    validations = ntuple(length(fields)) do index
+    validations = filter(!isnothing, ntuple(length(fields)) do index
         _checkerboard_tracker_validation(
             fields[index], eltype(source_fields[index]), tracker_index, index)
-    end
+    end)
     return (; tracker_index = Int32(tracker_index), source_fields, fields,
         paths, initialization_laws, laws,
         validation_laws = map(validation -> validation.law, validations),

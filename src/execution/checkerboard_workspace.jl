@@ -12,6 +12,7 @@ function _checkerboard_state_banks(state::CheckerboardExecutionState)
             copy(state.relationships),
             copy_auxiliary_state(state.descriptor_state),
             NoLifecycleWorkspace(),
+            copy(state.parameters),
         )
         return state, alternate
     end
@@ -48,6 +49,7 @@ function _checkerboard_state_banks(state::CheckerboardExecutionState)
         secondary_science.relationships,
         secondary_science.descriptor_state,
         secondary_workspace,
+        copy(state.parameters),
     )
     return primary, secondary
 end
@@ -145,34 +147,37 @@ function _checkerboard_compiled_relationship_layout(program)
     return _CheckerboardRelationshipLayout(Tuple(storage.slots), banks)
 end
 
-function _checkerboard_kernel_program(program, to)
+function _checkerboard_kernel_program(
+        program, to;
+        backend,
+        topology_epoch = _checkerboard_logical_topology_epoch(
+            program.checkerboard_plan, program.proposal_offsets
+        ),
+    )
     ownership_change_handles = program.ownership_change_handles
     tracker_kernel = to === nothing ?
-                     tracker_kernel_plan(program.tracker_plan) :
-                     adapt_tracker_kernel_plan(to, program.tracker_plan)
-    topology_epoch = _checkerboard_logical_topology_epoch(
-        program.checkerboard_plan, program.proposal_offsets
-    )
+        tracker_kernel_plan(program.tracker_plan) :
+        adapt_tracker_kernel_plan(to, program.tracker_plan, backend)
     extinction_policies = _checkerboard_compiled_extinction_policies(program)
     relationship_layout = _checkerboard_compiled_relationship_layout(program)
     return CheckerboardKernelProgram(
         program.shape,
         program.periodic,
         to === nothing ? program.proposal_offsets :
-        Adapt.adapt(to, program.proposal_offsets),
+            Adapt.adapt(to, program.proposal_offsets),
         program.medium_kind,
         program.temperature,
         program.attempts_per_site,
         to === nothing ? program.relationships :
-        Adapt.adapt(to, program.relationships),
+            Adapt.adapt(to, program.relationships),
         tracker_kernel,
         _checkerboard_adapt(to, _checkerboard_domain_resources(program)),
         to === nothing ? program.lifecycle_plan :
-        Adapt.adapt(to, program.lifecycle_plan),
+            Adapt.adapt(to, program.lifecycle_plan),
         to === nothing ? ownership_change_handles :
-        Adapt.adapt(to, ownership_change_handles),
+            Adapt.adapt(to, ownership_change_handles),
         to === nothing ? program.checkerboard_plan :
-        Adapt.adapt(to, program.checkerboard_plan),
+            Adapt.adapt(to, program.checkerboard_plan),
         extinction_policies,
         relationship_layout,
         topology_epoch,
@@ -210,7 +215,14 @@ function _checkerboard_execution_state(
         initial_mcs = 0,
         to = nothing,
     )
-    kernel_program = _checkerboard_kernel_program(program, to)
+    kernel_program = _checkerboard_kernel_program(program, to; backend = CPUBackend)
+    # Neither alternating execution bank may borrow the published host state.
+    ownership = copy(ownership)
+    cell_kinds = copy(cell_kinds)
+    cell_generations = copy(cell_generations)
+    trackers = copy_tracker_state(trackers)
+    relationships = copy(relationships)
+    descriptor_state = copy_auxiliary_state(descriptor_state)
     lifecycle_workspace = allocate_lifecycle_workspace(
         program.lifecycle_plan,
         program,
@@ -246,7 +258,7 @@ function _checkerboard_execution_state(
         _checkerboard_adapt(to, lifecycle_workspace),
         _checkerboard_adapt(to, lifecycle_control),
         _checkerboard_adapt(to, program_status),
-        _checkerboard_adapt(to, parameters),
+        _checkerboard_adapt(to, copy(parameters)),
         UInt64(seed),
         UInt32(replica),
         UInt32(repeat),
@@ -286,7 +298,7 @@ function _checkerboard_color_sizes(plan::CheckerboardPlan)
     ]
 end
 
-const _CHECKERBOARD_COLOR_ORDER_OPERATION = UInt16(5)
+const _CHECKERBOARD_COLOR_ORDER_OPERATION = _CORE_RNG_OPERATIONS.checkerboard_color_order
 
 """Fill one preallocated unbiased semantic-RNG permutation of realized colors."""
 function _checkerboard_color_order!(
@@ -305,7 +317,7 @@ function _checkerboard_color_order!(
     for color in 1:color_count
         @inbounds order[color] = Int32(color)
     end
-    seed = _trajectory_seed(state.seed, state.replica, state.repeat)
+    seed = _trajectory_key(state.seed, state.replica, state.repeat)
     for position in color_count:-1:2
         address = RNGAddress(
             stream = CheckerboardColorOrderStream,
@@ -316,7 +328,7 @@ function _checkerboard_color_order!(
             entity = position,
         )
         selected = Int(bounded_uint(
-            Philox4x32x10V2(), seed, address, UInt32(position)
+                Philox4x64x10V3(), seed, address, UInt32(position)
         )) + 1
         @inbounds order[position], order[selected] =
             order[selected], order[position]
@@ -490,11 +502,23 @@ function _validate_gpu_descriptor_plan(
 end
 
 
+struct _OwnedArrayAdaptation{T}
+    target::T
+end
+
+Adapt.adapt_storage(to::_OwnedArrayAdaptation, value) =
+    Adapt.adapt_storage(to.target, value)
+Adapt.adapt_storage(to::_OwnedArrayAdaptation, values::AbstractArray) =
+    copy(Adapt.adapt(to.target, values))
+
 """Adapt every checkerboard runtime bank after whole-program admission."""
 function _adapt_checkerboard_workspace(
         to, workspace::CheckerboardWorkspace;
         capability_report,
     )
+    # Preserve each storage owner's traversal while detaching array leaves,
+    # including controls and scratch that same-backend Adapt would reuse.
+    to = _OwnedArrayAdaptation(to)
     state = workspace.state
     primary_science = (
         ownership = Adapt.adapt(to, state.ownership),
@@ -519,7 +543,10 @@ function _adapt_checkerboard_workspace(
         alternate_source = workspace.alternate_state
         program_status = Adapt.adapt(to, state.program_status)
         adapted = CheckerboardExecutionState(
-            _checkerboard_kernel_program(state.program, to),
+            _checkerboard_kernel_program(
+                state.program, to; topology_epoch = state.program.topology_epoch,
+                backend = capability_report.key.backend,
+            ),
             primary_science.ownership,
             primary_science.cell_kinds,
             primary_science.cell_generations,
@@ -544,11 +571,12 @@ function _adapt_checkerboard_workspace(
             Adapt.adapt(to, alternate_source.relationships),
             Adapt.adapt(to, alternate_source.descriptor_state),
             NoLifecycleWorkspace(),
+            Adapt.adapt(to, alternate_source.parameters),
         )
         return _allocate_checkerboard_workspace(
             adapted;
             capability_report,
-            color_sizes = workspace.color_sizes,
+            color_sizes = copy(workspace.color_sizes),
             color_order = copy(workspace.color_order),
             source_table = workspace.source_table,
             alternate_state = alternate,
@@ -576,7 +604,10 @@ function _adapt_checkerboard_workspace(
         shared_workspace, secondary_science
     )
     adapted = CheckerboardExecutionState(
-        _checkerboard_kernel_program(state.program, to),
+        _checkerboard_kernel_program(
+            state.program, to; topology_epoch = state.program.topology_epoch,
+            backend = capability_report.key.backend,
+        ),
         primary_science.ownership,
         primary_science.cell_kinds,
         primary_science.cell_generations,
@@ -601,11 +632,12 @@ function _adapt_checkerboard_workspace(
         secondary_science.relationships,
         secondary_science.descriptor_state,
         secondary_workspace,
+        Adapt.adapt(to, workspace.alternate_state.parameters),
     )
     return _allocate_checkerboard_workspace(
         adapted;
         capability_report,
-        color_sizes = workspace.color_sizes,
+        color_sizes = copy(workspace.color_sizes),
         color_order = copy(workspace.color_order),
         source_table = workspace.source_table,
         alternate_state = alternate,
