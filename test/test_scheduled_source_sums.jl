@@ -7,62 +7,7 @@ function scheduled_site_sum_plan(handle; kwargs...)
     return CorePotts.StageExecutionPlan((), (CorePotts.StageDescriptorGroup([descriptor]),), (), 0, 1, "scheduled-site-sum-source")
 end
 
-function scheduled_history_sum_runtime(
-        engine; cadence = CorePotts.PeriodicMCSCadence, cadence_value = 2,
-        constraint = CorePotts.LiteralExpression(false), initial_samples = nothing, absolute_tolerance = 0.0f0
-    )
-    C = CorePotts
-    (; layout, source, history, descriptor) = _history_sample_fixture(:site, (6, 6), 2)
-    sampling = C.CompiledStageDescriptor(
-        descriptor.condition, descriptor.value,
-        C.ShiftAppendEffect(history, source, 3; cadence, cadence_value), descriptor.stage,
-        descriptor.access, descriptor.support, descriptor.source_handle, descriptor.buffer_slot
-    )
-    stage_plan = C.StageExecutionPlan(
-        (),
-        (C.StageDescriptorGroup([scheduled_site_sum_assignment(source)]), C.StageDescriptorGroup([sampling])),
-        (), 0, 1, "scheduled-history-sums"
-    )
-    reads = (source, C.history_sample_handle(stage_plan, layout, history, 0), C.history_sample_handle(stage_plan, layout, history, 1))
-    keys = ntuple(index -> C.QualifiedTrackerKey(Val(:site_sum), index), 3)
-    sums = map(keys, reads) do key, handle
-        C.SiteSumTracker(
-            Float32, key,
-            C.OperationExpression(C.operation_callable(Val(:iteration_bound_state_value), v"1.0.0"), C.StateExpression(handle));
-            absolute_tolerance
-        )
-    end
-    tracker_plan = C.TrackerExecutionPlan((C.OwnershipCountTracker(), C.DenseScalarTrackerGroup(collect(sums))), "history-parent-sums")
-    reject = C.ProposalDescriptor(
-        C.StaticEvaluator(constraint),
-        C.ResourceAccess((), (), C.EmptyFootprint(), C.EmptyFootprint(), C.NoWriteAccess()),
-        C.DescriptorSupport(true, true, true, true), (), (), C.ProposalConstraintRole(), 1
-    )
-    descriptor_plan = C.DescriptorExecutionPlan(
-        (C.ProposalDescriptorGroup([reject], (), (), :unsplit),),
-        layout, C.WorkspaceLayout(C.WorkspaceSchema[]), (), Any[:history_source], 0,
-        "history-source-sum-state", C.HamiltonianDomainResources(0, 0)
-    )
-    program = test_program(engine; descriptor_plan, stage_plan, tracker_plan, scalar_type = Float32)
-    ownership = fill(Int32(-1), 6, 6)
-    ownership[1:2] .= 1
-    ownership[3] = 2
-    values = map(layout.entries) do entry
-        if entry.schema.domain === :site
-            return ones(Float32, 6, 6)
-        end
-        initial_samples === nothing || return copy(initial_samples)
-        samples = fill(5.0f0, 6, 6, 2)
-        samples[:, :, 2] .= 10.0f0
-        return samples
-    end
-    initial = C.ProgramInitialState(
-        ownership, Int16[2, 2, 0]; scalar_type = Float32,
-        descriptor_state = C.allocate_auxiliary_state(layout, values)
-    )
-    runtime = C.initialize_program(program, initial, Float32[], UInt64(0x3826), UInt32(1))
-    return (; runtime, source, history, reads, sums, keys)
-end
+include("fixtures/site_tracker_history_support.jl")
 
 function source_sum_copy_constraint()
     C = CorePotts
@@ -117,7 +62,7 @@ end
     for lag in 1:2
         samples[1, 1, lag], samples[2, 1, lag] = small, 1.0f0
     end
-    (; runtime, source, reads, keys) = scheduled_history_sum_runtime(
+    (; runtime, source, reads, keys) = scheduled_history_tracker_runtime(
         C.CheckerboardProgramEngine();
         cadence_value = 1000, constraint = source_sum_copy_constraint(), initial_samples = samples, absolute_tolerance = small
     )
@@ -178,7 +123,7 @@ end
         CorePotts.SequentialProgramEngine(), CorePotts.CheckerboardProgramEngine(),
     )
     C = CorePotts
-    (; runtime, source, reads, keys) = scheduled_history_sum_runtime(engine; cadence = C.AtMCSCadence, cadence_value = 0)
+    (; runtime, source, reads, keys) = scheduled_history_tracker_runtime(engine; cadence = C.AtMCSCadence, cadence_value = 0)
     @test runtime.mcs == 0
     @test C.program_tracker_values(runtime, keys[2]) == Float32[2, 1, 0]
     @test C.program_tracker_values(runtime, keys[3]) == Float32[10, 5, 0]
@@ -214,10 +159,20 @@ end
     @test failure isa Union{LocalMath.LocalMathValidationError, C.LifecycleBackendFailure}
     @test occursin("runtime_stage_validation", sprint(showerror, failure))
     if engine isa C.CheckerboardProgramEngine
-        @test_throws ArgumentError C.program_snapshot(runtime)
+        # Completed-prefix recovery has restored a settled boundary, so the
+        # ordinary snapshot must expose the same pre-transaction science.
+        failed_snapshot = C.program_snapshot(runtime)
+        @test runtime.settled
+        @test failed_snapshot.mcs == before.mcs
+        @test failed_snapshot.ownership == before.ownership
+        @test failed_snapshot.cell_kinds == before.cell_kinds
+        @test failed_snapshot.cell_generations == before.cell_generations
+        @test failed_snapshot.trackers.values == before.trackers.values
+        @test collect(failed_snapshot.relationships) == collect(before.relationships)
+        @test C.state_block(failed_snapshot.descriptor_state, handle).values ==
+            C.state_block(before.descriptor_state, handle).values
     end
-    # A failed checkerboard runtime cannot expose a settled snapshot. These
-    # owning-package checks defend its last published host science instead.
+    # These owning-package checks also defend the last published host science.
     @test runtime.mcs == before.mcs == 0
     @test runtime.ownership == before.ownership
     @test runtime.trackers.values == before.trackers.values
@@ -235,12 +190,12 @@ end
         CorePotts.SequentialProgramEngine(), CorePotts.CheckerboardProgramEngine(),
     )
     C = CorePotts
-    (; runtime, source, history, reads, sums, keys) = scheduled_history_sum_runtime(engine)
+    (; runtime, source, history, reads, descriptors, keys) = scheduled_history_tracker_runtime(engine)
     layout, plan = runtime.program.descriptor_plan.state_layout, runtime.program.stage_plan
     for index in 2:3
         @test C.state_read_source(plan, layout, reads[index]).handle == source
-        @test C._site_sum_reads_write(sums[index], history, layout, plan)
-        @test !C._site_sum_reads_write(sums[index], source, layout, plan)
+        @test C._site_tracker_reads_write(descriptors[index], history, layout, plan)
+        @test !C._site_tracker_reads_write(descriptors[index], source, layout, plan)
     end
     for (boundary, samples) in enumerate(((2, 10, 5), (3, 3, 10), (4, 3, 10)))
         C.advance_mcs!(runtime)

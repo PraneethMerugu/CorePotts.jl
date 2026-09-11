@@ -46,7 +46,7 @@ operation_context_supported(::ContextOperation{:energy_anchor_cell}, ::Type{Abst
 ) = apply_resource_operation(operation, arguments, context)
 
 @inline qualified_tracker_operation_call(
-    ::ResourceOperation{:cell_site_sum}, arguments::Tuple,
+    ::Union{ResourceOperation{:cell_site_sum}, ResourceOperation{:cell_site_minimum}}, arguments::Tuple,
     context::_CellStageEvaluationContext, quantity::Val, source_handle::Int32
 ) =
     program_tracker_value(context.runtime, QualifiedTrackerKey(quantity, source_handle), only(arguments))
@@ -893,7 +893,7 @@ function _execute_after_mcs_stage!(runtime, groups, boundary::UInt16)
         runtime.relationships,
         runtime.stage_buffers.relationship_transactions,
     )
-    _refresh_published_site_sums!(runtime, published)
+    _refresh_published_site_trackers!(runtime, published)
     return nothing
 end
 

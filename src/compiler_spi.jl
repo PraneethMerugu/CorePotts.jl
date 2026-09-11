@@ -148,6 +148,7 @@ import ..CorePotts:
     OwnershipTrackerSource,
     SiteExpressionTrackerSource,
     SiteSumTracker,
+    SiteMinimumTracker,
     OwnershipRelationTrackerSource,
     ParameterDomainConstraint,
     ParameterExpression,
@@ -345,7 +346,7 @@ public DeferredRequestWriteAccess, RelationshipStoreSchema
 public OwnershipCountTracker, CellSurfaceTracker, CellMomentsTracker
 public DenseOwnerScalarStorage, DenseOwnerValueStorage, DenseOwnerMomentsStorage, DenseScalarTrackerGroup
 public OwnershipTrackerSource, OwnershipRelationTrackerSource
-public SiteExpressionTrackerSource, SiteSumTracker
+public SiteExpressionTrackerSource, SiteSumTracker, SiteMinimumTracker
 public AcceptedCommitTrackerVisibility
 public ClaimedOwnerExclusiveTrackerConcurrency, OldNewOwnerUpdateBound
 public PersistTrackerCheckpoint, ReconstructTrackerCheckpoint

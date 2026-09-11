@@ -71,7 +71,7 @@ end
     context::_GatheredCellStageContext
 ) = _cell_stage_tracker_value(context, Val(:cell_volume))
 @inline function qualified_tracker_operation_call(
-        ::ResourceOperation{:cell_site_sum}, arguments::Tuple,
+        ::Union{ResourceOperation{:cell_site_sum}, ResourceOperation{:cell_site_minimum}}, arguments::Tuple,
         context::_GatheredCellStageContext, quantity::Val, source_handle::Int32
     )
     _, value = _gathered_tracker_slot(quantity, source_handle, context.tracker_keys, context.tracker_values)
@@ -2235,10 +2235,13 @@ function _prepare_stage_source_refresh(descriptor, results, banks, gates, backen
     gate = LocalMath.Field(domain, Bool)
     identity = LocalMath.IdentityRelation(domain)
     result_fields = map(result -> result.output, results)
+    # Each publication owns a distinct singleton space, even when two
+    # descriptors publish the same source. Relate those identities explicitly.
+    result_relations = map(field -> LocalMath.FixedRelation(domain => field.space; degree = 1), result_fields)
     reads = merge(
         (open = LocalMath.Access(external, identity),),
         NamedTuple{ntuple(index -> Symbol(:published_, index), length(results))}(
-            map(field -> LocalMath.Access(field, identity), result_fields)
+            map((field, relation) -> LocalMath.Access(field, relation), result_fields, result_relations)
         )
     )
     admission = LocalMath.Stage(
@@ -2253,7 +2256,7 @@ function _prepare_stage_source_refresh(descriptor, results, banks, gates, backen
         LocalMath.Control(), LocalMath.SourceOrigin(@__FILE__, @__LINE__; label = :stage_source_refresh_gate)
     )
     first_bank = first(banks)
-    declaration = _site_sum_rebuild_declaration(
+    declaration = _site_tracker_rebuild_declaration(
         descriptor, first_bank.program.shape,
         length(first_bank.cell_kinds), eltype(first_bank.parameters);
         submission_parameters = _stage_submission_parameters(), gate
@@ -2271,6 +2274,7 @@ function _prepare_stage_source_refresh(descriptor, results, banks, gates, backen
         LocalMath.prepare(
             law,
             external => gates[bank_index], gate => LocalMath.Allocate(false),
+            (relation => LocalMath.Allocate(ones(Int32, 1, 1)) for relation in result_relations)...,
             (binding for result in results for binding in _stage_publication_bindings(result, bank_index))...,
             declaration.ownership => bank.ownership,
             (
@@ -2299,10 +2303,10 @@ function _compile_checkerboard_stage_boundary(
     shape = Tuple(state.program.shape)
     periodic = Tuple(state.program.periodic)
     resources = state.program.domain_resources
-    source_sums = filter(tracker -> tracker isa SiteSumTracker, tracker_instances(state.program.tracker_plan))
+    source_trackers = filter(tracker -> tracker isa _SiteExpressionTracker, tracker_instances(state.program.tracker_plan))
     publication_results = map(descriptors) do descriptor
         descriptor.effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ShiftAppendEffect} || return nothing
-        any(tracker -> _site_sum_reads_write(tracker, descriptor.effect.target, state_layout, stage_plan), source_sums) || return nothing
+        any(tracker -> _site_tracker_reads_write(tracker, descriptor.effect.target, state_layout, stage_plan), source_trackers) || return nothing
         return _prepare_stage_publication_result(descriptor, backend, queue_mcs_capacity)
     end
     is_relationship(descriptor) = descriptor.effect isa Union{
@@ -2459,9 +2463,9 @@ function _compile_checkerboard_stage_boundary(
         _stage_boundary_entry(result.prepared, result.descriptor.source_handle, :SourcePublicationReset)
     end
     refreshes = ()
-    for tracker in source_sums
+    for tracker in source_trackers
         dependencies = filter(
-            result -> _site_sum_reads_write(
+            result -> _site_tracker_reads_write(
                 tracker, result.descriptor.effect.target,
                 state_layout, stage_plan
             ), results

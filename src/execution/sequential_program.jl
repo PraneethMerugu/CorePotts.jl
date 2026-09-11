@@ -520,16 +520,20 @@ function stage_program_mcs!(runtime::ProgramRuntime)
 end
 
 function _stage_checkerboard_program_mcs!(runtime::ProgramRuntime)
-    supports_queued_program_execution(runtime) || throw(ArgumentError(
-        "staged checkerboard coupling requires the device-total queued MCS path"
-    ))
-    runtime.settled || throw(ArgumentError(
-        "cannot stage an MCS while another program transaction is pending"
-    ))
+    supports_queued_program_execution(runtime) || throw(
+        ArgumentError(
+            "staged checkerboard coupling requires the device-total queued MCS path"
+        )
+    )
+    runtime.settled || throw(
+        ArgumentError(
+            "cannot stage an MCS while another program transaction is pending"
+        )
+    )
     before = _program_counter_snapshot(runtime)
     enqueue_program_mcs!(runtime)
-    receipt = settle_program!(
-        runtime.engine_workspace,
+    receipt = _settle_checkerboard_runtime!(
+        runtime,
         ProgramSettlementRequest(PublicStepSettlement; full_snapshot = true),
     )
     if receipt.failure !== nothing
@@ -686,6 +690,8 @@ end
     index = @index(Global, Linear)
     if index == 1
         @inbounds begin
+            control.counters[_LIFECYCLE_CONTROL_DUE] = 0
+            control.counters[_LIFECYCLE_CONTROL_RETIRED] = 0
             control.counters[_LIFECYCLE_CONTROL_ACTIVE_BANK] = bank
             control.counters[_LIFECYCLE_CONTROL_COMMITTED_MCS] = committed
             control.statistics[_PROGRAM_STAT_ACCEPTED] = accepted
@@ -700,30 +706,32 @@ end
 end
 
 function _rollback_checkerboard_program_step!(transaction)
-    runtime = transaction.runtime
-    workspace = _checkerboard_core(transaction.workspace)
+    return _rollback_checkerboard_program_step!(transaction.runtime, transaction.counters_before)
+end
+
+function _rollback_checkerboard_program_step!(runtime::ProgramRuntime, counters; committed_mcs = runtime.mcs)
+    workspace = _checkerboard_core(runtime.engine_workspace)
     source, _, destination_bank = _checkerboard_transaction_banks(
-        workspace, runtime.mcs
+        workspace, committed_mcs
     )
     # `_checkerboard_transaction_banks` returns the destination bank as its
     # third result; the source bank is the opposite bank.
     published_bank = destination_bank == 1 ? Int32(2) : Int32(1)
     backend = KernelAbstractions.get_backend(source.ownership)
-    counters = transaction.counters_before
     _rollback_checkerboard_program_step_kernel!(backend, 1)(
         source.lifecycle_control,
         source.program_status,
         published_bank,
-        Int32(runtime.mcs),
+        Int32(committed_mcs),
         counters...;
         ndrange = 1,
     )
     KernelAbstractions.synchronize(backend)
     workspace.execution.synchronization_count += 1
     execution = workspace.execution
-    execution.submitted_mcs = runtime.mcs
-    execution.drained_mcs = runtime.mcs
-    execution.committed_mcs = runtime.mcs
+    execution.submitted_mcs = committed_mcs
+    execution.drained_mcs = committed_mcs
+    execution.committed_mcs = committed_mcs
     execution.materialized_mcs = runtime.mcs
     return runtime
 end

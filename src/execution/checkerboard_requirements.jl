@@ -612,7 +612,7 @@ function _checkerboard_scientific_requirements(
         any(==(handle), affected_handles) || push!(affected_handles, handle)
     end
     for descriptor in tracker_instances(tracker_plan)
-        descriptor isa SiteSumTracker || continue
+        descriptor isa _SiteExpressionTracker || continue
         _record_expression_requirements!(handles, parameter_count, descriptor.expression)
     end
     return (;

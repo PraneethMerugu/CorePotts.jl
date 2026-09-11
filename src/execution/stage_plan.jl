@@ -576,12 +576,12 @@ end
 _validate_stage_tracker_anchor(::AbstractStaticExpression, effect, source) = nothing
 function _validate_stage_tracker_anchor(expression::OperationExpression, effect, source)
     operation = expression.operation
-    source_sum = operation isa ResourceOperation{:cell_site_sum} ||
-        (operation isa QualifiedTrackerOperation && operation.operation isa ResourceOperation{:cell_site_sum})
-    if source_sum || (effect isa CellAssignmentEffect && operation isa ResourceOperation{:cell_volume})
-        effect isa CellAssignmentEffect || throw(ArgumentError("source sum at $source requires a scheduled cell context"))
-        !source_sum || operation isa QualifiedTrackerOperation ||
-            throw(ArgumentError("source sum at $source requires a compiler-bound tracker key"))
+    source_tracker = operation isa Union{ResourceOperation{:cell_site_sum}, ResourceOperation{:cell_site_minimum}} ||
+        (operation isa QualifiedTrackerOperation && operation.operation isa Union{ResourceOperation{:cell_site_sum}, ResourceOperation{:cell_site_minimum}})
+    if source_tracker || (effect isa CellAssignmentEffect && operation isa ResourceOperation{:cell_volume})
+        effect isa CellAssignmentEffect || throw(ArgumentError("site-expression tracker at $source requires a scheduled cell context"))
+        !source_tracker || operation isa QualifiedTrackerOperation ||
+            throw(ArgumentError("site-expression tracker at $source requires a compiler-bound tracker key"))
         length(expression.arguments) == 1 &&
             only(expression.arguments) isa ContextExpression{ContextOperation{:energy_anchor_cell}} ||
             throw(ArgumentError("cell tracker read at $source requires the current bound cell"))

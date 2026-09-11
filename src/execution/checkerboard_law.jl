@@ -34,7 +34,7 @@ function _checkerboard_color_declaration(
         accepted, relationships, accepted.relationship_bank_fields,
         terminal_gate)
     tracker_groups = _checkerboard_tracker_groups(
-        merge(accepted, (; state_scratch, history_clear_groups)), tracker_plan, tracker_state, terminal_gate,
+        merge(accepted, (; ownership_scratch, state_scratch, history_clear_groups)), tracker_plan, tracker_state, terminal_gate,
         owner_capacity)
 
     gate_identity = LocalMath.IdentityRelation(gate_space)

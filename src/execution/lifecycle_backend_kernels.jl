@@ -333,7 +333,7 @@ end
 end
 
 @kernel function _stage_lifecycle_structure_backend_kernel!(
-        state, tracker_source, workspace, control, plan_class
+        runtime, plan, tracker_source, workspace, control, plan_class
     )
     index = @index(Global, Linear)
     if index == 1 && _lifecycle_backend_open(workspace) &&
@@ -343,14 +343,14 @@ end
         for position in 1:selected
             if !failed
                 request = Int(_lifecycle_selected_request(workspace, position))
-                descriptor = @inbounds state.program.lifecycle_plan.descriptors[
+                descriptor = @inbounds plan.descriptors[
                     Int(workspace.descriptor[request])
                 ]
                 _lifecycle_plan_matches(descriptor, plan_class) || continue
                 failed = !_stage_lifecycle_effect_base!(
                     BackendLifecycleExecution(),
-                    state,
-                    state.program.lifecycle_plan,
+                    runtime,
+                    plan,
                     workspace,
                     request,
                     descriptor,

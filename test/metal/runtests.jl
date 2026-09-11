@@ -12,6 +12,8 @@ const COREPOTTS_METAL_WITNESSES = (
     "corepotts_scheduled_draws.jl",
     "corepotts_input_publication.jl",
     "corepotts_structured_owner_sums.jl",
+    "corepotts_site_minimum.jl",
+    "corepotts_site_tracker_lifecycle.jl",
     "corepotts_feasibility.jl",
     "corepotts_stage_boundaries.jl",
     "corepotts_structured_transactions.jl",

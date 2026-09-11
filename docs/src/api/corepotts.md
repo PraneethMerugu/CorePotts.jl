@@ -273,6 +273,60 @@ with an independently recomputed one. Nonfinite contributions, deltas, or
 results reject the containing transaction. Scalar and fixed-value sums share
 the canonical LocalMath execution path on every supported backend.
 
+`SiteMinimumTracker(Float32, quantity, expression; maximum_sites, empty)`
+maintains a finite scalar minimum over each cell's sites. Both keywords are
+required: `maximum_sites` bounds the complete lattice traversal and `empty`
+is the finite `Float32` value for zero-area or inactive owners. Removal of a
+minimum, including a tied minimum, triggers reconstruction from authoritative
+ownership and the completed source values. Source publications and input
+replacement use that same bounded law; no subtraction or hidden argmin cache
+is used. Reconstruction is lattice-linear per accepted sequential copy or
+checkerboard subround, not a constant-cost update. All contributions must be
+finite, even when an invalid contribution would not win the minimum.
+Its private full-lattice reconstruction bound excludes arithmetic ownership
+deltas and declares reconstruction after completed source staging.
+Ordinary `SiteSumTracker` ownership updates retain their incremental contract.
+
+Lifecycle creation, division, removal, and retirement maintain site sums by
+subtracting each entry contribution and adding its completed ownership/source
+contribution. Minima instead reconstruct after all ownership changes and source
+clears, before cell-state policies run. A reconstruction failure or a later policy failure
+rolls back the entire MCS, including ownership, source values, and caches.
+When neither ownership nor referenced source values change, both engines retain
+the cached values bit-exactly, including incrementally rounded sums.
+Lifecycle preparation allocates temporary entry ownership and
+physical source-parent snapshots only for full-reconstruction trackers. These
+are execution scratch, not checkpointed scientific state. Sequential captures
+them before structural mutation only when requests are selected, then settles
+the same comparison/reconstruction law against the completed candidate.
+Each checkerboard lifecycle enqueue
+copies them unconditionally, including closed/no-effect cadence, then compares
+entry and completed values to gate reconstruction. Copy, comparison, and
+reconstruction have lattice-linear work and scratch cost (including all retained
+samples of referenced history parents); sum-only programs do not pay this cost.
+Queue inspection reports snapshot and reconstruction provider submissions separately.
+
+Each checkerboard MCS is atomic; a queued range is not an all-or-nothing
+transaction. If a later synchronous lifecycle submission fails, recovery drains
+the submitted receipt prefix and discards the incomplete candidate. A prior
+complete queued prefix remains unpublished until `settle_program!` is called.
+Settlement preserves its scientific values and counters but does not synthesize
+lifecycle events from scratch overwritten by the failed later request. Repair
+ordinary invalid inputs at that settled boundary before retrying. Single-step
+enqueue, advance, and staged calls retain their starting MCS on such failure.
+A failed provider drain cannot establish a retryable boundary.
+Settlement remains owned by the task that submitted the prepared receipts.
+A foreign-task settlement rejects without discarding pending receipts or
+recovering on that task; the owner can still settle the original queued work.
+Numerical receipt failures are recoverable only after all retained receipts
+have settled. Validation-error type alone does not establish this boundary.
+
+Published cell-stage reads use the qualified `cell_site_minimum` operation.
+Proposal/hypothetical minimum reads are rejected until a bounded hypothetical
+reconstruction law is provided. Checkpoints persist and verify the exact
+maintained value; restoration does not silently repair it. Scalar `Float32`
+is the admitted minimum value type; vector ordering is not inferred.
+
 Call `BackendSPI.prevalidate_program_step_transaction` for every participating
 token before coordinated publication. `BackendSPI.publish_program_step_transaction!`
 is only the publication half of that protocol, not a substitute for validation.

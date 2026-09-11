@@ -38,6 +38,7 @@ end
 struct SiteExpressionTrackerSource{E <: AbstractStaticExpression} <: AbstractTrackerSource
     expression::E
 end
+struct _BoundSiteExpressionTrackerSource <: AbstractTrackerSource end
 
 """Scientific tracker quantity qualified by one value-level source handle."""
 struct QualifiedTrackerKey{Q <: Val}
@@ -103,6 +104,54 @@ function SiteSumTracker(
         quantity, expression, absolute_tolerance, relative_tolerance
     )
 end
+"""
+Maintain the minimum finite Float32 site contribution for each finite owner.
+
+Every accepted ownership/source change permits a full lattice reconstruction,
+bounded by the required `maximum_sites`. The required `empty::Float32`
+declares the finite result for an empty owner. Hypothetical proposal reads are
+not admitted; published values are available through qualified cell-stage reads.
+"""
+struct SiteMinimumTracker{Q <: QualifiedTrackerKey, E <: AbstractStaticExpression} <: AbstractTrackerDescriptor
+    quantity::Q
+    expression::E
+    maximum_sites::Int32
+    empty::Float32
+
+    function SiteMinimumTracker(
+            ::Type{Float32}, quantity::Q, expression::E;
+            maximum_sites::Integer, empty::Float32
+        ) where {Q <: QualifiedTrackerKey, E <: AbstractStaticExpression}
+        maximum_sites isa Bool && throw(ArgumentError("site minimum maximum_sites must be an integer capacity, not Bool"))
+        0 <= maximum_sites <= typemax(Int32) || throw(ArgumentError("site minimum maximum_sites must be a nonnegative Int32 bound"))
+        isfinite(empty) || throw(ArgumentError("site minimum empty-owner value must be finite"))
+        return new{Q, E}(quantity, expression, Int32(maximum_sites), empty)
+    end
+end
+
+const _SiteExpressionTracker = Union{SiteSumTracker, SiteMinimumTracker}
+
+# Device-reachable site-sum maintenance consumes a cold-compiled expression
+# and the exact state arrays it reads. This is a lowering of `SiteSumTracker`,
+# not a second scientific descriptor or persisted tracker representation.
+struct _BoundSiteSumTracker{
+        T, Q <: QualifiedTrackerKey, E, S <: Tuple, P, C <: Val,
+    } <:
+       AbstractTrackerDescriptor
+    quantity::Q
+    expression::E
+    sources::S
+    parameters::P
+    parameter_count::C
+    zero::T
+end
+
+Adapt.@adapt_structure _BoundSiteSumTracker
+
+_site_tracker_value_type(::SiteSumTracker{T}) where {T} = T
+_site_tracker_value_type(::SiteMinimumTracker) = Float32
+_site_tracker_value_type(::_BoundSiteSumTracker{T}) where {T} = T
+
 """Store one scalar of type `T` per finite owner."""
 struct DenseOwnerScalarStorage{T} <: AbstractTrackerStorage end
 """Store one floating `StaticArrays.SArray` value per finite owner."""
@@ -115,6 +164,19 @@ struct DenseOwnerMomentsStorage{N, T <: AbstractFloat} <:
 struct AcceptedCommitTrackerVisibility <: AbstractTrackerVisibility end
 """Bound a proposal update to its old and new finite owners."""
 struct OldNewOwnerUpdateBound <: AbstractTrackerUpdateBound end
+"""Reconstruct from completed source state, traversing at most `maximum_sites` sites."""
+struct FullLatticeReconstructionUpdateBound <: AbstractTrackerUpdateBound
+    maximum_sites::Int
+    function FullLatticeReconstructionUpdateBound(maximum_sites::Integer)
+        maximum_sites isa Bool && throw(ArgumentError("full-lattice reconstruction maximum_sites must be an integer capacity, not Bool"))
+        0 <= maximum_sites <= typemax(Int32) || throw(
+            ArgumentError(
+                "full-lattice reconstruction requires a nonnegative Int32 site bound"
+            )
+        )
+        return new(Int(maximum_sites))
+    end
+end
 """Declare constant work per proposal."""
 struct ConstantTrackerCost <: AbstractTrackerCost end
 """Declare proposal work proportional to squared spatial dimension."""
@@ -225,6 +287,16 @@ struct DenseScalarTrackerGroup{
     end
 end
 
+"""Fixed compiler-lowered scalar group used by device ownership updates."""
+struct _LifecycleDenseScalarTrackerGroup{Q <: Val, D <: Tuple} <:
+       AbstractTrackerPlanEntry
+    quantity::Q
+    descriptors::D
+end
+
+
+Adapt.@adapt_structure _LifecycleDenseScalarTrackerGroup
+
 function DenseScalarTrackerGroup(descriptors::A) where {
         D <: AbstractTrackerDescriptor,
         A <: AbstractVector{D},
@@ -276,8 +348,11 @@ function tracker_ownership_delta end
 """Adapt an isbits tracker descriptor to an execution backend."""
 function tracker_adapt end
 
+"""Geometry available while applying one accepted ownership change."""
+abstract type AbstractTrackerCommitSource end
+
 """Read-only tracker source shared by rebuild, proposal, and oracle paths."""
-struct TrackerSourceView{O, S, P, R, V, A}
+struct TrackerSourceView{O, S, P, R, V, A} <: AbstractTrackerCommitSource
     ownership::O
     shape::S
     periodic::P
@@ -287,6 +362,16 @@ struct TrackerSourceView{O, S, P, R, V, A}
 end
 
 Adapt.@adapt_structure TrackerSourceView
+
+"""Ownership geometry required by lifecycle tracker updates."""
+struct _LifecycleTrackerCommitSource{O, S, P, R} <: AbstractTrackerCommitSource
+    ownership::O
+    shape::S
+    periodic::P
+    domain_resources::R
+end
+
+Adapt.@adapt_structure _LifecycleTrackerCommitSource
 
 """Construct the read-only authoritative source used by tracker protocols."""
 tracker_source_view(program, ownership; parameters = (), descriptor_state = nothing) = TrackerSourceView(
@@ -306,26 +391,36 @@ tracker_quantity(descriptor::CellSurfaceTracker) = QualifiedTrackerKey(
     descriptor.relation_handle,
 )
 tracker_quantity(descriptor::SiteSumTracker) = descriptor.quantity
+tracker_quantity(descriptor::SiteMinimumTracker) = descriptor.quantity
+tracker_quantity(descriptor::_BoundSiteSumTracker) = descriptor.quantity
 """Return all stable quantity identities produced by a descriptor or group."""
 tracker_quantities(descriptor::AbstractTrackerDescriptor) =
     (tracker_quantity(descriptor),)
 tracker_quantities(group::DenseScalarTrackerGroup) =
     Tuple(QualifiedTrackerKey(group.quantity, handle)
           for handle in group.source_handles)
+tracker_quantities(group::_LifecycleDenseScalarTrackerGroup) =
+    map(tracker_quantity, group.descriptors)
 """Return the checkpoint policy declared by a tracker contract."""
 tracker_checkpoint_policy(descriptor::AbstractTrackerDescriptor) =
     tracker_contract(descriptor).checkpoint
 tracker_checkpoint_policy(group::DenseScalarTrackerGroup) =
+    tracker_checkpoint_policy(first(group.descriptors))
+tracker_checkpoint_policy(group::_LifecycleDenseScalarTrackerGroup) =
     tracker_checkpoint_policy(first(group.descriptors))
 """Return the engine and backend qualification for a tracker."""
 tracker_support(descriptor::AbstractTrackerDescriptor) =
     tracker_contract(descriptor).support
 tracker_support(group::DenseScalarTrackerGroup) =
     tracker_support(first(group.descriptors))
+tracker_support(group::_LifecycleDenseScalarTrackerGroup) =
+    tracker_support(first(group.descriptors))
 """Return the proposal-update concurrency contract for a tracker."""
 tracker_concurrency(descriptor::AbstractTrackerDescriptor) =
     tracker_contract(descriptor).concurrency
 tracker_concurrency(group::DenseScalarTrackerGroup) =
+    tracker_concurrency(first(group.descriptors))
+tracker_concurrency(group::_LifecycleDenseScalarTrackerGroup) =
     tracker_concurrency(first(group.descriptors))
 """Return the closed physical-storage strategy for a tracker."""
 tracker_storage(descriptor::AbstractTrackerDescriptor) =
@@ -334,6 +429,13 @@ function tracker_storage(group::DenseScalarTrackerGroup)
     storage = tracker_storage(first(group.descriptors))
     storage isa DenseOwnerScalarStorage || throw(ArgumentError(
         "dense scalar tracker groups require scalar member storage"
+    ))
+    return DenseOwnerScalarGroupStorage{_tracker_storage_eltype(storage)}()
+end
+function tracker_storage(group::_LifecycleDenseScalarTrackerGroup)
+    storage = tracker_storage(first(group.descriptors))
+    storage isa DenseOwnerScalarStorage || throw(ArgumentError(
+        "bound dense scalar tracker groups require scalar member storage"
     ))
     return DenseOwnerScalarGroupStorage{_tracker_storage_eltype(storage)}()
 end
@@ -404,14 +506,24 @@ function _validate_tracker_descriptor(descriptor::AbstractTrackerDescriptor)
     contract.visibility isa AcceptedCommitTrackerVisibility || throw(
         ArgumentError("tracker visibility must be accepted-commit")
     )
-    contract.update_bound isa OldNewOwnerUpdateBound || throw(
-        ArgumentError("tracker updates must be source/target-owner bounded")
+    contract.update_bound isa Union{OldNewOwnerUpdateBound, FullLatticeReconstructionUpdateBound} ||
+        throw(ArgumentError("tracker updates require an incremental owner bound or an explicit full-lattice reconstruction bound"))
+    contract.update_bound isa FullLatticeReconstructionUpdateBound &&
+        !(descriptor isa SiteMinimumTracker) && throw(ArgumentError(
+            "full-lattice reconstruction is currently owned by SiteMinimumTracker"
+        ))
+    contract.update_bound isa FullLatticeReconstructionUpdateBound &&
+        !(contract.proposal_cost isa LatticeLinearTrackerCost) && throw(
+        ArgumentError(
+            "full-lattice reconstruction updates must declare lattice-linear accepted-update cost"
+        )
     )
     contract.proposal_cost isa Union{
         ConstantTrackerCost,
         DimensionSquaredTrackerCost,
         BoundedNeighborhoodTrackerCost,
-    } || throw(ArgumentError("tracker proposal cost is not admitted"))
+    } || (contract.update_bound isa FullLatticeReconstructionUpdateBound && contract.proposal_cost isa LatticeLinearTrackerCost) ||
+        throw(ArgumentError("tracker proposal cost is not admitted"))
     if contract.proposal_cost isa BoundedNeighborhoodTrackerCost
         contract.proposal_cost.maximum_neighbors > 0 || throw(ArgumentError(
             "bounded-neighborhood tracker cost must be positive"
@@ -498,6 +610,15 @@ tracker_kernel_plan(plan::TrackerExecutionPlan) =
     TrackerKernelPlan(plan.descriptors)
 tracker_kernel_plan(plan::TrackerKernelPlan) = plan
 
+_lifecycle_tracker_entry(descriptor) = descriptor
+_lifecycle_tracker_entry(group::DenseScalarTrackerGroup) =
+    _LifecycleDenseScalarTrackerGroup(
+        group.quantity, Tuple(group.descriptors)
+    )
+function _lifecycle_tracker_kernel_plan(plan::AbstractTrackerPlan)
+    return TrackerKernelPlan(map(_lifecycle_tracker_entry, plan.descriptors))
+end
+
 function adapt_tracker_kernel_plan(to, plan::AbstractTrackerPlan, backend)
     descriptors = map(plan.descriptors) do descriptor
         support = tracker_support(descriptor)
@@ -582,6 +703,27 @@ tracker_contract(descriptor::SiteSumTracker{T}) where {T} = TrackerContract(
     TrackerSupport(true, true, true, true),
     ConstantTrackerCost(),
     LatticeLinearTrackerCost(),
+)
+
+tracker_contract(descriptor::_BoundSiteSumTracker{T}) where {T} = TrackerContract(
+    descriptor.quantity.quantity,
+    _BoundSiteExpressionTrackerSource(),
+    _site_sum_storage(T),
+    AcceptedCommitTrackerVisibility(),
+    ClaimedOwnerExclusiveTrackerConcurrency(),
+    OldNewOwnerUpdateBound(),
+    PersistTrackerCheckpoint(),
+    TrackerSupport(true, true, true, true),
+    ConstantTrackerCost(),
+    LatticeLinearTrackerCost(),
+)
+
+tracker_contract(descriptor::SiteMinimumTracker) = TrackerContract(
+    descriptor.quantity.quantity, SiteExpressionTrackerSource(descriptor.expression),
+    DenseOwnerScalarStorage{Float32}(), AcceptedCommitTrackerVisibility(),
+    ClaimedOwnerExclusiveTrackerConcurrency(), FullLatticeReconstructionUpdateBound(descriptor.maximum_sites),
+    PersistTrackerCheckpoint(), TrackerSupport(true, true, true, true),
+    LatticeLinearTrackerCost(), LatticeLinearTrackerCost(),
 )
 
 tracker_contract(descriptor::CellSurfaceTracker) = TrackerContract(
@@ -692,6 +834,13 @@ _tracker_storage_inspection(::DenseOwnerValueStorage{T}) where {T} = (
 )
 
 _tracker_comparison_inspection(::AbstractTrackerDescriptor) = NamedTuple()
+_tracker_comparison_inspection(descriptor::SiteMinimumTracker) = (
+    comparison = :exact, empty = descriptor.empty,
+)
+_tracker_update_inspection(::OldNewOwnerUpdateBound) = (maintenance = :incremental_old_new_owner,)
+_tracker_update_inspection(bound::FullLatticeReconstructionUpdateBound) = (
+    maintenance = :bounded_lattice_reconstruction, maximum_sites = bound.maximum_sites,
+)
 _tracker_comparison_inspection(descriptor::SiteSumTracker) = (
     comparison = :elementwise_absolute_relative,
     absolute_tolerance = descriptor.absolute_tolerance,
@@ -717,7 +866,7 @@ function tracker_inspection(descriptor::AbstractTrackerDescriptor)
         checkpoint = _tracker_checkpoint_symbol(contract.checkpoint),
         proposal_cost = _tracker_cost_symbol(contract.proposal_cost),
         rebuild_cost = _tracker_cost_symbol(contract.rebuild_cost),
-    ), _tracker_binding_inspection(key),
+        ), _tracker_binding_inspection(key), _tracker_update_inspection(contract.update_bound),
         _tracker_storage_inspection(contract.storage),
         _tracker_comparison_inspection(descriptor))
 end

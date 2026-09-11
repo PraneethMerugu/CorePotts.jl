@@ -29,6 +29,7 @@ function _empty_checkerboard_receipts()
             request_index = _empty_checkerboard_receipt_bank(),
             emission = _empty_checkerboard_receipt_bank(),
             selection = _empty_checkerboard_receipt_bank(),
+            site_trackers = _empty_checkerboard_receipt_bank(),
         ),
     )
 end
@@ -66,7 +67,7 @@ struct _CheckerboardRelationshipLayout{S,B}
     banks::B
 end
 
-struct CheckerboardKernelProgram{T, N, O, R, TP, DR, L, H, C, E, RL}
+struct CheckerboardKernelProgram{T, N, O, R, TP, LT, DR, L, H, C, E, RL}
     shape::NTuple{N, Int}
     periodic::NTuple{N, Bool}
     proposal_offsets::O
@@ -75,6 +76,7 @@ struct CheckerboardKernelProgram{T, N, O, R, TP, DR, L, H, C, E, RL}
     attempts_per_site::Int32
     relationships::R
     tracker_plan::TP
+    lifecycle_tracker_plan::LT
     domain_resources::DR
     lifecycle_plan::L
     ownership_change_handles::H
@@ -307,6 +309,8 @@ function _prepare_localmath_lifecycle_reductions(
         backend,
         epoch::UInt64,
         queue_mcs_capacity::Integer,
+        stage_plan,
+        state_layout,
     )
     first_control = workspace.state.lifecycle_control
     first_control isa NoLifecycleBackendControl && return nothing
@@ -378,6 +382,7 @@ function _prepare_localmath_lifecycle_reductions(
             lifecycle.request_index.records.slot,
             lifecycle.request_index.count, planning_gate, backend,
             planning_leases)
+        site_trackers = _prepare_lifecycle_site_trackers(bank, planning_gate, backend, Int(queue_mcs_capacity), state_layout, stage_plan)
         (
             ; direct,
             planning,
@@ -387,6 +392,7 @@ function _prepare_localmath_lifecycle_reductions(
             selection,
             direct_gate,
             planning_gate,
+            site_trackers,
         )
     end
 end
@@ -993,7 +999,8 @@ function _prepare_core_checkerboard_mechanics(
         workspace, validated, gates, queue_mcs_capacity)
     lifecycle_reductions = _prepare_localmath_lifecycle_reductions(
         workspace, validated.backend, validated.candidate_epoch,
-        queue_mcs_capacity)
+        queue_mcs_capacity, canonical_stage_plan, state_layout
+    )
     canonical_stage_plan isa StageExecutionPlan || throw(ArgumentError(
         "checkerboard preparation requires the Core-owned stage plan"))
     stage_boundaries = _prepare_checkerboard_stage_boundaries(

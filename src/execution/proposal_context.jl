@@ -275,7 +275,9 @@ function _commit_copy!(
     # Accepted RHS values were evaluated against entry state. Derived sums
     # consume the completed clear/assignment result within the unpublished MCS.
     _finish_tracker_source_change!(runtime.program.tracker_plan.descriptors,
-        runtime.trackers.values, source, target, new_owner)
+        runtime.trackers.values, source, target, old_owner, new_owner, runtime.cell_kinds
+    )
+    _rebuild_reconstruction_trackers!(runtime.program.tracker_plan, runtime.trackers, source, runtime.cell_kinds)
     return nothing
 end
 

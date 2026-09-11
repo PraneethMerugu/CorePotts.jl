@@ -938,7 +938,7 @@ function _checkerboard_tracker_group(
                 terminal_gate, Symbol(:checkerboard_tracker_, tracker_index))
         end
     elseif tracker_storage(descriptor) isa Union{DenseOwnerScalarStorage, DenseOwnerValueStorage}
-        if !(descriptor isa Union{OwnershipCountTracker,CellSurfaceTracker,SiteSumTracker})
+        if !(descriptor isa Union{OwnershipCountTracker, CellSurfaceTracker, _SiteExpressionTracker})
             target_type = CartesianIndex{length(accepted.shape)}
             hasmethod(tracker_ownership_delta, Tuple{
                 typeof(descriptor),target_type,Int32,Int32}) || throw(
