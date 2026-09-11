@@ -97,7 +97,11 @@ function scheduled_site_sum_assignment(
     )
 end
 
-function site_sum_cell_read_runtime(engine; owner_expression = nothing, source_process = nothing)
+function site_sum_cell_read_runtime(
+        engine; owner_expression = nothing, source_process = nothing,
+        quantity = Val(:site_sum), tracker_builder = (key, expression) -> CorePotts.SiteSumTracker(Float32, key, expression),
+        tracker_operation = :cell_site_sum, backend = CorePotts.CPUProgramBackend()
+    )
     C = CorePotts
     names = (:signal, :first_total, :second_total, :site_count)
     schemas = map(eachindex(names)) do index
@@ -116,11 +120,11 @@ function site_sum_cell_read_runtime(engine; owner_expression = nothing, source_p
     end
     signal = C.OperationExpression(C.operation_callable(Val(:iteration_bound_state_value), v"1.0.0"), C.StateExpression(handles[1]))
     contribution = C.OperationExpression(*, C.ParameterExpression(1.0f0, 1), signal)
-    key = C.QualifiedTrackerKey(Val(:site_sum), 1)
-    tracker = C.SiteSumTracker(Float32, key, contribution)
+    key = C.QualifiedTrackerKey(quantity, 1)
+    tracker = tracker_builder(key, contribution)
     tracker_plan = C.TrackerExecutionPlan((C.OwnershipCountTracker(), C.DenseScalarTrackerGroup([tracker])), "shared-cell-source-sum")
     owner = owner_expression === nothing ? C.ContextExpression(C.operation_callable(Val(:energy_anchor_cell), v"1.0.0")) : owner_expression
-    sum_read = C.OperationExpression(C.QualifiedTrackerOperation(C.operation_callable(Val(:cell_site_sum), v"1.0.0"), key.quantity, key.source_handle), owner)
+    sum_read = C.OperationExpression(C.QualifiedTrackerOperation(C.operation_callable(Val(tracker_operation), v"1.0.0"), key.quantity, key.source_handle), owner)
     count_read = C.OperationExpression(C.operation_callable(Val(:cell_volume), v"1.0.0"), owner)
     groups = map(2:4) do index
         descriptor = C.CompiledStageDescriptor(
@@ -146,7 +150,7 @@ function site_sum_cell_read_runtime(engine; owner_expression = nothing, source_p
     )
     program = test_program(
         engine; descriptor_plan, tracker_plan, stage_plan,
-        scalar_type = Float32, parameter_defaults = Float32[2]
+        scalar_type = Float32, parameter_defaults = Float32[2], backend
     )
     ownership = fill(Int32(-1), 6, 6)
     ownership[1:2] .= 1

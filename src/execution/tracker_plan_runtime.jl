@@ -11,6 +11,8 @@ end
     ::Tuple{}, ::Tuple{}, source, target, old_owner, new_owner, delta_function
 ) = nothing
 
+@inline _tracker_update_bound(descriptor, source) = tracker_contract(descriptor).update_bound
+
 @inline function _validate_owner_index(values, owner::Int32)
     owner <= 0 && return nothing
     owner <= size(values, ndims(values)) || throw(BoundsError(values, owner))
@@ -108,21 +110,31 @@ end
         ))
     _validate_owner_index(state.first, old_owner)
     _validate_owner_index(state.first, new_owner)
-    for (values, delta_values) in zip(
-            (state.first, state.second), (delta.first, delta.second))
-        for row in eachindex(delta_values)
-            component = delta_values[row]
-            if old_owner > 0
-                value = _checked_tracker_sub(
-                    @inbounds(values[row, Int(old_owner)]), component)
-                if old_owner == new_owner
-                    _checked_tracker_add(value, component)
-                    continue
-                end
+    _validate_moment_components(
+        state.first, delta.first, old_owner, new_owner)
+    _validate_moment_components(
+        state.second, delta.second, old_owner, new_owner)
+    return nothing
+end
+
+@inline function _validate_moment_components(
+        values,
+        delta_values,
+        old_owner::Int32,
+        new_owner::Int32,
+    )
+    for row in eachindex(delta_values)
+        component = @inbounds delta_values[row]
+        if old_owner > 0
+            value = _checked_tracker_sub(
+                @inbounds(values[row, Int(old_owner)]), component)
+            if old_owner == new_owner
+                _checked_tracker_add(value, component)
+                continue
             end
-            new_owner > 0 && _checked_tracker_add(
-                @inbounds(values[row, Int(new_owner)]), component)
         end
+        new_owner > 0 && _checked_tracker_add(
+            @inbounds(values[row, Int(new_owner)]), component)
     end
     return nothing
 end
@@ -250,11 +262,12 @@ end
         old_owner,
         new_owner,
         delta_function,
-    ) where {G <: DenseScalarTrackerGroup}
+    ) where {G <: Union{DenseScalarTrackerGroup, _LifecycleDenseScalarTrackerGroup}}
     group = first(descriptors)
     group_values = first(values)
     for index in eachindex(group.descriptors)
         descriptor = @inbounds group.descriptors[index]
+        _tracker_update_bound(descriptor, source) isa OldNewOwnerUpdateBound || continue
         delta = delta_function(
             descriptor, source, target, old_owner, new_owner
         )
@@ -284,18 +297,15 @@ end
     )
     descriptor = first(descriptors)
     contract = tracker_contract(descriptor)
-    contract.update_bound isa OldNewOwnerUpdateBound || throw(
-        ArgumentError("unsupported tracker update bound")
-    )
-    delta = delta_function(
-        descriptor, source, target, old_owner, new_owner
-    )
-    delta isa AbstractTrackerDelta || throw(ArgumentError(
-        "tracker ownership delta must satisfy the closed delta protocol"
-    ))
-    _validate_tracker_delta(
-        first(values), contract.storage, delta, old_owner, new_owner
-    )
+    if _tracker_update_bound(descriptor, source) isa OldNewOwnerUpdateBound
+        delta = delta_function(descriptor, source, target, old_owner, new_owner)
+        delta isa AbstractTrackerDelta || throw(
+            ArgumentError(
+                "tracker ownership delta must satisfy the closed delta protocol"
+            )
+        )
+        _validate_tracker_delta(first(values), contract.storage, delta, old_owner, new_owner)
+    end
     return _validate_tracker_updates(
         Base.tail(descriptors),
         Base.tail(values),
@@ -319,11 +329,12 @@ end
         old_owner,
         new_owner,
         delta_function,
-    ) where {G <: DenseScalarTrackerGroup}
+    ) where {G <: Union{DenseScalarTrackerGroup, _LifecycleDenseScalarTrackerGroup}}
     group = first(descriptors)
     group_values = first(values)
     for index in eachindex(group.descriptors)
         descriptor = @inbounds group.descriptors[index]
+        _tracker_update_bound(descriptor, source) isa OldNewOwnerUpdateBound || continue
         delta = delta_function(
             descriptor, source, target, old_owner, new_owner
         )
@@ -348,12 +359,10 @@ end
         delta_function,
     )
     descriptor = first(descriptors)
-    delta = delta_function(
-        descriptor, source, target, old_owner, new_owner
-    )
-    _apply_validated_tracker_delta!(
-        first(values), delta, old_owner, new_owner
-    )
+    if _tracker_update_bound(descriptor, source) isa OldNewOwnerUpdateBound
+        delta = delta_function(descriptor, source, target, old_owner, new_owner)
+        _apply_validated_tracker_delta!(first(values), delta, old_owner, new_owner)
+    end
     return _apply_tracker_updates!(
         Base.tail(descriptors), Base.tail(values), source, target,
         old_owner, new_owner, delta_function,
@@ -363,7 +372,7 @@ end
 @inline function commit_tracker_updates!(
         state::TrackerState,
         plan::AbstractTrackerPlan,
-        source::TrackerSourceView,
+        source::AbstractTrackerCommitSource,
         target,
         old_owner::Int32,
         new_owner::Int32,
@@ -378,24 +387,30 @@ end
     return nothing
 end
 
-@inline _finish_tracker_source_change!(::AbstractTrackerDescriptor, values, source, target, owner) = nothing
-@inline function _finish_tracker_source_change!(descriptor::SiteSumTracker, values, source, target, owner)
+@inline _finish_tracker_source_change!(::AbstractTrackerDescriptor, values, source, target, old_owner, owner, cell_kinds) = nothing
+@inline function _finish_tracker_source_change!(descriptor::SiteSumTracker, values, source, target, old_owner, owner, cell_kinds)
     owner > 0 || return nothing
-    amount = _site_sum_contribution(descriptor, source, target)
+    amount = _site_tracker_contribution(descriptor, source, target)
     _validate_owner_index(values, owner)
     @inbounds values[Int(owner)] = _checked_tracker_add(values[Int(owner)], amount)
     return nothing
 end
-@inline function _finish_tracker_source_change!(group::DenseScalarTrackerGroup, values, source, target, owner)
+@inline function _finish_tracker_source_change!(group::DenseScalarTrackerGroup, values, source, target, old_owner, owner, cell_kinds)
     for index in eachindex(group.descriptors)
-        _finish_tracker_source_change!(group.descriptors[index], view(values, :, index), source, target, owner)
+        _finish_tracker_source_change!(group.descriptors[index], view(values, :, index), source, target, old_owner, owner, cell_kinds)
     end
     return nothing
 end
-@inline _finish_tracker_source_change!(::Tuple{}, ::Tuple{}, source, target, owner) = nothing
-@inline function _finish_tracker_source_change!(descriptors::Tuple, values::Tuple, source, target, owner)
-    _finish_tracker_source_change!(first(descriptors), first(values), source, target, owner)
-    return _finish_tracker_source_change!(Base.tail(descriptors), Base.tail(values), source, target, owner)
+@inline function _finish_tracker_source_change!(group::_LifecycleDenseScalarTrackerGroup, values, source, target, old_owner, owner, cell_kinds)
+    for index in eachindex(group.descriptors)
+        _finish_tracker_source_change!(getfield(group.descriptors, index), view(values, :, index), source, target, old_owner, owner, cell_kinds)
+    end
+    return nothing
+end
+@inline _finish_tracker_source_change!(::Tuple{}, ::Tuple{}, source, target, old_owner, owner, cell_kinds) = nothing
+@inline function _finish_tracker_source_change!(descriptors::Tuple, values::Tuple, source, target, old_owner, owner, cell_kinds)
+    _finish_tracker_source_change!(first(descriptors), first(values), source, target, old_owner, owner, cell_kinds)
+    return _finish_tracker_source_change!(Base.tail(descriptors), Base.tail(values), source, target, old_owner, owner, cell_kinds)
 end
 
 
@@ -789,8 +804,8 @@ _tracker_uses_inputs(descriptor::AbstractTrackerDescriptor) =
     tracker_contract(descriptor).source isa SiteExpressionTrackerSource
 _tracker_uses_inputs(group::DenseScalarTrackerGroup) = any(_tracker_uses_inputs, group.descriptors)
 
-_rebuild_input_tracker(descriptor::SiteSumTracker, source, cell_kinds; backend, copy_source) =
-    _execute_site_sum_rebuild(descriptor, source, cell_kinds; backend, copy_source)
+_rebuild_input_tracker(descriptor::_SiteExpressionTracker, source, cell_kinds; backend, copy_source) =
+    _execute_site_tracker_rebuild(descriptor, source, cell_kinds; backend, copy_source)
 
 function _rebuild_input_tracker(group::DenseScalarTrackerGroup, source, cell_kinds; backend, copy_source)
     columns = map(group.descriptors) do descriptor

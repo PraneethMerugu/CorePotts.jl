@@ -121,11 +121,18 @@ end
     )
 end
 
-@inline function _execute_proposal_scalar(
-        call::_ExecutableScalarCall, context
-    )
-    arguments = _execute_proposal_arguments(call.arguments, context)
-    return call.operation(arguments...)
+@generated function _execute_proposal_scalar(
+        call::_ExecutableScalarCall{F, A}, context,
+    ) where {F, A <: Tuple}
+    arguments = [
+        :(_execute_proposal_scalar(
+            getfield(getfield(call, :arguments), $index), context
+        )) for index in 1:fieldcount(A)
+    ]
+    return quote
+        $(Expr(:meta, :inline))
+        getfield(call, :operation)($(arguments...))
+    end
 end
 
 

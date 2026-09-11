@@ -462,23 +462,13 @@ function _checkerboard_settlement_events(
             "checkerboard settlement requires cumulative provider-tail receipts"
         ))
     lifecycle = execution.receipts.lifecycle
-    banks = (
-        execution.receipts.mechanics,
-        lifecycle.direct, lifecycle.planning,
-        lifecycle.site_index, lifecycle.request_index,
-        lifecycle.emission, lifecycle.selection,
-    )
+    banks = (execution.receipts.mechanics, values(lifecycle)...)
     return Tuple(receipt for family in banks for bank in family for receipt in bank)
 end
 
 function _clear_checkerboard_settlement_events!(execution)
     lifecycle = execution.receipts.lifecycle
-    banks = (
-        execution.receipts.mechanics,
-        lifecycle.direct, lifecycle.planning,
-        lifecycle.site_index, lifecycle.request_index,
-        lifecycle.emission, lifecycle.selection,
-    )
+    banks = (execution.receipts.mechanics, values(lifecycle)...)
     for family in banks, bank in family
         empty!(bank)
     end
@@ -534,4 +524,47 @@ function settle_program!(
     return _settle_program_after_wait!(
         workspace, request, did_synchronize
     )
+end
+
+function _recover_checkerboard_program_step!(runtime; prefix_submitted = nothing)
+    graph = runtime.engine_workspace
+    workspace = graph.core
+    backend = KernelAbstractions.get_backend(workspace.state.ownership)
+    try
+        _synchronize_checkerboard_execution!(graph, backend)
+    catch error
+        # The public diagnostic distinguishes ownership rejection from a
+        # settled numerical failure. Neither a foreign task nor a pending
+        # receipt establishes permission to discard the journal or roll back.
+        error isa LocalMath.LocalMathValidationError || rethrow()
+        error.contract === :receipt_owner && rethrow()
+        any(LocalMath.ispending, _checkerboard_settlement_events(graph)) && rethrow()
+        KernelAbstractions.synchronize(backend)
+        _clear_checkerboard_settlement_events!(graph)
+    end
+    status = only(Adapt.adapt(Array, workspace.state.program_status))
+    control = Adapt.adapt(Array, workspace.state.lifecycle_control.counters)
+    statistics = Adapt.adapt(Array, workspace.state.lifecycle_control.statistics)
+    workspace.execution.control_transfer_count += 1
+    committed = Int(control[_LIFECYCLE_CONTROL_COMMITTED_MCS])
+    if program_status_is_expected(status)
+        # An earlier ordered scientific rejection outranks an incidental later
+        # launch error. Preserve it for the ordinary settlement/publication path.
+        workspace.execution.submitted_mcs = max(workspace.execution.submitted_mcs, Int(status.mcs))
+        runtime.failure_status = status
+        runtime.settled = false
+        return _translate_program_status(status)
+    end
+    prefix_submitted === nothing || committed == prefix_submitted || throw(
+        LifecycleInvariantFailure(Int32(0), Int32(committed), :committed_submission_mismatch)
+    )
+    _rollback_checkerboard_program_step!(runtime, Tuple(statistics); committed_mcs = committed)
+    _, destination, _ = _checkerboard_transaction_banks(workspace, committed)
+    wait(_clear_checkerboard_bulk!(graph, destination; completed_mcs = committed + 1))
+    _clear_checkerboard_settlement_events!(graph)
+    runtime.failure_status = ProgramStatus()
+    # A completed queued prefix is still unpublished to the host. Its caller
+    # must explicitly settle it; recovery discards only the incomplete MCS.
+    runtime.settled = committed == runtime.mcs
+    return nothing
 end

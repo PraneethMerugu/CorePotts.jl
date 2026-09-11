@@ -422,6 +422,7 @@ for (identity, contexts) in (
             AbstractLifecycleStateTransformEvaluationContext,
         ),
         :cell_site_sum => (AbstractCellStageEvaluationContext,),
+        :cell_site_minimum => (AbstractCellStageEvaluationContext,),
         :cell_surface => (
             AbstractLifecycleTriggerEvaluationContext,
             AbstractLifecyclePartitionEvaluationContext,
@@ -542,6 +543,7 @@ end
 for identity in (
         :cell_volume,
         :cell_site_sum,
+        :cell_site_minimum,
         :cell_surface,
         :cell_elongation,
         :contact_owner_a,

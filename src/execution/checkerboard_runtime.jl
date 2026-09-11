@@ -24,6 +24,8 @@ function _checkerboard_execution_identity(
             mechanics.lifecycle_reductions[2].site_index,
             mechanics.lifecycle_reductions[2].request_index,
             mechanics.lifecycle_reductions[2].selection,
+                    (prepared for tracker in mechanics.lifecycle_reductions[1].site_trackers for prepared in values(tracker))...,
+                    (prepared for tracker in mechanics.lifecycle_reductions[2].site_trackers for prepared in values(tracker))...,
         ))...,
     )
     compilers = map(mechanical_preparations) do prepared
@@ -87,6 +89,8 @@ function _checkerboard_execution_identity(
                 :not_applicable : LocalMath.lowering_identity(
                     mechanics.lifecycle_reductions[1].selection.plan
                 ),
+            lifecycle_site_trackers = mechanics.lifecycle_reductions === nothing ? () :
+                map(tracker -> map(prepared -> LocalMath.lowering_identity(prepared.plan), tracker), mechanics.lifecycle_reductions[1].site_trackers),
         ),
         :KernelAbstractions,
         compiler_identity,
@@ -104,6 +108,10 @@ function _checkerboard_execution_identity(
             lifecycle_request_index_submissions_per_mcs = 1,
             lifecycle_emission_submissions_per_mcs = 1,
             lifecycle_selection_submissions_per_mcs = 1,
+            lifecycle_site_snapshot_submissions_per_mcs = mechanics.lifecycle_reductions === nothing ? 0 :
+                length(mechanics.lifecycle_reductions[1].site_trackers),
+            lifecycle_site_reconstruction_submissions_per_mcs = mechanics.lifecycle_reductions === nothing ? 0 :
+                length(mechanics.lifecycle_reductions[1].site_trackers),
             receipt_scope = :backend_queue,
             receipt_cumulative = true,
             receipt_selective = false,
@@ -288,6 +296,7 @@ function _inspect_checkerboard_execution(
                     selection = _inspect_lifecycle_selection(
                         reductions.selection
                     ),
+                    site_trackers = map(tracker -> map(LocalMath.inspect, tracker), reductions.site_trackers),
                 )
             end,
         completion_receipts = _inspect_checkerboard_receipts(
@@ -309,12 +318,16 @@ function enqueue_program_mcs!(runtime::ProgramRuntime)
         runtime.capability_report;
         operation = :queued_mcs,
     )
-    supports_queued_program_execution(runtime) || throw(ArgumentError(
-        "this program does not support queued whole-MCS execution"
-    ))
-    program_failed(runtime) && throw(ArgumentError(
-        "cannot enqueue a program runtime after a terminal scientific failure"
-    ))
+    supports_queued_program_execution(runtime) || throw(
+        ArgumentError(
+            "this program does not support queued whole-MCS execution"
+        )
+    )
+    program_failed(runtime) && throw(
+        ArgumentError(
+            "cannot enqueue a program runtime after a terminal scientific failure"
+        )
+    )
     workspace = runtime.engine_workspace
     execution = _checkerboard_execution_position(workspace)
     current_mcs = execution.submitted_mcs
@@ -323,7 +336,14 @@ function enqueue_program_mcs!(runtime::ProgramRuntime)
     # backend even if a later LocalMath admission check rejects. Keep the
     # runtime unsettled until the portable settlement boundary drains it.
     runtime.settled = false
-    _enqueue_checkerboard_mcs_after_preflight!(workspace, current_mcs)
+    try
+        _enqueue_checkerboard_mcs_after_preflight!(workspace, current_mcs)
+    catch error
+        ordered_failure = _recover_checkerboard_program_step!(runtime; prefix_submitted = current_mcs)
+        ordered_failure === nothing || throw(ordered_failure)
+        error isa AbstractLifecycleFailure && rethrow()
+        throw(LifecycleBackendFailure(error, current_mcs + 1, current_mcs + 1))
+    end
     return runtime
 end
 
@@ -335,15 +355,19 @@ function enqueue_program_through!(
         runtime.capability_report;
         operation = :queued_mcs_through,
     )
-    supports_queued_program_execution(runtime) || throw(ArgumentError(
-        "this program does not support queued whole-MCS execution"
-    ))
+    supports_queued_program_execution(runtime) || throw(
+        ArgumentError(
+            "this program does not support queued whole-MCS execution"
+        )
+    )
     workspace = runtime.engine_workspace
     execution = _checkerboard_execution_position(workspace)
     target = Int(target_mcs)
-    target >= execution.submitted_mcs || throw(ArgumentError(
-        "queued execution target precedes the submitted MCS"
-    ))
+    target >= execution.submitted_mcs || throw(
+        ArgumentError(
+            "queued execution target precedes the submitted MCS"
+        )
+    )
     while execution.submitted_mcs < target
         enqueue_program_mcs!(runtime)
     end
@@ -358,12 +382,24 @@ function settle_program!(
         runtime.capability_report;
         operation = :settle_program,
     )
-    supports_queued_program_execution(runtime) || throw(ArgumentError(
-        "this program does not support queued whole-MCS settlement"
-    ))
-    receipt = settle_program!(runtime.engine_workspace, request)
+    supports_queued_program_execution(runtime) || throw(
+        ArgumentError(
+            "this program does not support queued whole-MCS settlement"
+        )
+    )
+    receipt = _settle_checkerboard_runtime!(runtime, request)
     request.full_snapshot && _publish_program_receipt!(runtime, receipt)
     return receipt
+end
+
+function _settle_checkerboard_runtime!(runtime, request)
+    try
+        return settle_program!(runtime.engine_workspace, request)
+    catch error
+        ordered_failure = _recover_checkerboard_program_step!(runtime)
+        ordered_failure === nothing || throw(ordered_failure)
+        rethrow()
+    end
 end
 
 function _advance_checkerboard_transaction!(runtime::ProgramRuntime)
@@ -376,9 +412,11 @@ function _advance_checkerboard_transaction!(runtime::ProgramRuntime)
         runtime,
         ProgramSettlementRequest(PublicStepSettlement; full_snapshot = true),
     )
-    receipt.snapshot === nothing && throw(LifecycleInvariantFailure(
-        Int32(0), Int32(receipt.committed_mcs), :missing_program_snapshot
-    ))
+    receipt.snapshot === nothing && throw(
+        LifecycleInvariantFailure(
+            Int32(0), Int32(receipt.committed_mcs), :missing_program_snapshot
+        )
+    )
     return runtime
 end
 
