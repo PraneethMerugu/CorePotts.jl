@@ -478,6 +478,30 @@ function test_site_tracker_lifecycle(
     return
 end
 
+function test_site_tracker_creation_ignores_cleared_entry_source(
+        engine; group_sum = true, adapt_to = identity,
+        backend = CorePotts.CPUProgramBackend(),
+    )
+    C = CorePotts
+    signal = fill(30.0f0, 6, 6)
+    signal[3, 3], signal[4, 3], signal[3, 4], signal[4, 4] = -4.0f0, 5.0f0, 6.0f0, 7.0f0
+    signal[6, 6] = floatmax(Float32)
+    host, handle, minimum_key, sum_key = site_tracker_lifecycle_runtime(
+        engine, C.CreateCellLifecycleEffect;
+        clear_source = true, initial_signal = signal, group_sum, backend,
+    )
+    runtime = adapt_to === identity ? host : C.adapt_program_runtime(adapt_to, host)
+    C.advance_mcs!(runtime)
+    before = site_tracker_lifecycle_snapshot(runtime, handle, minimum_key, sum_key)
+    @test before.ownership[6, 6] == -1
+    C.advance_mcs!(runtime)
+    after = site_tracker_lifecycle_snapshot(runtime, handle, minimum_key, sum_key)
+    @test after.ownership[6, 6] == 2
+    @test C.state_block(after.descriptor_state, handle).values[6, 6] == 0.0f0
+    @test !C.program_failed(runtime)
+    return
+end
+
 function test_site_tracker_retirement(engine; adapt_to = identity, backend = CorePotts.CPUProgramBackend())
     C = CorePotts
     host, handle, minimum_key, sum_key = site_tracker_lifecycle_runtime(engine, C.RetireCellLifecycleEffect; backend)

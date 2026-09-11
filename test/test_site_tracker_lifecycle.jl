@@ -20,6 +20,9 @@ end
     end
     test_site_tracker_lifecycle(engine, CorePotts.DivideCellLifecycleEffect; tied = true)
     test_site_tracker_lifecycle(engine, CorePotts.CreateCellLifecycleEffect; clear_source = true)
+    for group_sum in (false, true)
+        test_site_tracker_creation_ignores_cleared_entry_source(engine; group_sum)
+    end
     test_site_tracker_lifecycle(engine, CorePotts.DivideCellLifecycleEffect; clear_source = true)
     test_site_tracker_retirement(engine)
     test_site_tracker_no_lifecycle_effect(engine)
