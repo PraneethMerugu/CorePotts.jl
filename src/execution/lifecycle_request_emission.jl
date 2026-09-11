@@ -45,13 +45,6 @@ const _LIFECYCLE_STATUS_DETAILS = (
         LifecycleDetailAcceptanceZeroTemperatureDrive,
 )
 
-@inline function _lifecycle_detail_code(reason::Symbol)
-    for pair in _LIFECYCLE_STATUS_DETAILS
-        first(pair) === reason && return last(pair)
-    end
-    return LifecycleDetailNone
-end
-
 function _program_status_detail_symbol(detail::ProgramStatusDetailCode)
     for pair in _LIFECYCLE_STATUS_DETAILS
         last(pair) === detail && return first(pair)

@@ -60,7 +60,7 @@ end
                     control.candidate_status, Int32(request)
                 ),
             )
-            reason = _plan_lifecycle_request_effect_only!(
+            result = _plan_lifecycle_request_effect_only!(
                 BackendLifecycleExecution(),
                 runtime,
                 plan,
@@ -68,12 +68,12 @@ end
                 request,
                 plan_class,
             )
-            _record_lifecycle_planning_reason!(
+            _record_lifecycle_planning_result!(
                 workspace,
                 request_workspace,
                 request,
                 descriptor,
-                reason,
+                result,
             )
         end
     end
@@ -134,17 +134,17 @@ end
     end
 end
 
-@inline function _record_lifecycle_planning_reason!(
-        workspace, request_workspace, request, descriptor, reason
+@inline function _record_lifecycle_planning_result!(
+        workspace, request_workspace, request, descriptor,
+        result::_LifecyclePlanningResult,
     )
-    reason === :status_failure && return nothing
-    reason === :ok && return nothing
+    _lifecycle_planning_status_failed(result) && return nothing
+    _lifecycle_planning_succeeded(result) && return nothing
     if descriptor.on_inadmissible === FilterLifecycleInadmissible
         @inbounds begin
             workspace.active[request] = false
             workspace.filtered[request] = true
-            workspace.filtered_detail[request] =
-                _lifecycle_detail_code(reason)
+            workspace.filtered_detail[request] = result.detail
         end
     else
         _set_lifecycle_status!(
@@ -152,7 +152,7 @@ end
             ProgramStatusInadmissible;
             source = descriptor.source_handle,
             anchor = @inbounds(workspace.anchor[request]),
-            detail = _lifecycle_detail_code(reason),
+            detail = result.detail,
         )
     end
     return nothing
@@ -193,7 +193,7 @@ end
                     control.candidate_status, Int32(request)
                 ),
             )
-            reason = if _lifecycle_request_generation_current(
+            result = if _lifecycle_request_generation_current(
                     state, workspace, request
                 )
                 _plan_division!(
@@ -212,14 +212,14 @@ end
                     ProgramStatusStaleGeneration;
                     anchor = @inbounds(workspace.anchor[request]),
                 )
-                :status_failure
+                _lifecycle_planning_status_failed()
             end
-            _record_lifecycle_planning_reason!(
+            _record_lifecycle_planning_result!(
                 workspace,
                 request_workspace,
                 request,
                 descriptor,
-                reason,
+                result,
             )
         end
     end
@@ -290,7 +290,7 @@ end
                     control.candidate_status, Int32(request)
                 ),
             )
-            reason = _plan_division!(
+            result = _plan_division!(
                 BackendLifecycleExecution(),
                 state,
                 plan,
@@ -300,13 +300,14 @@ end
                 plan_class.partition,
                 plan_class.side,
             )
-            reason === :ok || reason === :status_failure ||
+            _lifecycle_planning_succeeded(result) ||
+                _lifecycle_planning_status_failed(result) ||
                 _set_lifecycle_status!(
                     request_workspace,
                     ProgramStatusInvariant;
                     source = descriptor.source_handle,
                     anchor = @inbounds(workspace.anchor[request]),
-                    detail = _lifecycle_detail_code(reason),
+                    detail = result.detail,
                 )
         end
     end
