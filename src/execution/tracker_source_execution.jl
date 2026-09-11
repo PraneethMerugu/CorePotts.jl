@@ -256,9 +256,9 @@ end
         descriptor::_BoundSiteSumTracker,
         values, target, old_owner,
     )
+    old_owner > 0 || return true
     amount = _bound_site_tracker_contribution(descriptor, target)
     _state_value_isfinite(amount) || return false
-    old_owner > 0 || return true
     old_owner <= length(values) || return false
     updated = @inbounds values[Int(old_owner)] - amount
     return _state_value_isfinite(updated)
@@ -286,9 +286,9 @@ end
         descriptor::_BoundSiteSumTracker,
         values, column, target, old_owner,
     )
+    old_owner > 0 || return true
     amount = _bound_site_tracker_contribution(descriptor, target)
     _state_value_isfinite(amount) || return false
-    old_owner > 0 || return true
     old_owner <= size(values, 1) || return false
     updated = @inbounds values[Int(old_owner), column] - amount
     return _state_value_isfinite(updated)

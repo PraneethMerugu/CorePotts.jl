@@ -18,6 +18,11 @@ include(joinpath(@__DIR__, "..", "fixtures", "site_tracker_lifecycle_support.jl"
     end
     test_site_tracker_lifecycle(engine, CorePotts.DivideCellLifecycleEffect; tied = true, adapt_to = Metal.MtlArray, backend)
     test_site_tracker_lifecycle(engine, CorePotts.CreateCellLifecycleEffect; clear_source = true, adapt_to = Metal.MtlArray, backend)
+    for group_sum in (false, true)
+        test_site_tracker_creation_ignores_cleared_entry_source(
+            engine; group_sum, adapt_to = Metal.MtlArray, backend,
+        )
+    end
     test_site_tracker_lifecycle(engine, CorePotts.DivideCellLifecycleEffect; clear_source = true, adapt_to = Metal.MtlArray, backend)
     test_site_tracker_retirement(engine; adapt_to = Metal.MtlArray, backend)
     test_site_tracker_no_lifecycle_effect(engine; adapt_to = Metal.MtlArray, backend)
