@@ -488,7 +488,8 @@ function test_site_tracker_creation_ignores_cleared_entry_source(
     signal[6, 6] = floatmax(Float32)
     host, handle, minimum_key, sum_key = site_tracker_lifecycle_runtime(
         engine, C.CreateCellLifecycleEffect;
-        clear_source = true, initial_signal = signal, group_sum, backend,
+        clear_source = true, source_overflow = true,
+        initial_signal = signal, group_sum, backend,
     )
     runtime = adapt_to === identity ? host : C.adapt_program_runtime(adapt_to, host)
     C.advance_mcs!(runtime)
