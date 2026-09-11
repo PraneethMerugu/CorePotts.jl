@@ -182,6 +182,33 @@ signed zero and subnormal behavior for scalar and fixed-vector values.
 ordinary Julia conversion; its Metal counterpart also exercises the owning
 predicate directly. A primitive conversion check is not a state-bank support
 claim: Int8 and Int64 banks are currently outside checkerboard admission.
+`test_lifecycle_product_conversion.jl` applies the same conversion owner to
+nested positional/named products and checks late failure rollback, ordinary
+Tuple-to-NamedTuple conversion, and shape/name rejection. Its shared fixture
+also runs on Metal; product fields are validated recursively, not flattened
+into a second declaration or evaluator representation.
+After admission, nested product conversion expands only the declared tuple
+fields at compile time, applying native leaf conversions and native final
+construction. This keeps the device result concrete without runtime type
+objects or tuple-tail splats; the host reference retains ordinary Julia
+conversion.
+`lifecycle_selection.jl` binds the lifecycle plan's checked identity capacity
+and validates both metadata array extents before preparation. Its identity
+traversals keep that Int32 index type through allocation; request and status
+conversions retain their native checks. `test_lifecycle_identity_capacity.jl`
+and its shared Metal cases cover mismatched storage, recycled and virgin
+allocation, inactive holes, and capacity-failure rollback.
+The full transaction regressions in `test_lifecycle_scalar_retirement.jl` and
+`test_lifecycle_rule_composition.jl` use `advance_mcs!` directly on the calling
+task. They defend scalar/product coexistence, unselected-state preservation,
+logical evaluator references, and rejected-value rollback through the same
+selection, state-rule, and publication owners as ordinary execution. Their
+Metal counterparts run the shared scientific assertions with scalar indexing
+disabled.
+These CPU/Metal conversion checks establish numerical and transaction behavior,
+not bitwise trajectory compatibility with an older semantic RNG contract. The
+current RNG owner and older-checkpoint restriction are documented in the user
+guide's qualified semantic randomness section.
 
 The ordinary behavioral tests are `test_structured_stage_transactions.jl`
 (simultaneous assignments, ordered history and substeps, failure rollback),

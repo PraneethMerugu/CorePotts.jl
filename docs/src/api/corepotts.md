@@ -112,14 +112,20 @@ creation can initialize a new destination but cannot reset a source; removal,
 retirement, and transition can update their source but have no new destination.
 Daughter-state policies require division. `ResetLifecycleState` writes the existing
 source, whereas `InitializeLifecycleState` writes the allocated destination.
-Scalar and fixed-vector lifecycle value policies convert to the declared logical type; incompatible
+Lifecycle selection requires both identity metadata arrays to match the plan's
+declared cell capacity. Allocation examines that complete domain, reusing retired
+identities before unused identities beyond the highest previously used slot.
+Lifecycle value policies convert to the declared logical type; incompatible
 values fail the transaction. Static-array conversions may reshape equal-length
 values, but cannot change their element count. Integer conversions require an
 exact, in-range value; Boolean conversions require zero or one. Both signed
 floating zeros convert to zero, but nonzero subnormals are not integers, even
 on devices that flush floating-point comparisons near zero. Invalid values
 report the existing lifecycle evaluator failure and preserve the whole MCS
-transaction. These conversion rules do not extend backend state-bank admission.
+transaction. These checks apply recursively to fixed vectors and nested tuples
+and named tuples. Julia's ordinary field-name and arity rules still govern
+product conversion, including matching positional values for a named tuple.
+These conversion rules do not extend backend state-bank admission.
 Cell-owned histories use these same policies for every retained sample. The
 state-policy `lifecycle_occurrence` is its newest-relative lag (ordinary cell
 state uses zero); it does not replace the cell slot or generation.
@@ -127,6 +133,14 @@ state uses zero); it does not replace the cell slot or generation.
 whereas `lifecycle_planned_state_value` reads the corresponding participant's
 sample from the existing request-local staged state. A late sample failure
 abandons the entire transaction, including earlier sample writes.
+The ordinary lifecycle conversion tests exercise scalar values, fixed vectors,
+and nested positional/named products on both sequential and checkerboard CPU
+execution, with matching checkerboard Metal transactions and scalar indexing
+disabled. They check successful retirement, rejected-value rollback, retained
+ownership and generations, and lifecycle receipts. CPU/Metal agreement for these
+transactions is not a promise of exact trajectory replay across RNG contracts;
+the current RNG contract and older-checkpoint limitation are described under
+[Qualified semantic randomness](@ref).
 Disabled model and cell assignments do not publish: a later disabled assignment cannot
 undo an earlier enabled write to the same logical value. Site assignments retain
 their entry-value fallback when disabled.

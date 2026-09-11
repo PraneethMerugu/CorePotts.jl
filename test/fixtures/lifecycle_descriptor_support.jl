@@ -2,6 +2,7 @@ function receipt_descriptor(
         index::Integer,
         effect::CorePotts.LifecycleEffectCode;
         domain_kind::Integer = 0,
+        trigger_evaluator::Integer = 1,
         destination_kind::Integer = 0,
         parent_kind::Integer = 0,
         daughter_kind::Integer = 0,
@@ -32,7 +33,7 @@ function receipt_descriptor(
             CorePotts.ModelLifecycleDomain :
             CorePotts.CellKindLifecycleDomain,
         Int16(effect === CorePotts.CreateCellLifecycleEffect ? 0 : domain_kind),
-        Int32(1),
+        Int32(trigger_evaluator),
         cadence,
         Int32(cadence_value),
         effect,

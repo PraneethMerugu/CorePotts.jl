@@ -181,6 +181,44 @@ end
         all(component -> _lifecycle_value_convertible(eltype(T), component), value)
 end
 
+# Retain field types in specialization: a runtime tuple of DataType values is
+# not a device value inside heterogeneous evaluator-bank dispatch.
+@inline function _lifecycle_product_values_convertible(
+        ::Type{T}, components::Tuple, ::Val{I},
+    ) where {T, I}
+    I > fieldcount(T) && return true
+    return _lifecycle_value_convertible(fieldtype(T, I), getfield(components, I)) &&
+        _lifecycle_product_values_convertible(T, components, Val(I + 1))
+end
+
+@inline function _lifecycle_value_convertible(
+        ::Type{T}, value::Union{Tuple, NamedTuple},
+    ) where {T <: Union{Tuple, NamedTuple}}
+    return applicable(convert, T, value) && fieldcount(T) == length(value) &&
+        _lifecycle_product_values_convertible(T, values(value), Val(1))
+end
+
+_convert_lifecycle_state_value(::Type{T}, value) where {T} = convert(T, value)
+
+@generated function _convert_lifecycle_product_values(
+        ::Type{T}, components::Tuple,
+    ) where {T}
+    # A literal tuple avoids dynamic tail splats in the full device caller.
+    # Only target field types shape code; all runtime conversion stays native.
+    fields = map(1:fieldcount(T)) do index
+        :(_convert_lifecycle_state_value($(fieldtype(T, index)), getfield(components, $index)))
+    end
+    return Expr(:tuple, fields...)
+end
+
+@inline function _convert_lifecycle_state_value(
+        ::Type{T}, value::Union{Tuple, NamedTuple},
+    ) where {T <: Union{Tuple, NamedTuple}}
+    # Admission already checked names, arity and every numerical leaf.
+    converted = _convert_lifecycle_product_values(T, values(value))
+    return convert(T, converted)::T
+end
+
 @inline function _coerce_lifecycle_state_value(
         ::HostLifecycleExecution,
         workspace, descriptor, anchor, values, value
@@ -221,8 +259,8 @@ end
     )
     # Heterogeneous evaluator banks can expose impossible conversion branches
     # to device inference even when each selected policy has the correct type.
-    # Validate exact numeric conversions and static-array lengths before
-    # calling convert; equally sized static arrays may still reshape.
+    # Validate exact numeric leaves and logical product shapes before calling
+    # convert; equally sized static arrays may still reshape.
     if !_lifecycle_value_convertible(eltype(values), value)
         _set_lifecycle_status!(
             workspace,
@@ -233,7 +271,7 @@ end
         )
         return LifecycleEvaluationFailed()
     end
-    converted = convert(eltype(values), value)
+    converted = _convert_lifecycle_state_value(eltype(values), value)::eltype(values)
     if !_state_value_isfinite(converted)
         _set_lifecycle_status!(
             workspace,
