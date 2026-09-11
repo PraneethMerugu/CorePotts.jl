@@ -249,12 +249,15 @@ publishing staged ownership, source values, or caches. Receipt retention and
 queue capacity include these prepared laws. `test_site_tracker_lifecycle.jl`
 defends creation, division, removal, retirement, refresh, and continuation.
 For checkerboard execution, `tracker_source_execution.jl` cold-compiles each
-incremental site-sum expression and binds only its referenced staged arrays and
-parameters. `lifecycle_backend_control.jl` separately supplies the structural
-kernel with staged ownership and the geometry required by count, moment, and
-surface updates. Keep source discovery and expression compilation out of that
-device boundary; the bound payload is a lowering of the public tracker, not a
-second scientific contract or executor.
+incremental site-sum expression and binds its exact referenced staged arrays and
+parameters. The private bound descriptor still participates in the common
+tracker-plan commit traversal; narrowing that remaining contract must replace
+the traversal atomically, not create another device executor.
+`lifecycle_backend_control.jl` separately supplies the structural kernel with
+staged ownership and the geometry required by count, moment, and surface
+updates. Keep source discovery and expression compilation out of that device
+boundary; the bound payload is a lowering of the public tracker, not a second
+scientific contract or executor.
 Both engines' full-reconstruction preparations use the existing LocalMath field
 copy law for transaction-entry ownership and complete physical source parents.
 These temporary buffers are absent in incremental-only programs and never enter
