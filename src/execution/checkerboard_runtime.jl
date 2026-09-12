@@ -312,6 +312,28 @@ function _inspect_checkerboard_execution(
     )
 end
 
+function _recover_checkerboard_failure!(
+        runtime::ProgramRuntime,
+        first_possible_mcs::Integer,
+        last_possible_mcs::Integer;
+        prefix_submitted = nothing,
+    )
+    try
+        ordered_failure = _recover_checkerboard_program_step!(
+            runtime; prefix_submitted
+        )
+        ordered_failure === nothing || throw(ordered_failure)
+    catch error
+        error isa AbstractLifecycleFailure && rethrow()
+        throw(
+            LifecycleBackendFailure(
+                error, first_possible_mcs, last_possible_mcs
+            )
+        )
+    end
+    return nothing
+end
+
 """Queue one checkerboard MCS without publishing host-visible logical state."""
 function enqueue_program_mcs!(runtime::ProgramRuntime)
     _require_program_execution_capability(
@@ -339,8 +361,10 @@ function enqueue_program_mcs!(runtime::ProgramRuntime)
     try
         _enqueue_checkerboard_mcs_after_preflight!(workspace, current_mcs)
     catch error
-        ordered_failure = _recover_checkerboard_program_step!(runtime; prefix_submitted = current_mcs)
-        ordered_failure === nothing || throw(ordered_failure)
+        _recover_checkerboard_failure!(
+            runtime, current_mcs + 1, current_mcs + 1;
+            prefix_submitted = current_mcs,
+        )
         error isa AbstractLifecycleFailure && rethrow()
         throw(LifecycleBackendFailure(error, current_mcs + 1, current_mcs + 1))
     end
@@ -396,8 +420,13 @@ function _settle_checkerboard_runtime!(runtime, request)
     try
         return settle_program!(runtime.engine_workspace, request)
     catch error
-        ordered_failure = _recover_checkerboard_program_step!(runtime)
-        ordered_failure === nothing || throw(ordered_failure)
+        if error isa LifecycleBackendFailure
+            _recover_checkerboard_failure!(
+                runtime, error.first_possible_mcs, error.last_possible_mcs
+            )
+        else
+            _recover_checkerboard_failure!(runtime, 0, 0)
+        end
         rethrow()
     end
 end

@@ -14,8 +14,10 @@ include(joinpath(@__DIR__, "backend_conformance", "localmath_execution.jl"))
         identity;
         backend_name = :cpu,
         mcs_count = 1,
-        require_provider_failure = false,
+        require_provider_failure = true,
     )
     @test failure.scientific_failure == :ProposalAcceptanceFailure
     @test failure.scientific_failure_commit == 0
+    @test failure.provider_failure_type == :LifecycleBackendFailure
+    @test failure.provider_failure_range == (1, 1)
 end
