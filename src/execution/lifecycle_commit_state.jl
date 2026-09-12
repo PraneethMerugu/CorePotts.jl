@@ -181,21 +181,28 @@ end
         all(component -> _lifecycle_value_convertible(eltype(T), component), value)
 end
 
-# Retain field types in specialization: a runtime tuple of DataType values is
-# not a device value inside heterogeneous evaluator-bank dispatch.
-@inline function _lifecycle_product_values_convertible(
-        ::Type{T}, components::Tuple, ::Val{I},
-    ) where {T, I}
-    I > fieldcount(T) && return true
-    return _lifecycle_value_convertible(fieldtype(T, I), getfield(components, I)) &&
-        _lifecycle_product_values_convertible(T, components, Val(I + 1))
+# Retain field types and product arity in specialization. Recursing through a
+# runtime Tuple/Val boundary leaves dynamic dispatch in device IR when the
+# caller is reached through a heterogeneous evaluator bank.
+@generated function _lifecycle_product_values_convertible(
+        ::Type{T}, components::C,
+    ) where {T, C <: Tuple}
+    fieldcount(T) == fieldcount(C) || return :(false)
+    checks = map(1:fieldcount(T)) do index
+        :(
+            _lifecycle_value_convertible(
+                $(fieldtype(T, index)), getfield(components, $index)
+            )
+        )
+    end
+    return foldr((left, right) -> :($left && $right), checks; init = :(true))
 end
 
 @inline function _lifecycle_value_convertible(
         ::Type{T}, value::Union{Tuple, NamedTuple},
     ) where {T <: Union{Tuple, NamedTuple}}
     return applicable(convert, T, value) && fieldcount(T) == length(value) &&
-        _lifecycle_product_values_convertible(T, values(value), Val(1))
+        _lifecycle_product_values_convertible(T, values(value))
 end
 
 _convert_lifecycle_state_value(::Type{T}, value) where {T} = convert(T, value)
