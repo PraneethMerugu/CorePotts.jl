@@ -31,6 +31,16 @@ The principal source owners are:
   remain concrete bounded values, not stored compiler plans;
 - `checkerboard_transaction.jl`: accepted tracker and relationship scratch,
   packed shadow-state settlement, and terminal transaction fragments;
+- `tracker_plan_contracts.jl` and `tracker_source_execution.jl`: authoritative
+  tracker contracts, cold selection of incrementally maintainable lifecycle
+  entries, and binding of only their exact state/source arrays. Dense scalar
+  update counts are values within a bounded capacity class; author quantity
+  identity and reconstruction-only trackers do not enter this hot recipe;
+- `lifecycle_commit_state.jl` and `lifecycle_commit_relationships.jl`: the
+  owner-change transaction over its narrow ownership, cell-kind, tracker,
+  descriptor-state, and status view. The function signature exposes the state
+  required by this semantic operation instead of accepting the complete
+  lifecycle workspace;
 - `checkerboard_law.jl`: composition, storage binding, and preparation of the
   ordered LocalMath laws;
 - `checkerboard_queue.jl` and `checkerboard_runtime.jl`: submission ordering,

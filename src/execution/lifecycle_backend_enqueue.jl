@@ -503,7 +503,7 @@ function enqueue_lifecycle_backend_index!(
             _DivideLifecyclePlan(),
         )
     structure_runtime, structure_plan, tracker_commit_source =
-        _lifecycle_structure_launch_payload(state, tracker_source)
+        _lifecycle_structure_launch_payload(state, workspace, tracker_source)
     for plan_class in effect_classes
         iszero(
             effect_mask & _lifecycle_effect_bit(

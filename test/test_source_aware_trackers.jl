@@ -170,6 +170,28 @@ end
     @test C.state_block(runtime.descriptor_state, handle).values == C.state_block(previous.descriptor_state, handle).values
 end
 
+@testset "lifecycle dense update count remains value-level through sixteen" begin
+    C = CorePotts
+    descriptor(index) = C.SiteSumTracker(
+        Float32,
+        C.QualifiedTrackerKey(Val(:site_sum), index),
+        C.LiteralExpression(1.0f0),
+    )
+    counts = (1, 2, 4, 8, 16)
+    recipes = map(counts) do count
+        C._lifecycle_tracker_kernel_entry(
+            C.DenseScalarTrackerGroup(
+                [
+                    descriptor(index) for index in 1:count
+                ]
+            )
+        )
+    end
+    @test all(recipe -> typeof(recipe) === typeof(first(recipes)), recipes)
+    @test map(recipe -> Int(recipe.active_count), recipes) == counts
+    @test all(recipe -> isbitstype(typeof(recipe)), recipes)
+end
+
 @testset "source sums consume accepted clear and assignment results" begin
     C = CorePotts
     runtime, handle, key = site_sum_runtime(

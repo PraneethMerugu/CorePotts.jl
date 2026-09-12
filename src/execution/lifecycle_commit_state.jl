@@ -3,6 +3,42 @@
 # Arithmetic trackers consume entry contributions and the completed site clear;
 # full-reconstruction contracts wait for the completed structural transaction.
 
+"""State required by one staged ownership change and its tracker updates."""
+struct _LifecycleOwnerChangeState{O, K, T, D, S}
+    staged_ownership::O
+    staged_cell_kinds::K
+    trackers::T
+    staged_descriptor_state::D
+    status::S
+end
+
+@inline function _lifecycle_owner_change_state(
+        ::HostLifecycleExecution, workspace,
+    )
+    return _LifecycleOwnerChangeState(
+        workspace.staged_ownership,
+        workspace.staged_cell_kinds,
+        workspace.staged_trackers,
+        workspace.staged_descriptor_state,
+        workspace.status,
+    )
+end
+
+@inline function _lifecycle_owner_change_state(
+        ::BackendLifecycleExecution, workspace,
+    )
+    return _LifecycleOwnerChangeState(
+        workspace.staged_ownership,
+        workspace.staged_cell_kinds,
+        nothing,
+        workspace.staged_descriptor_state,
+        workspace.status,
+    )
+end
+
+@inline lifecycle_workspace_status(state::_LifecycleOwnerChangeState) =
+    @inbounds state.status[1]
+
 @inline function _commit_lifecycle_tracker_updates!(
         ::HostLifecycleExecution,
         workspace,
@@ -14,7 +50,7 @@
     )
     try
         commit_tracker_updates!(
-            workspace.staged_trackers,
+            workspace.trackers,
             runtime.program.tracker_plan,
             source,
             site,
@@ -40,7 +76,7 @@ end
     # invariant; evaluator/nonfinite status denotes a terminal scientific stop.
     _lifecycle_tracker_entry_updates_valid(
         runtime.program.tracker_plan.descriptors,
-        workspace.staged_trackers.values,
+        runtime.trackers.values,
         site,
         old_owner,
     ) || return _set_lifecycle_status!(
@@ -50,7 +86,7 @@ end
         detail = LifecycleDetailTrackerCommitInvalid,
     )
     commit_tracker_updates!(
-        workspace.staged_trackers,
+        runtime.trackers,
         runtime.program.tracker_plan,
         source,
         site,
@@ -116,7 +152,7 @@ function _finish_lifecycle_tracker_updates!(::HostLifecycleExecution, runtime, w
     try
         _finish_tracker_source_change!(
             runtime.program.tracker_plan.descriptors,
-            workspace.staged_trackers.values, source, site, old_owner, new_owner, workspace.staged_cell_kinds
+            workspace.trackers.values, source, site, old_owner, new_owner, workspace.staged_cell_kinds
         )
     catch
         return false
@@ -127,7 +163,7 @@ end
     # Keep completed-source arithmetic in the same recoverable transaction.
     _lifecycle_tracker_completed_updates_valid(
         runtime.program.tracker_plan.descriptors,
-        workspace.staged_trackers.values,
+        runtime.trackers.values,
         site,
         new_owner,
     ) || return _set_lifecycle_status!(
@@ -138,7 +174,7 @@ end
     )
     _finish_tracker_source_change!(
         runtime.program.tracker_plan.descriptors,
-        workspace.staged_trackers.values, source, site, old_owner, new_owner, workspace.staged_cell_kinds
+        runtime.trackers.values, source, site, old_owner, new_owner, workspace.staged_cell_kinds
     )
     return true
 end
