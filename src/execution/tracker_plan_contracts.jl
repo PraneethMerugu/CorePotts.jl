@@ -257,7 +257,7 @@ struct CellSurfaceTracker <: AbstractTrackerDescriptor
     maximum_neighbors::Int16
 end
 
-"""Homogeneous value-level instances sharing one scalar tracker strategy."""
+"""Host-planned value-level instances sharing one scalar tracker strategy."""
 struct DenseScalarTrackerGroup{
         Q <: Val,
         D <: AbstractTrackerDescriptor,
@@ -287,29 +287,44 @@ struct DenseScalarTrackerGroup{
     end
 end
 
-"""Fixed compiler-lowered scalar group used by device ownership updates."""
-struct _LifecycleDenseScalarTrackerGroup{Q <: Val, D <: Tuple} <:
+"""Fixed scalar tracker payload used across a kernel boundary."""
+# This is a lowering of `DenseScalarTrackerGroup`, not another scientific
+# descriptor. `source_handles` is the cold-derived lookup index for the member
+# descriptors; it carries no independently authored quantity identity.
+struct _DenseScalarTrackerKernelGroup{
+        Q <: Val, D <: Tuple, H <: Tuple,
+    } <:
        AbstractTrackerPlanEntry
     quantity::Q
     descriptors::D
+    source_handles::H
 end
 
-
-Adapt.@adapt_structure _LifecycleDenseScalarTrackerGroup
+Adapt.@adapt_structure _DenseScalarTrackerKernelGroup
 
 function DenseScalarTrackerGroup(descriptors::A) where {
         D <: AbstractTrackerDescriptor,
         A <: AbstractVector{D},
     }
-    keys = tracker_quantity.(descriptors)
-    all(key -> key isa QualifiedTrackerKey, keys) || throw(ArgumentError(
+    isempty(descriptors) && throw(ArgumentError(
+        "dense scalar tracker groups cannot be empty"
+    ))
+    first_key = tracker_quantity(first(descriptors))
+    first_key isa QualifiedTrackerKey || throw(ArgumentError(
         "dense scalar tracker groups require qualified tracker keys"
     ))
-    quantity = first(keys).quantity
-    all(key -> key.quantity === quantity, keys) || throw(ArgumentError(
-        "dense scalar tracker groups require one structural quantity"
-    ))
-    source_handles = Int32[key.source_handle for key in keys]
+    quantity = first_key.quantity
+    source_handles = Vector{Int32}(undef, length(descriptors))
+    for index in eachindex(descriptors)
+        key = tracker_quantity(@inbounds descriptors[index])
+        key isa QualifiedTrackerKey || throw(ArgumentError(
+            "dense scalar tracker groups require qualified tracker keys"
+        ))
+        key.quantity === quantity || throw(ArgumentError(
+            "dense scalar tracker groups require one structural quantity"
+        ))
+        @inbounds source_handles[index] = Int32(key.source_handle)
+    end
     return DenseScalarTrackerGroup(
         quantity, descriptors, source_handles
     )
@@ -399,28 +414,29 @@ tracker_quantities(descriptor::AbstractTrackerDescriptor) =
 tracker_quantities(group::DenseScalarTrackerGroup) =
     Tuple(QualifiedTrackerKey(group.quantity, handle)
           for handle in group.source_handles)
-tracker_quantities(group::_LifecycleDenseScalarTrackerGroup) =
-    map(tracker_quantity, group.descriptors)
+tracker_quantities(group::_DenseScalarTrackerKernelGroup) =
+    Tuple(QualifiedTrackerKey(group.quantity, handle)
+          for handle in group.source_handles)
 """Return the checkpoint policy declared by a tracker contract."""
 tracker_checkpoint_policy(descriptor::AbstractTrackerDescriptor) =
     tracker_contract(descriptor).checkpoint
 tracker_checkpoint_policy(group::DenseScalarTrackerGroup) =
     tracker_checkpoint_policy(first(group.descriptors))
-tracker_checkpoint_policy(group::_LifecycleDenseScalarTrackerGroup) =
+tracker_checkpoint_policy(group::_DenseScalarTrackerKernelGroup) =
     tracker_checkpoint_policy(first(group.descriptors))
 """Return the engine and backend qualification for a tracker."""
 tracker_support(descriptor::AbstractTrackerDescriptor) =
     tracker_contract(descriptor).support
 tracker_support(group::DenseScalarTrackerGroup) =
     tracker_support(first(group.descriptors))
-tracker_support(group::_LifecycleDenseScalarTrackerGroup) =
+tracker_support(group::_DenseScalarTrackerKernelGroup) =
     tracker_support(first(group.descriptors))
 """Return the proposal-update concurrency contract for a tracker."""
 tracker_concurrency(descriptor::AbstractTrackerDescriptor) =
     tracker_contract(descriptor).concurrency
 tracker_concurrency(group::DenseScalarTrackerGroup) =
     tracker_concurrency(first(group.descriptors))
-tracker_concurrency(group::_LifecycleDenseScalarTrackerGroup) =
+tracker_concurrency(group::_DenseScalarTrackerKernelGroup) =
     tracker_concurrency(first(group.descriptors))
 """Return the closed physical-storage strategy for a tracker."""
 tracker_storage(descriptor::AbstractTrackerDescriptor) =
@@ -432,14 +448,13 @@ function tracker_storage(group::DenseScalarTrackerGroup)
     ))
     return DenseOwnerScalarGroupStorage{_tracker_storage_eltype(storage)}()
 end
-function tracker_storage(group::_LifecycleDenseScalarTrackerGroup)
+function tracker_storage(group::_DenseScalarTrackerKernelGroup)
     storage = tracker_storage(first(group.descriptors))
     storage isa DenseOwnerScalarStorage || throw(ArgumentError(
-        "bound dense scalar tracker groups require scalar member storage"
+        "kernel dense scalar tracker groups require scalar member storage"
     ))
     return DenseOwnerScalarGroupStorage{_tracker_storage_eltype(storage)}()
 end
-
 _tracker_storage_eltype(::DenseOwnerScalarStorage{T}) where {T} = T
 _tracker_storage_eltype(::DenseOwnerValueStorage{T}) where {T} = T
 
@@ -452,11 +467,7 @@ _owner_scalar_storage_type_admitted(::Type) = false
 
 tracker_adapt(to, descriptor::AbstractTrackerDescriptor) = descriptor
 tracker_adapt(to, group::DenseScalarTrackerGroup) =
-    DenseScalarTrackerGroup(
-        group.quantity,
-        Adapt.adapt(to, group.descriptors),
-        Adapt.adapt(to, group.source_handles),
-    )
+    _tracker_kernel_entry(group)
 
 function _validate_tracker_descriptor(descriptor::AbstractTrackerDescriptor)
     isbits(descriptor) || throw(ArgumentError(
@@ -610,13 +621,13 @@ tracker_kernel_plan(plan::TrackerExecutionPlan) =
     TrackerKernelPlan(plan.descriptors)
 tracker_kernel_plan(plan::TrackerKernelPlan) = plan
 
-_lifecycle_tracker_entry(descriptor) = descriptor
-_lifecycle_tracker_entry(group::DenseScalarTrackerGroup) =
-    _LifecycleDenseScalarTrackerGroup(
-        group.quantity, Tuple(group.descriptors)
+_tracker_kernel_entry(descriptor) = descriptor
+_tracker_kernel_entry(group::DenseScalarTrackerGroup) =
+    _DenseScalarTrackerKernelGroup(
+        group.quantity, Tuple(group.descriptors), Tuple(group.source_handles)
     )
 function _lifecycle_tracker_kernel_plan(plan::AbstractTrackerPlan)
-    return TrackerKernelPlan(map(_lifecycle_tracker_entry, plan.descriptors))
+    return TrackerKernelPlan(map(_tracker_kernel_entry, plan.descriptors))
 end
 
 function adapt_tracker_kernel_plan(to, plan::AbstractTrackerPlan, backend)
@@ -631,15 +642,9 @@ function adapt_tracker_kernel_plan(to, plan::AbstractTrackerPlan, backend)
         )
         adapted = tracker_adapt(to, descriptor)
         if descriptor isa DenseScalarTrackerGroup
-            eltype(adapted.descriptors) === eltype(descriptor.descriptors) ||
-                throw(
+            adapted isa _DenseScalarTrackerKernelGroup || throw(
                 ArgumentError(
-                    "tracker-group adaptation changed its structural member type"
-                )
-            )
-            eltype(adapted.source_handles) === Int32 || throw(
-                ArgumentError(
-                    "tracker-group adaptation changed its source-handle type"
+                    "tracker-group adaptation did not produce a kernel payload"
                 )
             )
         else

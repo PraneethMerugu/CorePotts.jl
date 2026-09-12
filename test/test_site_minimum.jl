@@ -1,9 +1,19 @@
 using Test
+import Adapt
 import CorePotts
 import LocalMath
 include("fixtures/site_minimum_support.jl")
 
 struct UnsupportedFullReconstructionTracker <: CorePotts.AbstractTrackerDescriptor end
+
+struct RejectTrackerCollectionAdaptation end
+
+function Adapt.adapt_storage(
+        ::RejectTrackerCollectionAdaptation,
+        ::AbstractVector{<:CorePotts.AbstractTrackerDescriptor},
+    )
+    error("fixed tracker payloads must not become device arrays")
+end
 
 CorePotts.tracker_contract(::UnsupportedFullReconstructionTracker) =
     CorePotts.TrackerContract(
@@ -76,6 +86,29 @@ CorePotts.tracker_contract(::UnsupportedFullReconstructionTracker) =
     cached[1] = 2.0f0
     @test_throws r"differs from its independent recomputation oracle" C.program_checkpoint(runtime)
     cached[1] = 1.0f0
+end
+
+@testset "grouped tracker boundary uses a fixed semantic payload" begin
+    C = CorePotts
+    key = C.QualifiedTrackerKey(Val(:site_minimum), 1)
+    descriptor = C.SiteMinimumTracker(
+        Float32, key, C.LiteralExpression(1.0f0);
+        maximum_sites = 36, empty = 19.0f0,
+    )
+    widened_descriptors = C.SiteMinimumTracker{typeof(key)}[descriptor]
+    group = C.DenseScalarTrackerGroup(widened_descriptors)
+    plan = C.TrackerExecutionPlan(
+        (C.OwnershipCountTracker(), group), "host-planned-site-minimum"
+    )
+    adapted = C.adapt_tracker_kernel_plan(
+        RejectTrackerCollectionAdaptation(), plan, C.AdaptedBackend
+    )
+    adapted_group = adapted.descriptors[2]
+    @test isbits(adapted_group)
+    @test C.tracker_quantities(adapted_group) == C.tracker_quantities(group)
+    @test C.tracker_instances(adapted)[2] == descriptor
+    state = C.TrackerState((Int32[1], reshape(Float32[19], 1, 1)))
+    @test C.tracker_values(adapted, state, key) == Float32[19]
 end
 
 @testset "minimum physical history invalidation" begin

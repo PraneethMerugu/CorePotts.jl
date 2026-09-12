@@ -262,7 +262,7 @@ end
         old_owner,
         new_owner,
         delta_function,
-    ) where {G <: Union{DenseScalarTrackerGroup, _LifecycleDenseScalarTrackerGroup}}
+    ) where {G <: Union{DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup}}
     group = first(descriptors)
     group_values = first(values)
     for index in eachindex(group.descriptors)
@@ -329,7 +329,7 @@ end
         old_owner,
         new_owner,
         delta_function,
-    ) where {G <: Union{DenseScalarTrackerGroup, _LifecycleDenseScalarTrackerGroup}}
+    ) where {G <: Union{DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup}}
     group = first(descriptors)
     group_values = first(values)
     for index in eachindex(group.descriptors)
@@ -401,7 +401,7 @@ end
     end
     return nothing
 end
-@inline function _finish_tracker_source_change!(group::_LifecycleDenseScalarTrackerGroup, values, source, target, old_owner, owner, cell_kinds)
+@inline function _finish_tracker_source_change!(group::_DenseScalarTrackerKernelGroup, values, source, target, old_owner, owner, cell_kinds)
     for index in eachindex(group.descriptors)
         _finish_tracker_source_change!(getfield(group.descriptors, index), view(values, :, index), source, target, old_owner, owner, cell_kinds)
     end
@@ -521,8 +521,10 @@ end
         D.parameters,
     )
     group_indices = findall(
-        descriptor_type -> descriptor_type <:
+        descriptor_type -> descriptor_type <: Union{
             DenseScalarTrackerGroup{Val{Q}},
+            _DenseScalarTrackerKernelGroup{Val{Q}},
+        },
         D.parameters,
     )
     result = :(throw(ArgumentError(
@@ -588,8 +590,10 @@ end
         D.parameters,
     )
     group_indices = findall(
-        descriptor_type -> descriptor_type <:
+        descriptor_type -> descriptor_type <: Union{
             DenseScalarTrackerGroup{Val{Q}},
+            _DenseScalarTrackerKernelGroup{Val{Q}},
+        },
         D.parameters,
     )
     result = :(throw(ArgumentError(
@@ -687,7 +691,7 @@ end
         key::QualifiedTrackerKey,
         descriptors::Tuple{G, Vararg},
         values::Tuple,
-    ) where {G <: DenseScalarTrackerGroup}
+    ) where {G <: Union{DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup}}
     group = first(descriptors)
     isequal(group.quantity, key.quantity) || return _tracker_values(
         key, Base.tail(descriptors), Base.tail(values)
@@ -701,7 +705,7 @@ end
         quantity,
         descriptors::Tuple{G, Vararg},
         values::Tuple,
-    ) where {G <: DenseScalarTrackerGroup}
+    ) where {G <: Union{DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup}}
     return _tracker_values(quantity, Base.tail(descriptors), Base.tail(values))
 end
 
@@ -857,7 +861,7 @@ _tracker_instances(descriptors::Tuple{D, Vararg}) where {D} =
     (first(descriptors), _tracker_instances(Base.tail(descriptors))...)
 _tracker_instances(
     descriptors::Tuple{G, Vararg},
-) where {G <: DenseScalarTrackerGroup} = (
+) where {G <: Union{DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup}} = (
     Tuple(first(descriptors).descriptors)...,
     _tracker_instances(Base.tail(descriptors))...,
 )

@@ -253,6 +253,12 @@ incremental site-sum expression and binds its exact referenced staged arrays and
 parameters. The private bound descriptor still participates in the common
 tracker-plan commit traversal; narrowing that remaining contract must replace
 the traversal atomically, not create another device executor.
+Backend preparation lowers each host-planned `DenseScalarTrackerGroup` to one
+private fixed-tuple kernel payload. Its source-handle tuple is derived from the
+member quantity keys during preparation and exists only to select the matching
+value column after a source expression has been bound; it is not another
+quantity authority. Device paths consume that payload directly and never adapt
+the host descriptor vector.
 `lifecycle_backend_control.jl` separately supplies the structural kernel with
 staged ownership and the geometry required by count, moment, and surface
 updates. Keep source discovery and expression compilation out of that device
