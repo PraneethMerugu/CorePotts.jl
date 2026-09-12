@@ -1,5 +1,8 @@
 # Transaction-local state, relationship, tracker, and ownership commit logic.
 
+# Arithmetic trackers consume entry contributions and the completed site clear;
+# full-reconstruction contracts wait for the completed structural transaction.
+
 @inline function _commit_lifecycle_tracker_updates!(
         ::HostLifecycleExecution,
         workspace,
@@ -17,6 +20,7 @@
             site,
             old_owner,
             new_owner,
+            _tracker_source_entry_delta,
         )
     catch
         return false
@@ -32,6 +36,19 @@ end
         old_owner,
         new_owner,
     )
+    # Device execution reports the host transaction's recoverable tracker
+    # invariant; evaluator/nonfinite status denotes a terminal scientific stop.
+    _lifecycle_tracker_entry_updates_valid(
+        runtime.program.tracker_plan.descriptors,
+        workspace.staged_trackers.values,
+        site,
+        old_owner,
+    ) || return _set_lifecycle_status!(
+        workspace,
+        ProgramStatusInvariant;
+        anchor = old_owner > 0 ? old_owner : new_owner,
+        detail = LifecycleDetailTrackerCommitInvalid,
+    )
     commit_tracker_updates!(
         workspace.staged_trackers,
         runtime.program.tracker_plan,
@@ -39,11 +56,15 @@ end
         site,
         old_owner,
         new_owner,
+        _tracker_source_entry_delta,
     )
     return true
 end
 
-@inline function _stage_owner_change!(
+# This transaction is shared by every structural lifecycle effect. Keep it as
+# one device compiler unit instead of cloning tracker validation, ownership
+# mutation, source clearing, and completed-source publication into each effect.
+Base.@noinline function _stage_owner_change!(
         mode::AbstractLifecycleExecutionMode,
         runtime,
         plan,
@@ -64,6 +85,7 @@ end
             old_owner,
             new_owner,
         )
+        _lifecycle_succeeded(workspace) || return false
         return _set_lifecycle_status!(
             workspace,
             ProgramStatusInvariant;
@@ -77,6 +99,47 @@ end
         values = state_block(workspace.staged_descriptor_state, rule.handle).values
         _clear_site_samples!(values, site)
     end
+    if !_finish_lifecycle_tracker_updates!(
+            mode, runtime, workspace, tracker_source, site,
+            old_owner, new_owner,
+        )
+        _lifecycle_succeeded(workspace) || return false
+        return _set_lifecycle_status!(
+            workspace, ProgramStatusInvariant;
+            anchor = new_owner, detail = LifecycleDetailTrackerCommitInvalid,
+        )
+    end
+    return true
+end
+
+function _finish_lifecycle_tracker_updates!(::HostLifecycleExecution, runtime, workspace, source, site, old_owner, new_owner)
+    try
+        _finish_tracker_source_change!(
+            runtime.program.tracker_plan.descriptors,
+            workspace.staged_trackers.values, source, site, old_owner, new_owner, workspace.staged_cell_kinds
+        )
+    catch
+        return false
+    end
+    return true
+end
+@inline function _finish_lifecycle_tracker_updates!(::BackendLifecycleExecution, runtime, workspace, source, site, old_owner, new_owner)
+    # Keep completed-source arithmetic in the same recoverable transaction.
+    _lifecycle_tracker_completed_updates_valid(
+        runtime.program.tracker_plan.descriptors,
+        workspace.staged_trackers.values,
+        site,
+        new_owner,
+    ) || return _set_lifecycle_status!(
+        workspace,
+        ProgramStatusInvariant;
+        anchor = new_owner,
+        detail = LifecycleDetailTrackerCommitInvalid,
+    )
+    _finish_tracker_source_change!(
+        runtime.program.tracker_plan.descriptors,
+        workspace.staged_trackers.values, source, site, old_owner, new_owner, workspace.staged_cell_kinds
+    )
     return true
 end
 
@@ -118,21 +181,28 @@ end
         all(component -> _lifecycle_value_convertible(eltype(T), component), value)
 end
 
-# Retain field types in specialization: a runtime tuple of DataType values is
-# not a device value inside heterogeneous evaluator-bank dispatch.
-@inline function _lifecycle_product_values_convertible(
-        ::Type{T}, components::Tuple, ::Val{I},
-    ) where {T, I}
-    I > fieldcount(T) && return true
-    return _lifecycle_value_convertible(fieldtype(T, I), getfield(components, I)) &&
-        _lifecycle_product_values_convertible(T, components, Val(I + 1))
+# Retain field types and product arity in specialization. Recursing through a
+# runtime Tuple/Val boundary leaves dynamic dispatch in device IR when the
+# caller is reached through a heterogeneous evaluator bank.
+@generated function _lifecycle_product_values_convertible(
+        ::Type{T}, components::C,
+    ) where {T, C <: Tuple}
+    fieldcount(T) == fieldcount(C) || return :(false)
+    checks = map(1:fieldcount(T)) do index
+        :(
+            _lifecycle_value_convertible(
+                $(fieldtype(T, index)), getfield(components, $index)
+            )
+        )
+    end
+    return foldr((left, right) -> :($left && $right), checks; init = :(true))
 end
 
 @inline function _lifecycle_value_convertible(
         ::Type{T}, value::Union{Tuple, NamedTuple},
     ) where {T <: Union{Tuple, NamedTuple}}
     return applicable(convert, T, value) && fieldcount(T) == length(value) &&
-        _lifecycle_product_values_convertible(T, values(value), Val(1))
+        _lifecycle_product_values_convertible(T, values(value))
 end
 
 _convert_lifecycle_state_value(::Type{T}, value) where {T} = convert(T, value)

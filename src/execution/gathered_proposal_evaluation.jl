@@ -121,11 +121,18 @@ end
     )
 end
 
-@inline function _execute_proposal_scalar(
-        call::_ExecutableScalarCall, context
-    )
-    arguments = _execute_proposal_arguments(call.arguments, context)
-    return call.operation(arguments...)
+@generated function _execute_proposal_scalar(
+        call::_ExecutableScalarCall{F, A}, context,
+    ) where {F, A <: Tuple}
+    arguments = [
+        :(_execute_proposal_scalar(
+            getfield(getfield(call, :arguments), $index), context
+        )) for index in 1:fieldcount(A)
+    ]
+    return quote
+        $(Expr(:meta, :inline))
+        getfield(call, :operation)($(arguments...))
+    end
 end
 
 
@@ -856,7 +863,7 @@ end
         descriptors::Tuple{Any, Vararg{Any}},
         values::Tuple{Any, Vararg{Any}}
     )
-    key = tracker_quantity(first(descriptors))
+    key = _gathered_tracker_key(first(descriptors))
     key isa QualifiedTrackerKey && key.quantity === quantity &&
         key.source_handle == source_handle &&
         return (first(descriptors), first(values))
@@ -870,19 +877,22 @@ end
 ) =
     throw(ArgumentError("compiled gathered tracker key is unavailable"))
 
+@inline _gathered_tracker_key(descriptor::AbstractTrackerDescriptor) = tracker_quantity(descriptor)
+@inline _gathered_tracker_key(key::_ExecutableTrackerKey) = _executable_tracker_key(key)
+
 @inline function _gathered_bounded_tracker_samples(
         key,
         descriptors::Tuple{Any, Vararg{Any}},
         values::Tuple{Any, Vararg{Any}},
     )
-    isequal(tracker_quantity(first(descriptors)), key) && return first(values)
+    isequal(_gathered_tracker_key(first(descriptors)), key) && return first(values)
     return _gathered_bounded_tracker_samples(
         key, Base.tail(descriptors), Base.tail(values)
     )
 end
 @inline _gathered_bounded_tracker_samples(
     key, descriptors::Tuple{Any}, values::Tuple{Any},
-) = isequal(tracker_quantity(first(descriptors)), key) ? first(values) :
+) = isequal(_gathered_tracker_key(first(descriptors)), key) ? first(values) :
     _gathered_bounded_tracker_samples(key, (), ())
 @inline _gathered_bounded_tracker_samples(key, ::Tuple{}, ::Tuple{}) =
     throw(ArgumentError("compiled bounded tracker source is unavailable"))
@@ -904,13 +914,13 @@ end
     iszero(lane) && return zero(first(pair))
     value = pair[lane]
     context.after || return value
-    delta = _checkerboard_scalar_tracker_delta(
+    delta = _checkerboard_owner_value_delta(
         descriptor, proposal.contact_sites, proposal.contact_owners,
         proposal.contact_ranges,
         (proposal.target_linear, proposal.target),
         proposal.old_owner, proposal.new_owner
     )
-    return _scalar_value_after(
+    return _owner_value_after(
         value, delta, owner, proposal.old_owner, proposal.new_owner
     )
 end

@@ -254,7 +254,8 @@ function _commit_copy!(
         new_owner::Int32,
         context,
     ) where {T, N}
-    source = tracker_source_view(runtime.program, runtime.ownership)
+    source = tracker_source_view(runtime.program, runtime.ownership;
+        parameters = runtime.parameters, descriptor_state = runtime.descriptor_state)
     commit_tracker_updates!(
         runtime.trackers,
         runtime.program.tracker_plan,
@@ -262,6 +263,7 @@ function _commit_copy!(
         target,
         old_owner,
         new_owner,
+        _tracker_source_entry_delta,
     )
     @inbounds runtime.ownership[target] = new_owner
     old_owner == new_owner || _clear_ownership_changed_state!(
@@ -270,6 +272,12 @@ function _commit_copy!(
         target,
     )
     _apply_accepted_copy_stage!(runtime, context)
+    # Accepted RHS values were evaluated against entry state. Derived sums
+    # consume the completed clear/assignment result within the unpublished MCS.
+    _finish_tracker_source_change!(runtime.program.tracker_plan.descriptors,
+        runtime.trackers.values, source, target, old_owner, new_owner, runtime.cell_kinds
+    )
+    _rebuild_reconstruction_trackers!(runtime.program.tracker_plan, runtime.trackers, source, runtime.cell_kinds)
     return nothing
 end
 

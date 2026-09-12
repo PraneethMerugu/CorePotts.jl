@@ -219,6 +219,79 @@ values and preserve logical checkpoint state). Keep device-specific witnesses
 in the ordinary Metal inventory, and distinguish tested device behavior from
 CPU-only coverage.
 
+## Maintained site minima
+
+`SiteMinimumTracker` declares a finite scalar minimum with a required full-site
+rebuild bound and empty-owner value. `tracker_plan_contracts.jl` owns that
+built-in contract privately; reconstruction entries do not participate in the
+pre-mutation arithmetic-delta traversal. A general downstream reconstruction
+contract is not exposed until its lowering and execution path are complete.
+`tracker_source_execution.jl` builds the same site-expression routed
+LocalMath reconstruction used for initialization, input replacement, scheduled
+source changes and accepted candidate state. The reduction's infinity identity
+is private scratch; finalization uses LocalMath's `FillEmpty` publication policy
+before finite-value validation.
+Checkerboard consumes existing ownership/state/history shadows before the
+existing tracker validation and common commit. Sequential accepted changes
+request reconstruction after source clearing and accepted assignments, rather
+than inventing a numeric inverse. `tracker_recompute` remains an independent
+owner-major oracle. The owning tests are `test_site_minimum.jl` and the shared
+`fixtures/site_minimum_support.jl`; proposal reads are rejected explicitly.
+
+Lifecycle structural staging updates counts and moments immediately. Site sums
+use the existing source-aware incremental owner: subtract the entry contribution,
+stage ownership/source clears, then add the completed contribution. Only
+full-reconstruction contracts defer maintenance until all structural staging is
+complete. Both engines reuse the same reconstruction law before relationship
+and cell-state policies. The existing lifecycle status and common
+commit boundary reject nonfinite reconstruction or later policy failures without
+publishing staged ownership, source values, or caches. Receipt retention and
+queue capacity include these prepared laws. `test_site_tracker_lifecycle.jl`
+defends creation, division, removal, retirement, refresh, and continuation.
+For checkerboard execution, `tracker_source_execution.jl` cold-compiles each
+incremental site-sum expression and binds its exact referenced staged arrays and
+parameters. The private bound descriptor still participates in the common
+tracker-plan commit traversal; narrowing that remaining contract must replace
+the traversal atomically, not create another device executor.
+Backend preparation lowers each host-planned `DenseScalarTrackerGroup` to one
+private fixed-tuple kernel payload. Its source-handle tuple is derived from the
+member quantity keys during preparation and exists only to select the matching
+value column after a source expression has been bound; it is not another
+quantity authority. Device paths consume that payload directly and never adapt
+the host descriptor vector.
+`lifecycle_backend_control.jl` separately supplies the structural kernel with
+staged ownership and the geometry required by count, moment, and surface
+updates. Keep source discovery and expression compilation out of that device
+boundary; the bound payload is a lowering of the public tracker, not a second
+scientific contract or executor.
+Both engines' full-reconstruction preparations use the existing LocalMath field
+copy law for transaction-entry ownership and complete physical source parents.
+These temporary buffers are absent in incremental-only programs and never enter
+checkpointed state. Sequential prepares and settles these laws only after a
+nonempty request selection, copying before structural mutation and comparing
+against the completed candidate. It does not compare the aliased staging views.
+Checkerboard snapshot submission and its lattice-linear copy are
+unconditional on each lifecycle enqueue; a separate reconstruction submission
+performs the total change comparison and conditionally rebuilds. Both submissions
+are derived in queue inspection and preflight from the prepared laws. History
+parents include all physical retained samples, so memory/copy cost scales with
+their declared depth, not just the number of lag expressions.
+The transaction-local mutation gate compares entry and completed ownership and
+referenced source values. It is a total LocalMath publication, including false
+for closed planning, not a retained dirty flag. No-effect boundaries preserve
+rounded incremental sums bit-exactly. Physical history invalidation shares the
+`site_tracker_history_support.jl` fixture between sum and minimum consumers.
+Lifecycle enqueue records each receipt immediately in the existing checkerboard
+receipt bank, before any subsequent native submission can fail. Public enqueue
+and runtime-associated settlement share recovery in `program_settlement.jl`:
+drain the retained prefix, preserve ordered scientific rejection, and use the
+existing abort and state-copy owners to discard only the incomplete MCS.
+The already-drained execution position prevents fabrication of an earlier
+lifecycle receipt from overwritten shared request scratch. A completed queued
+prefix still requires explicit host settlement; provider drain failure is not
+reported as successful recovery. The lifecycle tests cover all public step
+entrypoints, prefix settlement, counters, repaired retry, and continuation.
+
 ## Test
 
 During development, start with the smallest self-contained test file that owns
@@ -264,6 +337,20 @@ allocation and compilation observations, and physical launch structure. These
 measurements are engineering evidence rather than pass/fail timing gates. The
 fixture exercises empty lifecycle selection after resetting the workspace; it
 does not represent populated divide/retire throughput.
+
+Measure scheduled source publication with the same benchmark environment:
+
+```sh
+julia --project=benchmark --startup-file=no benchmark/scheduled_source_publication.jl 7
+```
+
+This runs both CPU engines with fixed ownership, one site-source increment,
+and two cell readers sharing one maintained sum. It times the public completed
+MCS, including rejected copy proposals and settlement, with independent value
+checks outside the measured region. Construction, first execution, harness
+warmups, and warm allocation/compilation samples are reported separately.
+Both engines share a process and compiled methods, so first-call observations
+are not isolated cold-build comparisons. There are no timing thresholds.
 
 The package suite includes Aqua and ExplicitImports checks. Real-Metal
 qualification lives in `test/metal` and uses Julia 1.12.6.

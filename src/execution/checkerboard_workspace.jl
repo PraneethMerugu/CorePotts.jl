@@ -158,6 +158,7 @@ function _checkerboard_kernel_program(
     tracker_kernel = to === nothing ?
         tracker_kernel_plan(program.tracker_plan) :
         adapt_tracker_kernel_plan(to, program.tracker_plan, backend)
+    lifecycle_tracker_kernel = _checkerboard_lifecycle_tracker_plan(program)
     extinction_policies = _checkerboard_compiled_extinction_policies(program)
     relationship_layout = _checkerboard_compiled_relationship_layout(program)
     return CheckerboardKernelProgram(
@@ -171,6 +172,7 @@ function _checkerboard_kernel_program(
         to === nothing ? program.relationships :
             Adapt.adapt(to, program.relationships),
         tracker_kernel,
+        lifecycle_tracker_kernel,
         _checkerboard_adapt(to, _checkerboard_domain_resources(program)),
         to === nothing ? program.lifecycle_plan :
             Adapt.adapt(to, program.lifecycle_plan),
@@ -184,17 +186,27 @@ function _checkerboard_kernel_program(
     )
 end
 
+_checkerboard_lifecycle_tracker_plan(program::CheckerboardKernelProgram) =
+    program.lifecycle_tracker_plan
+_checkerboard_lifecycle_tracker_plan(program) =
+    _lifecycle_tracker_kernel_plan(program.tracker_plan)
+
 _checkerboard_domain_resources(program::CheckerboardKernelProgram) =
     program.domain_resources
 _checkerboard_domain_resources(program) =
     program.descriptor_plan.domain_resources
 
-tracker_source_view(program::CheckerboardKernelProgram, ownership) =
+tracker_source_view(
+    program::CheckerboardKernelProgram, ownership;
+    parameters = (), descriptor_state = nothing
+) =
     TrackerSourceView(
         ownership,
         program.shape,
         program.periodic,
         program.domain_resources,
+    parameters,
+    descriptor_state,
     )
 
 _checkerboard_adapt(to, value) =

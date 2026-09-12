@@ -38,6 +38,7 @@ mutable struct ProgramStepTransaction{T <: AbstractFloat, R, W, C, L}
     counters_candidate::C
     lifecycle_receipt::L
     pending_parameters::Union{Nothing, Vector{T}}
+    descriptor_state_staged::Bool
     candidate_snapshot::Any
     state::ProgramStepTransactionState
 end
@@ -56,6 +57,7 @@ function ProgramStepTransaction(
         counters_candidate,
         receipt,
         nothing,
+        false,
         nothing,
         ProgramStepStaged,
     )
@@ -79,12 +81,14 @@ end
 
 """Return an independently owned snapshot of a staged program-step candidate."""
 function program_step_snapshot(transaction::ProgramStepTransaction)
-    _require_staged_program_step(transaction)
-    transaction.candidate_snapshot === nothing ||
-        return transaction.candidate_snapshot
+    prevalidate_program_step_transaction(transaction)
     runtime = transaction.runtime
+    candidate = transaction.candidate_snapshot === nothing ?
+        transaction.workspace : transaction.candidate_snapshot
+    parameters = transaction.pending_parameters === nothing ? runtime.parameters :
+        transaction.pending_parameters
     return _materialize_program_state_snapshot(
-        runtime, transaction.workspace, runtime.mcs + 1
+        runtime, candidate, runtime.mcs + 1; parameters,
     )
 end
 
@@ -155,6 +159,7 @@ function stage_program_descriptor_state!(
         )
         _validate_program_descriptor_state(runtime, candidate)
         copyto_auxiliary_state!(snapshot.descriptor_state, candidate)
+        transaction.descriptor_state_staged = true
         return transaction
     end
     _descriptor_state_banks_are_independent(
@@ -166,6 +171,7 @@ function stage_program_descriptor_state!(
     ))
     _validate_program_descriptor_state(runtime, candidate)
     copyto_auxiliary_state!(workspace.descriptor_state, candidate)
+    transaction.descriptor_state_staged = true
     return transaction
 end
 
@@ -514,16 +520,20 @@ function stage_program_mcs!(runtime::ProgramRuntime)
 end
 
 function _stage_checkerboard_program_mcs!(runtime::ProgramRuntime)
-    supports_queued_program_execution(runtime) || throw(ArgumentError(
-        "staged checkerboard coupling requires the device-total queued MCS path"
-    ))
-    runtime.settled || throw(ArgumentError(
-        "cannot stage an MCS while another program transaction is pending"
-    ))
+    supports_queued_program_execution(runtime) || throw(
+        ArgumentError(
+            "staged checkerboard coupling requires the device-total queued MCS path"
+        )
+    )
+    runtime.settled || throw(
+        ArgumentError(
+            "cannot stage an MCS while another program transaction is pending"
+        )
+    )
     before = _program_counter_snapshot(runtime)
     enqueue_program_mcs!(runtime)
-    receipt = settle_program!(
-        runtime.engine_workspace,
+    receipt = _settle_checkerboard_runtime!(
+        runtime,
         ProgramSettlementRequest(PublicStepSettlement; full_snapshot = true),
     )
     if receipt.failure !== nothing
@@ -562,6 +572,8 @@ function prevalidate_program_step_transaction(
     if pending !== nothing
         _validated_program_parameters(runtime.program, pending)
     end
+    inputs_staged = pending !== nothing || transaction.descriptor_state_staged
+    parameters = pending === nothing ? runtime.parameters : pending
     if _is_checkerboard_execution_workspace(transaction.workspace)
         workspace = _checkerboard_core(transaction.workspace)
         snapshot = transaction.candidate_snapshot
@@ -569,6 +581,22 @@ function prevalidate_program_step_transaction(
         _, destination, _ = _checkerboard_transaction_banks(
             workspace, runtime.mcs
         )
+        if inputs_staged
+            source = tracker_source_view(
+                runtime.program, destination.ownership;
+                parameters, descriptor_state = snapshot.descriptor_state
+            )
+            candidate = _input_tracker_candidate(
+                runtime.program.tracker_plan,
+                destination.trackers, source, destination.cell_kinds;
+                backend = KernelAbstractions.get_backend(destination.ownership),
+                copy_source = true
+            )
+            _require_tracker_copy_compatible(destination.trackers, candidate)
+            _require_tracker_copy_compatible(snapshot.trackers, candidate)
+            _copy_input_tracker_state!(destination.trackers, candidate, runtime.program.tracker_plan)
+            _copy_input_tracker_state!(snapshot.trackers, candidate, runtime.program.tracker_plan, Array)
+        end
         copyto_auxiliary_state!(
             destination.descriptor_state, snapshot.descriptor_state
         )
@@ -581,6 +609,19 @@ function prevalidate_program_step_transaction(
         _validate_program_descriptor_state(
             runtime, transaction.workspace.descriptor_state
         )
+        if inputs_staged
+            staged = transaction.workspace
+            source = tracker_source_view(
+                runtime.program, staged.ownership;
+                parameters, descriptor_state = staged.descriptor_state
+            )
+            candidate = _input_tracker_candidate(
+                runtime.program.tracker_plan,
+                staged.trackers, source, staged.cell_kinds
+            )
+            _require_tracker_copy_compatible(staged.trackers, candidate)
+            _copy_input_tracker_state!(staged.trackers, candidate, runtime.program.tracker_plan)
+        end
     end
     return transaction
 end
@@ -649,6 +690,8 @@ end
     index = @index(Global, Linear)
     if index == 1
         @inbounds begin
+            control.counters[_LIFECYCLE_CONTROL_DUE] = 0
+            control.counters[_LIFECYCLE_CONTROL_RETIRED] = 0
             control.counters[_LIFECYCLE_CONTROL_ACTIVE_BANK] = bank
             control.counters[_LIFECYCLE_CONTROL_COMMITTED_MCS] = committed
             control.statistics[_PROGRAM_STAT_ACCEPTED] = accepted
@@ -663,30 +706,32 @@ end
 end
 
 function _rollback_checkerboard_program_step!(transaction)
-    runtime = transaction.runtime
-    workspace = _checkerboard_core(transaction.workspace)
+    return _rollback_checkerboard_program_step!(transaction.runtime, transaction.counters_before)
+end
+
+function _rollback_checkerboard_program_step!(runtime::ProgramRuntime, counters; committed_mcs = runtime.mcs)
+    workspace = _checkerboard_core(runtime.engine_workspace)
     source, _, destination_bank = _checkerboard_transaction_banks(
-        workspace, runtime.mcs
+        workspace, committed_mcs
     )
     # `_checkerboard_transaction_banks` returns the destination bank as its
     # third result; the source bank is the opposite bank.
     published_bank = destination_bank == 1 ? Int32(2) : Int32(1)
     backend = KernelAbstractions.get_backend(source.ownership)
-    counters = transaction.counters_before
     _rollback_checkerboard_program_step_kernel!(backend, 1)(
         source.lifecycle_control,
         source.program_status,
         published_bank,
-        Int32(runtime.mcs),
+        Int32(committed_mcs),
         counters...;
         ndrange = 1,
     )
     KernelAbstractions.synchronize(backend)
     workspace.execution.synchronization_count += 1
     execution = workspace.execution
-    execution.submitted_mcs = runtime.mcs
-    execution.drained_mcs = runtime.mcs
-    execution.committed_mcs = runtime.mcs
+    execution.submitted_mcs = committed_mcs
+    execution.drained_mcs = committed_mcs
+    execution.committed_mcs = committed_mcs
     execution.materialized_mcs = runtime.mcs
     return runtime
 end

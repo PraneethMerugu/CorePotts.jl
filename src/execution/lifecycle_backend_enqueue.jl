@@ -283,6 +283,7 @@ function enqueue_lifecycle_backend_index!(
         state,
         reductions;
         workgroup_size::Union{Nothing, Integer} = nothing,
+        record_receipt = Returns(nothing),
     )
     control = state.lifecycle_control
     control isa NoLifecycleBackendControl && return nothing
@@ -291,7 +292,8 @@ function enqueue_lifecycle_backend_index!(
     ))
     workspace = state.lifecycle_workspace
     tracker_source = tracker_source_view(
-        state.program, workspace.staged_ownership
+        state.program, workspace.staged_ownership;
+        parameters = state.parameters, descriptor_state = workspace.staged_descriptor_state
     )
     backend = KernelAbstractions.get_backend(state.ownership)
     workgroup_size === nothing || workgroup_size > 0 || throw(ArgumentError(
@@ -340,14 +342,18 @@ function enqueue_lifecycle_backend_index!(
     )
     @debug "enqueue lifecycle backend stage" stage = :materialize_site_index
     site_index_event = LocalMath.execute!(reductions.site_index)
+    record_receipt(:site_index, site_index_event)
     @debug "enqueue lifecycle backend stage" stage = :reduce_site_status
     last_direct_event = _run_lifecycle_status!(
         reductions.direct, length(state.ownership))
+    record_receipt(:direct, last_direct_event)
     _enqueue_lifecycle_failure_stamp!(state, ProgramStageIndex)
     @debug "enqueue lifecycle backend stage" stage = :emit_requests
     emission_event = _run_lifecycle_emission!(reductions.emission, state.mcs)
+    record_receipt(:emission, emission_event)
     @debug "enqueue lifecycle backend stage" stage = :materialize_requests
     request_index_event = LocalMath.execute!(reductions.request_index)
+    record_receipt(:request_index, request_index_event)
     effect_mask = state.program.lifecycle_plan.effect_mask
     retire_plan = _RetireLifecyclePlan()
     if !iszero(
@@ -446,11 +452,13 @@ function enqueue_lifecycle_backend_index!(
     @debug "enqueue lifecycle backend stage" stage = :reduce_planning_status
     last_planning_event = _run_lifecycle_status!(
         reductions.planning, length(control.candidate_status))
+    record_receipt(:planning, last_planning_event)
     _enqueue_lifecycle_failure_stamp!(state, ProgramStagePlanning)
     @debug "enqueue lifecycle backend stage" stage = :select_requests
     selection_event = _execute_lifecycle_selection!(
         reductions.selection; parameters = (current_mcs = Int64(state.mcs),)
     )
+    record_receipt(:selection, selection_event)
     policy_workspace_length = length(workspace.policy_workspace)
     if policy_workspace_length > 0
         @debug "enqueue lifecycle backend stage" stage = :clear_selected_division_workspace
@@ -476,7 +484,17 @@ function enqueue_lifecycle_backend_index!(
     @debug "enqueue lifecycle backend stage" stage = :reduce_selected_planning_status
     last_planning_event = _run_lifecycle_status!(
         reductions.planning, length(control.candidate_status))
+    record_receipt(:planning, last_planning_event)
     _enqueue_lifecycle_failure_stamp!(state, ProgramStagePlanning)
+    site_tracker_snapshots = map(reductions.site_trackers) do prepared
+        receipt = _execute_lifecycle_site_tracker_snapshot!(prepared)
+        record_receipt(:site_trackers, receipt)
+        _enqueue_localmath_failure_bridge!(
+            receipt, reductions.direct_gate,
+            workspace.status, state.mcs + 1, ProgramStageStructure
+        )
+        receipt
+    end
     effect_classes = (
             _CreateLifecyclePlan(),
             _RetireLifecyclePlan(),
@@ -484,6 +502,8 @@ function enqueue_lifecycle_backend_index!(
             _TransitionLifecyclePlan(),
             _DivideLifecyclePlan(),
         )
+    structure_runtime, structure_plan, tracker_commit_source =
+        _lifecycle_structure_launch_payload(state, tracker_source)
     for plan_class in effect_classes
         iszero(
             effect_mask & _lifecycle_effect_bit(
@@ -492,8 +512,23 @@ function enqueue_lifecycle_backend_index!(
         ) && continue
         @debug "enqueue lifecycle structural staging" plan_class
         stage_structure(
-            state, tracker_source, workspace, control, plan_class; ndrange = 1
+            structure_runtime,
+            structure_plan,
+            tracker_commit_source,
+            workspace,
+            control,
+            plan_class;
+            ndrange = 1,
         )
+    end
+    site_tracker_receipts = map(reductions.site_trackers) do prepared
+        receipt = LocalMath.execute!(prepared.reconstruction)
+        record_receipt(:site_trackers, receipt)
+        _enqueue_localmath_failure_bridge!(
+            receipt, reductions.direct_gate,
+            workspace.status, state.mcs + 1, ProgramStageStructure
+        )
+        receipt
     end
     _enqueue_lifecycle_failure_stamp!(state, ProgramStageStructure)
     relationship_action_mask =
@@ -556,6 +591,7 @@ function enqueue_lifecycle_backend_index!(
     end
     last_planning_event = _run_lifecycle_status!(
         reductions.planning, length(control.candidate_status))
+    record_receipt(:planning, last_planning_event)
     _enqueue_lifecycle_failure_stamp!(state, ProgramStageState)
     for plan_class in effect_classes
         iszero(
@@ -580,5 +616,6 @@ function enqueue_lifecycle_backend_index!(
         request_index = request_index_event,
         emission = emission_event,
         selection = selection_event,
+        site_trackers = (site_tracker_snapshots..., site_tracker_receipts...),
     )
 end

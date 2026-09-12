@@ -352,7 +352,8 @@ function CompiledPottsProgram(
             ArgumentError("sequential programs cannot carry a checkerboard plan")
         )
     _validate_descriptor_state_domains(descriptor_plan, stage_plan)
-    _validate_stage_state_domains(stage_plan, descriptor_plan.state_layout, descriptor_plan.source_table, kind_count, medium_mask)
+    _validate_tracker_sources(tracker_plan, descriptor_plan, stage_plan, parameter_defaults, shape)
+    _validate_stage_state_domains(stage_plan, descriptor_plan.state_layout, descriptor_plan.source_table, kind_count, medium_mask, tracker_plan)
     ownership_targets = lifecycle_plan isa LifecycleExecutionPlan ?
         (ownership_change_handles..., (rule.handle for rule in lifecycle_plan.ownership_rules)...) :
         ownership_change_handles

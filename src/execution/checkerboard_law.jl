@@ -34,7 +34,7 @@ function _checkerboard_color_declaration(
         accepted, relationships, accepted.relationship_bank_fields,
         terminal_gate)
     tracker_groups = _checkerboard_tracker_groups(
-        accepted, tracker_plan, tracker_state, terminal_gate,
+        merge(accepted, (; ownership_scratch, state_scratch, history_clear_groups)), tracker_plan, tracker_state, terminal_gate,
         owner_capacity)
 
     gate_identity = LocalMath.IdentityRelation(gate_space)
@@ -288,9 +288,9 @@ function _checkerboard_color_declaration(
         LocalMath.LocalLaw(gate_stage(
             terminal_gate, :checkerboard_selection_terminal_gate)),
         relationship_laws...,
-        tracker_laws...,
         state_initialization_laws...,
         state_laws...,
+        tracker_laws...,
         report_initialization_law,
     )
     law = LocalMath.sequence(
@@ -527,7 +527,7 @@ function _checkerboard_tracker_group_bindings(groups::Tuple, state)
     return (
         source_bindings...,
         scratch_bindings...,
-        group.validation_bindings...,
+        group.bindings...,
         _checkerboard_tracker_group_bindings(Base.tail(groups), state)...,
     )
 end

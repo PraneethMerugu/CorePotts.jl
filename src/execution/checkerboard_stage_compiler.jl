@@ -37,13 +37,15 @@ struct _GatheredModelStageContext{P, H, V, Z, G}
     rng::G
 end
 
-struct _GatheredCellStageContext{P, H, V, Z, G}
+struct _GatheredCellStageContext{P, H, V, Z, G, D, Q}
     parameters::P
     handles::H
     values::V
     zeros::Z
     cell::Int32
     rng::G
+    tracker_keys::D
+    tracker_values::Q
 end
 
 @inline function apply_resource_operation(
@@ -59,6 +61,21 @@ end
 @inline _proposal_parameters(context::_GatheredCellStageContext) = context.parameters
 @inline function state_value(context::_GatheredCellStageContext, ::_ExecutableStateReference{Index}, slot) where {Index}
     return _gathered_stage_read_value(getfield(context.values, Index), Int32(slot), getfield(context.zeros, Index))
+end
+
+@inline function _cell_stage_tracker_value(context::_GatheredCellStageContext, key)
+    return _gathered_bounded_tracker_samples(key, context.tracker_keys, context.tracker_values)
+end
+@inline apply_resource_operation(
+    ::ResourceOperation{:cell_volume}, arguments,
+    context::_GatheredCellStageContext
+) = _cell_stage_tracker_value(context, Val(:cell_volume))
+@inline function qualified_tracker_operation_call(
+        ::Union{ResourceOperation{:cell_site_sum}, ResourceOperation{:cell_site_minimum}}, arguments::Tuple,
+        context::_GatheredCellStageContext, quantity::Val, source_handle::Int32
+    )
+    _, value = _gathered_tracker_slot(quantity, source_handle, context.tracker_keys, context.tracker_values)
+    return value
 end
 
 struct _GatheredRelationshipStageContext{P, H, V, Z, E, Q, U, M, T}
@@ -299,7 +316,7 @@ end
     return CartesianIndex(coordinates)
 end
 
-struct _CompiledSiteStageEvaluator{HasParameters, T, C, V, H, Z, S, B, O, R}
+struct _CompiledSiteStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z, S, B, O, R}
     condition::C
     value::V
     handles::H
@@ -325,7 +342,7 @@ struct _CompiledModelStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z}
     boundary::UInt16
 end
 
-struct _CompiledCellStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z, E}
+struct _CompiledCellStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z, E, D}
     condition::C
     value::V
     handles::H
@@ -334,6 +351,7 @@ struct _CompiledCellStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z, E}
     effect::E
     trajectory_key::NTuple{2, UInt64}
     boundary::UInt16
+    tracker_keys::D
 end
 
 @generated function _stage_read_prefix(reads, ::H) where {H <: Tuple}
@@ -375,9 +393,9 @@ end
     )
 end
 
-@inline function (evaluator::_CompiledSiteStageEvaluator{HasParameters, T})(
+@inline function (evaluator::_CompiledSiteStageEvaluator{HasParameters, Evaluation, T})(
         item::Int32, reads, parameters
-    ) where {HasParameters, T}
+    ) where {HasParameters, Evaluation, T}
     count = length(evaluator.handles)
     values = _stage_read_prefix(reads, evaluator.handles)
     ownership = getfield(reads, count + 1)
@@ -407,7 +425,7 @@ end
         condition, value, baseline, evaluator.source_handle,
         item, getfield(parameters, 1)
     )
-    return (value = LocalMath.UniqueValue(result.value), status = result.status)
+    return (value = LocalMath.UniqueValue(Evaluation(result.enabled, result.value)), status = result.status)
 end
 
 @inline function (evaluator::_CompiledModelStageEvaluator{HasParameters, Evaluation, T})(
@@ -456,7 +474,9 @@ _CompiledStageCommit(::E) where {E <: AbstractCompiledEffect} = _CompiledStageCo
         _scheduled_rng_context(
             T, evaluator.trajectory_key, getfield(parameters, 1), evaluator.boundary,
             CellEntity, UInt32(item), generation, getfield(parameters, 2)
-        )
+        ),
+        evaluator.tracker_keys,
+        _checkerboard_terminal_state_values(reads, Val(length(evaluator.tracker_keys)), Val(count + 2 + Int(HasParameters)))
     )
     baseline = state_value(context, _stage_state_reference(first(evaluator.handles), Val(1)), item)
     eligible = _cell_stage_eligible(evaluator.effect, kind, generation)
@@ -467,17 +487,7 @@ _CompiledStageCommit(::E) where {E <: AbstractCompiledEffect} = _CompiledStageCo
 end
 
 @inline function (::_CompiledStageCommit{E})(item::Int32, reads, parameters) where {
-        E <: Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect},
-    }
-    return (
-        value = LocalMath.UniqueValue(
-            something(@inbounds reads[1][1].value)
-        ),
-    )
-end
-
-@inline function (::_CompiledStageCommit{E})(item::Int32, reads, parameters) where {
-        E <: Union{ModelAssignmentEffect, CellAssignmentEffect},
+        E <: Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ModelAssignmentEffect, CellAssignmentEffect},
     }
     evaluation = something(@inbounds reads[1][1].value)
     return (value = LocalMath.ConditionalUniqueValue(evaluation.value, evaluation.enabled),)
@@ -925,6 +935,14 @@ function _stage_parameter_count(descriptor::CompiledStageDescriptor)
     return count[]
 end
 
+function _stage_tracker_descriptors(descriptor, tracker_plan, source)
+    keys = Any[]
+    _record_tracker_requirements!(keys, descriptor.condition.expression; include_owner_counts = true)
+    _record_tracker_requirements!(keys, descriptor.value.expression; include_owner_counts = true)
+    isempty(keys) && return ()
+    return _tracker_requirement_descriptors(keys, tracker_plan; source)
+end
+
 function _stage_submission_parameters(; minimum_mcs::Int64 = Int64(1))
     return (
         LocalMath.Parameter(:mcs, Int64; bounds = (minimum_mcs, typemax(Int64))),
@@ -999,6 +1017,12 @@ function _compile_stage_expression(
         if operation isa BoundCellStateValueOperation
             length(expression.arguments) == 1 && only(expression.arguments) isa StateExpression ||
                 throw(ArgumentError("cell-stage source $(repr(source)) requires exactly one declared state handle for bound-cell access"))
+        end
+        if operation isa QualifiedTrackerOperation
+            quantity = only(typeof(operation.quantity).parameters)
+            return _GatheredQualifiedTrackerCall{quantity, typeof(operation.operation), typeof(arguments)}(
+                operation.operation, arguments, operation.source_handle
+            )
         end
         return _ExecutableContextualCall(operation, arguments)
     end
@@ -1121,7 +1145,7 @@ function _compile_site_assignment_law(
         source_table, shape, periodic, medium_kind,
         resources, ownership, cell_kinds, status, gate, state_layout, stage_plan,
         trajectory_key::NTuple{2, UInt64}, boundary::UInt16,
-        ::Type{T}
+        ::Type{T}; publication_result = nothing
     ) where {T}
     handles = _stage_descriptor_handles(descriptor)
     target = first(handles)
@@ -1157,7 +1181,7 @@ function _compile_site_assignment_law(
     parameter_count = _stage_parameter_count(descriptor)
     parameter_field = iszero(parameter_count) ? nothing :
         LocalMath.Field(lattice, NTuple{parameter_count, T})
-    scratch = LocalMath.Field(lattice, _stage_handle_element_type(target, T))
+    scratch = LocalMath.Field(lattice, StageEvaluation{_stage_handle_element_type(target, T)})
     status_field = LocalMath.Field(status_space, ProgramStatus)
     initial_gate = LocalMath.Field(gate.space, Bool)
     refreshed_gate = LocalMath.Field(gate.space, Bool)
@@ -1167,7 +1191,7 @@ function _compile_site_assignment_law(
     contact_offsets, contact_starts, contact_counts =
         _stage_contact_tables(resources, dimensions)
     evaluator = _CompiledSiteStageEvaluator{
-        !iszero(parameter_count), T, typeof(condition), typeof(value),
+        !iszero(parameter_count), eltype(scratch), T, typeof(condition), typeof(value),
         typeof(handles), typeof(
             map(
                 handle -> _state_value_zero(
@@ -1233,7 +1257,7 @@ function _compile_site_assignment_law(
                         first(fields), identity, LocalMath.PublicationValue(:value)
                     ),
                 ),
-                LocalMath.Unique(eltype(first(fields)))
+                LocalMath.Unique(eltype(first(fields)); coverage = LocalMath.PartialCoverage(), onempty = LocalMath.PreserveEmpty())
             ),
         ),
         LocalMath.Evaluator(_CompiledStageCommit(descriptor.effect)),
@@ -1260,6 +1284,13 @@ function _compile_site_assignment_law(
         ),
         LocalMath.LocalLaw(commit)
     )
+    if publication_result !== nothing
+        publication = LocalMath.sequence(
+            publication, LocalMath.LocalLaw(
+                _stage_site_publication_result(scratch, publication_result, refreshed_gate)
+            )
+        )
+    end
     return (;
         evaluation, publication, fields, handles, parameter_field, scratch,
         ownership_field, cell_kind_field, status_field,
@@ -1269,7 +1300,7 @@ end
 
 function _compile_identity_assignment_law(
         descriptor::CompiledStageDescriptor,
-        source_table, domain, gate, state_layout, stage_plan,
+        source_table, domain, gate, state_layout, stage_plan, tracker_plan, tracker_state,
         trajectory_key::NTuple{2, UInt64}, boundary::UInt16, ::Type{T}
     ) where {T}
     handles = _stage_descriptor_handles(descriptor)
@@ -1299,6 +1330,11 @@ function _compile_identity_assignment_law(
         status_field, domain, Int32(prod(size(domain)))
     )
     zeros = map(handle -> _state_value_zero(_stage_handle_element_type(handle, T)), handles)
+    tracker_descriptors = _stage_tracker_descriptors(descriptor, tracker_plan, source)
+    tracker_keys = map(tracker -> _compile_tracker_key(tracker_quantity(tracker)), tracker_descriptors)
+    tracker_fields = map(tracker_descriptors) do tracker
+        LocalMath.Field(domain, eltype(tracker_values(tracker_plan, tracker_state, tracker_quantity(tracker))))
+    end
     evaluator = if descriptor.effect isa ModelAssignmentEffect
         _CompiledModelStageEvaluator{
             !iszero(parameter_count), eltype(scratch), T, typeof(condition), typeof(value),
@@ -1309,9 +1345,9 @@ function _compile_identity_assignment_law(
             descriptor.source_handle, trajectory_key, boundary
         )
     else
-        _CompiledCellStageEvaluator{!iszero(parameter_count), eltype(scratch), T, typeof(condition), typeof(value), typeof(handles), typeof(zeros), typeof(descriptor.effect)}(
+        _CompiledCellStageEvaluator{!iszero(parameter_count), eltype(scratch), T, typeof(condition), typeof(value), typeof(handles), typeof(zeros), typeof(descriptor.effect), typeof(tracker_keys)}(
             condition, value, handles, zeros, descriptor.source_handle, descriptor.effect,
-            trajectory_key, boundary,
+            trajectory_key, boundary, tracker_keys,
         )
     end
     cell_kind_field = descriptor.effect isa CellAssignmentEffect ? LocalMath.Field(domain, Int16) : nothing
@@ -1326,7 +1362,10 @@ function _compile_identity_assignment_law(
                 required = true
             ),
         )
-    reads = merge(_stage_access_tuple(fields, identity, model_relation), identity_reads, parameter_reads)
+    tracker_reads = NamedTuple{ntuple(index -> Symbol(:tracker_, index), length(tracker_fields))}(
+        map(field -> LocalMath.Access(field, identity; required = true), tracker_fields)
+    )
+    reads = merge(_stage_access_tuple(fields, identity, model_relation), identity_reads, parameter_reads, tracker_reads)
     submission_parameters = _stage_submission_parameters()
     evaluate = LocalMath.Stage(
         domain, reads,
@@ -1390,29 +1429,31 @@ function _compile_identity_assignment_law(
     )
     return (;
         domain, evaluation, publication, fields, handles, parameter_field, scratch, status_field,
-        cell_kind_field, cell_generation_field, model_relation,
+        cell_kind_field, cell_generation_field, model_relation, tracker_descriptors, tracker_fields,
         initial_gate, refreshed_gate,
     )
 end
 
-struct _CompiledHistoryShiftAppend
+struct _CompiledHistoryShiftAppend{RecordPublication}
     cadence::CompletedMCSCadence
     cadence_value::Int64
 end
 
-@inline function (operation::_CompiledHistoryShiftAppend)(
+@inline function (operation::_CompiledHistoryShiftAppend{RecordPublication})(
         item::Int32, reads, parameters
-    )
+    ) where {RecordPublication}
     shifted = @inbounds reads[1][1]
     appended = @inbounds reads[2][1]
     value = shifted.present ? something(shifted.value) :
         something(appended.value)
     completed_mcs = getfield(parameters, 1)
-    if !_completed_mcs_due(operation.cadence, operation.cadence_value, completed_mcs) ||
-            (completed_mcs == 0 && shifted.present)
+    published = _completed_mcs_due(operation.cadence, operation.cadence_value, completed_mcs) &&
+        !(completed_mcs == 0 && shifted.present)
+    if !published
         value = something(@inbounds reads[3][1].value)
     end
-    return (value = LocalMath.UniqueValue(value),)
+    result = (value = LocalMath.UniqueValue(value),)
+    return RecordPublication ? merge(result, (published = LocalMath.RoutedContribution(Int32(1), published, true),)) : result
 end
 
 function _history_append_endpoints(
@@ -1446,7 +1487,7 @@ end
 function _compile_history_law(
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
-        }, gate, ::Type{T}
+        }, gate, ::Type{T}; publication_result = nothing
     ) where {C, V, E <: ShiftAppendEffect, T}
     effect = descriptor.effect
     target_shape = Tuple(Int.(handle_shape(effect.target)))
@@ -1505,9 +1546,10 @@ function _compile_history_law(
                 ),
                 LocalMath.Unique(eltype(target))
             ),
+            (publication_result === nothing ? () : (_stage_publication_result_output(target_space, publication_result),))...,
         ),
         LocalMath.Evaluator(
-            _CompiledHistoryShiftAppend(effect.cadence, effect.cadence_value),
+            _CompiledHistoryShiftAppend{publication_result !== nothing}(effect.cadence, effect.cadence_value),
             _stage_submission_parameters(; minimum_mcs = Int64(0))
         ),
         LocalMath.Control(; gate = initial_gate),
@@ -1955,6 +1997,9 @@ function _identity_stage_bindings(
     bindings = (
         _stage_model_read_bindings(declaration.model_relation, bank, size(declaration.domain))...,
         _stage_state_bindings(declaration.fields, declaration.handles, bank)...,
+        map(declaration.tracker_fields, declaration.tracker_descriptors) do field, tracker
+            field => tracker_values(bank.program.tracker_plan, bank.trackers, tracker_quantity(tracker))
+        end...,
         (
             declaration.cell_kind_field === nothing ? () : (
                     declaration.cell_kind_field => bank.cell_kinds,
@@ -1975,7 +2020,8 @@ function _identity_stage_bindings(
 end
 
 function _prepare_assignment_publication(
-        declaration, evaluation, bank, gate, backend, lease_capacity, effect
+        declaration, evaluation, bank, gate, backend, lease_capacity, effect;
+        publication_bindings = ()
     )
     # The evaluation owns scratch. Publication binds that exact storage, so
     # the queue dependency carries the evaluated value without another copy.
@@ -1990,13 +2036,13 @@ function _prepare_assignment_publication(
     )
     return LocalMath.prepare(
         declaration.publication,
-        bindings...;
+        bindings..., publication_bindings...;
         backend, lease_capacity, dependency_arity = 1
     )
 end
 
 function _prepare_history_stage_declaration(
-        declaration, bank, gate, backend, lease_capacity
+        declaration, bank, gate, backend, lease_capacity; publication_bindings = ()
     )
     bindings = (
         declaration.target => state_block(
@@ -2010,7 +2056,7 @@ function _prepare_history_stage_declaration(
         declaration.external_gate => gate,
     )
     return LocalMath.prepare(
-        declaration.law, bindings...;
+        declaration.law, bindings..., publication_bindings...;
         backend, lease_capacity, dependency_arity = 1
     )
 end
@@ -2114,6 +2160,135 @@ function _stage_boundary_entry(prepared, source_handle, effect; repetitions = 1)
     return (; prepared, repetitions, source_handle, effect)
 end
 
+struct _StagePublicationReset end
+@inline (::_StagePublicationReset)(item::Int32, reads, parameters) =
+    (value = LocalMath.UniqueValue(false),)
+
+struct _StageSitePublicationResult end
+@inline function (::_StageSitePublicationResult)(item::Int32, reads, parameters)
+    evaluation = something(@inbounds reads[1][1].value)
+    return (published = LocalMath.RoutedContribution(Int32(1), evaluation.enabled, true),)
+end
+
+@inline _stage_publication_or(left::Bool, right::Bool) = left | right
+function _stage_publication_result_output(domain, output)
+    route = LocalMath.RuntimeRelation(domain => output.space; degree_bound = 1, key_type = Int32)
+    return LocalMath.Publication(
+        (LocalMath.FieldPublication(output, route, LocalMath.PublicationValue(:published)),),
+        LocalMath.Reduce(
+            Bool, _stage_publication_or; maximum = 1,
+            seed = LocalMath.ExistingSeed(), order = LocalMath.CanonicalLeftFold()
+        )
+    )
+end
+
+function _stage_site_publication_result(scratch, output, gate)
+    domain = scratch.space
+    return LocalMath.Stage(
+        domain,
+        (evaluation = LocalMath.Access(scratch, LocalMath.IdentityRelation(domain)),),
+        (_stage_publication_result_output(domain, output),),
+        LocalMath.Evaluator(_StageSitePublicationResult()), LocalMath.Control(; gate),
+        LocalMath.SourceOrigin(@__FILE__, @__LINE__; label = :stage_source_publication)
+    )
+end
+
+function _prepare_stage_publication_result(descriptor, backend, lease_capacity)
+    output = LocalMath.Field(LocalMath.Space(_CheckerboardStageGateDomain, 1), Bool)
+    identity = LocalMath.IdentityRelation(output.space)
+    stage = LocalMath.Stage(
+        output.space, NamedTuple(),
+        (
+            LocalMath.Publication(
+                (LocalMath.FieldPublication(output, identity, LocalMath.PublicationValue(:value)),),
+                LocalMath.Unique(Bool)
+            ),
+        ),
+        LocalMath.Evaluator(_StagePublicationReset(), _stage_submission_parameters()),
+        LocalMath.Control(), LocalMath.SourceOrigin(@__FILE__, @__LINE__; label = :stage_source_publication_reset)
+    )
+    prepared = ntuple(2) do _
+        LocalMath.prepare(
+            LocalMath.LocalLaw(stage), output => LocalMath.Allocate(false);
+            backend, lease_capacity, dependency_arity = 1
+        )
+    end
+    return (; descriptor, output, prepared)
+end
+
+_stage_publication_bindings(::Nothing, bank_index) = ()
+_stage_publication_bindings(result, bank_index) =
+    (result.output => LocalMath.storage(result.prepared[bank_index], result.output),)
+
+struct _StageSourceRefreshGate end
+@inline _any_stage_publication(::Tuple{}) = false
+@inline _any_stage_publication(reads::Tuple) =
+    something(@inbounds first(reads)[1].value) | _any_stage_publication(Base.tail(reads))
+@inline function (::_StageSourceRefreshGate)(item::Int32, reads, parameters)
+    open = something(@inbounds reads[1][1].value)
+    return (value = LocalMath.UniqueValue(open && _any_stage_publication(Base.tail(reads))),)
+end
+
+function _prepare_stage_source_refresh(descriptor, results, banks, gates, backend, lease_capacity)
+    domain = first(results).output.space
+    external = LocalMath.Field(domain, Bool)
+    gate = LocalMath.Field(domain, Bool)
+    identity = LocalMath.IdentityRelation(domain)
+    result_fields = map(result -> result.output, results)
+    # Each publication owns a distinct singleton space, even when two
+    # descriptors publish the same source. Relate those identities explicitly.
+    result_relations = map(field -> LocalMath.FixedRelation(domain => field.space; degree = 1), result_fields)
+    reads = merge(
+        (open = LocalMath.Access(external, identity),),
+        NamedTuple{ntuple(index -> Symbol(:published_, index), length(results))}(
+            map((field, relation) -> LocalMath.Access(field, relation), result_fields, result_relations)
+        )
+    )
+    admission = LocalMath.Stage(
+        domain, reads,
+        (
+            LocalMath.Publication(
+                (LocalMath.FieldPublication(gate, identity, LocalMath.PublicationValue(:value)),),
+                LocalMath.Unique(Bool)
+            ),
+        ),
+        LocalMath.Evaluator(_StageSourceRefreshGate(), _stage_submission_parameters()),
+        LocalMath.Control(), LocalMath.SourceOrigin(@__FILE__, @__LINE__; label = :stage_source_refresh_gate)
+    )
+    first_bank = first(banks)
+    declaration = _site_tracker_rebuild_declaration(
+        descriptor, first_bank.program.shape,
+        length(first_bank.cell_kinds), eltype(first_bank.parameters);
+        submission_parameters = _stage_submission_parameters(), gate
+    )
+    law = LocalMath.sequence(LocalMath.LocalLaw(admission), declaration.law)
+    return map((1, 2)) do bank_index
+        bank = banks[bank_index]
+        parameters = declaration.parameter_field === nothing ? () :
+            (
+                declaration.parameter_field => _checkerboard_parameter_view(
+                    bank.parameters,
+                    Val(declaration.parameter_count), Tuple(bank.program.shape)
+                ),
+            )
+        LocalMath.prepare(
+            law,
+            external => gates[bank_index], gate => LocalMath.Allocate(false),
+            (relation => LocalMath.Allocate(ones(Int32, 1, 1)) for relation in result_relations)...,
+            (binding for result in results for binding in _stage_publication_bindings(result, bank_index))...,
+            declaration.ownership => bank.ownership,
+            (
+                field => state_block(bank.descriptor_state, handle).values
+                    for (field, handle) in zip(declaration.fields, declaration.handles)
+            )...,
+            parameters...,
+            declaration.output => tracker_values(bank.program.tracker_plan, bank.trackers, descriptor.quantity),
+            declaration.validation_bindings...;
+            backend, lease_capacity, dependency_arity = 1
+        )
+    end
+end
+
 function _compile_checkerboard_stage_boundary(
         workspace, groups::Tuple, backend, queue_mcs_capacity::Integer, state_layout, stage_plan,
         boundary::UInt16
@@ -2128,6 +2303,12 @@ function _compile_checkerboard_stage_boundary(
     shape = Tuple(state.program.shape)
     periodic = Tuple(state.program.periodic)
     resources = state.program.domain_resources
+    source_trackers = filter(tracker -> tracker isa _SiteExpressionTracker, tracker_instances(state.program.tracker_plan))
+    publication_results = map(descriptors) do descriptor
+        descriptor.effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ShiftAppendEffect} || return nothing
+        any(tracker -> _site_tracker_reads_write(tracker, descriptor.effect.target, state_layout, stage_plan), source_trackers) || return nothing
+        return _prepare_stage_publication_result(descriptor, backend, queue_mcs_capacity)
+    end
     is_relationship(descriptor) = descriptor.effect isa Union{
         RelationshipRemoveEffect, RelationshipRetuneEffect,
     }
@@ -2136,7 +2317,9 @@ function _compile_checkerboard_stage_boundary(
     publications = ()
     relationship_publications = ()
     relationships_prepared = false
-    for descriptor in descriptors
+    for (descriptor_index, descriptor) in enumerate(descriptors)
+        publication_result = publication_results[descriptor_index]
+        result_field = publication_result === nothing ? nothing : publication_result.output
         if is_relationship(descriptor)
             relationships_prepared && continue
             relationships_prepared = true
@@ -2185,7 +2368,8 @@ function _compile_checkerboard_stage_boundary(
                     descriptor, workspace.source_table, shape, periodic,
                     state.program.medium_kind, resources, state.ownership,
                     state.cell_kinds, state.program_status, external_gate,
-                    state_layout, stage_plan, trajectory_key, boundary, T
+                    state_layout, stage_plan, trajectory_key, boundary, T;
+                    publication_result = result_field
                 ), (; external_gate)
             )
         elseif effect isa Union{ModelAssignmentEffect, CellAssignmentEffect}
@@ -2195,11 +2379,12 @@ function _compile_checkerboard_stage_boundary(
             merge(
                 _compile_identity_assignment_law(
                     descriptor, workspace.source_table, domain,
-                    external_gate, state_layout, stage_plan, trajectory_key, boundary, T
+                    external_gate, state_layout, stage_plan, state.program.tracker_plan, state.trackers,
+                    trajectory_key, boundary, T
                 ), (; external_gate)
             )
         elseif effect isa ShiftAppendEffect
-            merge(_compile_history_law(descriptor, external_gate, T), (; external_gate))
+            merge(_compile_history_law(descriptor, external_gate, T; publication_result = result_field), (; external_gate))
         else
             throw(
                 ArgumentError(
@@ -2209,9 +2394,11 @@ function _compile_checkerboard_stage_boundary(
             )
         end
         if effect isa ShiftAppendEffect
-            prepared = map(banks, gates) do bank, gate
+            prepared = map((1, 2)) do bank_index
+                bank, gate = banks[bank_index], gates[bank_index]
                 _prepare_history_stage_declaration(
-                    declaration, bank, gate, backend, queue_mcs_capacity
+                    declaration, bank, gate, backend, queue_mcs_capacity;
+                    publication_bindings = _stage_publication_bindings(publication_result, bank_index)
                 )
             end
             publications = (
@@ -2228,10 +2415,12 @@ function _compile_checkerboard_stage_boundary(
             lease_capacity = _checked_checkerboard_capacity_mul(
                 queue_mcs_capacity, repetitions, :stage_boundary_lease_capacity
             )
-            prepared = map(banks, gates) do bank, gate
+            prepared = map((1, 2)) do bank_index
+                bank, gate = banks[bank_index], gates[bank_index]
                 LocalMath.prepare(
                     LocalMath.sequence(declaration.evaluation, declaration.publication),
                     bindings_for(declaration, bank, gate)...,
+                    _stage_publication_bindings(publication_result, bank_index)...,
                     declaration.refreshed_gate => LocalMath.Allocate(false);
                     backend, lease_capacity, dependency_arity = 1
                 )
@@ -2254,9 +2443,11 @@ function _compile_checkerboard_stage_boundary(
                 prepared, descriptor.source_handle, :StateEvaluation
             ),
         )
-        published = map(prepared, banks, gates) do evaluation, bank, gate
+        published = map((1, 2)) do bank_index
+            evaluation, bank, gate = prepared[bank_index], banks[bank_index], gates[bank_index]
             _prepare_assignment_publication(
-                declaration, evaluation, bank, gate, backend, queue_mcs_capacity, effect
+                declaration, evaluation, bank, gate, backend, queue_mcs_capacity, effect;
+                publication_bindings = _stage_publication_bindings(publication_result, bank_index)
             )
         end
         publications = (
@@ -2267,7 +2458,28 @@ function _compile_checkerboard_stage_boundary(
     end
     # Ordinary right-hand sides observe boundary-entry state. Ordered substeps
     # and history then execute in descriptor order, before relationship commit.
-    return (evaluations..., publications..., relationship_publications...)
+    results = filter(!isnothing, publication_results)
+    resets = map(results) do result
+        _stage_boundary_entry(result.prepared, result.descriptor.source_handle, :SourcePublicationReset)
+    end
+    refreshes = ()
+    for tracker in source_trackers
+        dependencies = filter(
+            result -> _site_tracker_reads_write(
+                tracker, result.descriptor.effect.target,
+                state_layout, stage_plan
+            ), results
+        )
+        isempty(dependencies) && continue
+        prepared = _prepare_stage_source_refresh(tracker, dependencies, banks, gates, backend, queue_mcs_capacity)
+        refreshes = (
+            refreshes..., _stage_boundary_entry(
+                prepared,
+                first(dependencies).descriptor.source_handle, :SourceTrackerRefresh
+            ),
+        )
+    end
+    return (resets..., evaluations..., publications..., relationship_publications..., refreshes...)
 end
 
 function _prepare_checkerboard_stage_boundaries(
