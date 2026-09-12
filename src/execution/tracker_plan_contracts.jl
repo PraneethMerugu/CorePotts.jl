@@ -302,6 +302,16 @@ end
 
 Adapt.@adapt_structure _DenseScalarTrackerKernelGroup
 
+"""Bounded lifecycle update family with value-level active member count."""
+struct _LifecycleDenseScalarUpdateGroup{
+        D <: Tuple,
+    } <: AbstractTrackerPlanEntry
+    active_count::Int32
+    descriptors::D
+end
+
+Adapt.@adapt_structure _LifecycleDenseScalarUpdateGroup
+
 function DenseScalarTrackerGroup(descriptors::A) where {
         D <: AbstractTrackerDescriptor,
         A <: AbstractVector{D},
@@ -617,6 +627,12 @@ struct TrackerKernelPlan{D <: Tuple} <: AbstractTrackerPlan
     descriptors::D
 end
 
+"""Host-prepared tracker entries admitted to incremental accepted updates."""
+struct _AcceptedTrackerUpdatePlan{I <: Tuple, D <: Tuple} <: AbstractTrackerPlan
+    state_indices::I
+    descriptors::D
+end
+
 tracker_kernel_plan(plan::TrackerExecutionPlan) =
     TrackerKernelPlan(plan.descriptors)
 tracker_kernel_plan(plan::TrackerKernelPlan) = plan
@@ -626,9 +642,48 @@ _tracker_kernel_entry(group::DenseScalarTrackerGroup) =
     _DenseScalarTrackerKernelGroup(
         group.quantity, Tuple(group.descriptors), Tuple(group.source_handles)
     )
-function _lifecycle_tracker_kernel_plan(plan::AbstractTrackerPlan)
-    return TrackerKernelPlan(map(_tracker_kernel_entry, plan.descriptors))
+
+function _lifecycle_tracker_kernel_entry(group::DenseScalarTrackerGroup)
+    active_count = length(group.descriptors)
+    capacity = 16
+    while capacity < active_count
+        capacity *= 2
+    end
+    descriptors = ntuple(
+        index -> @inbounds(group.descriptors[min(index, active_count)]),
+        capacity,
+    )
+    return _LifecycleDenseScalarUpdateGroup(
+        Int32(active_count), descriptors,
+    )
 end
+_lifecycle_tracker_kernel_entry(descriptor) = _tracker_kernel_entry(descriptor)
+
+_tracker_accepts_incremental_update(descriptor::AbstractTrackerDescriptor) =
+    tracker_contract(descriptor).update_bound isa OldNewOwnerUpdateBound
+_tracker_accepts_incremental_update(group::DenseScalarTrackerGroup) =
+    _tracker_accepts_incremental_update(first(group.descriptors))
+_tracker_accepts_incremental_update(group::_DenseScalarTrackerKernelGroup) =
+    _tracker_accepts_incremental_update(first(group.descriptors))
+_tracker_accepts_incremental_update(group::_LifecycleDenseScalarUpdateGroup) =
+    _tracker_accepts_incremental_update(first(group.descriptors))
+
+function _lifecycle_tracker_kernel_plan(plan::AbstractTrackerPlan)
+    indices = Tuple(filter(
+        index -> _tracker_accepts_incremental_update(
+            plan.descriptors[index]
+        ),
+        eachindex(plan.descriptors),
+    ))
+    descriptors = map(
+        index -> _lifecycle_tracker_kernel_entry(plan.descriptors[index]), indices
+    )
+    return _AcceptedTrackerUpdatePlan(
+        Tuple(Int32(index) for index in indices), descriptors
+    )
+end
+
+Adapt.@adapt_structure _AcceptedTrackerUpdatePlan
 
 function adapt_tracker_kernel_plan(to, plan::AbstractTrackerPlan, backend)
     descriptors = map(plan.descriptors) do descriptor

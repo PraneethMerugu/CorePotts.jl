@@ -262,10 +262,18 @@ end
         old_owner,
         new_owner,
         delta_function,
-    ) where {G <: Union{DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup}}
+    ) where {
+        G <: Union{
+            DenseScalarTrackerGroup,
+            _DenseScalarTrackerKernelGroup,
+            _LifecycleDenseScalarUpdateGroup,
+        },
+    }
     group = first(descriptors)
     group_values = first(values)
-    for index in eachindex(group.descriptors)
+    count = group isa _LifecycleDenseScalarUpdateGroup ?
+        Int(group.active_count) : length(group.descriptors)
+    for index in 1:count
         descriptor = @inbounds group.descriptors[index]
         _tracker_update_bound(descriptor, source) isa OldNewOwnerUpdateBound || continue
         delta = delta_function(
@@ -329,10 +337,18 @@ end
         old_owner,
         new_owner,
         delta_function,
-    ) where {G <: Union{DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup}}
+    ) where {
+        G <: Union{
+            DenseScalarTrackerGroup,
+            _DenseScalarTrackerKernelGroup,
+            _LifecycleDenseScalarUpdateGroup,
+        },
+    }
     group = first(descriptors)
     group_values = first(values)
-    for index in eachindex(group.descriptors)
+    count = group isa _LifecycleDenseScalarUpdateGroup ?
+        Int(group.active_count) : length(group.descriptors)
+    for index in 1:count
         descriptor = @inbounds group.descriptors[index]
         _tracker_update_bound(descriptor, source) isa OldNewOwnerUpdateBound || continue
         delta = delta_function(
@@ -403,6 +419,15 @@ end
 end
 @inline function _finish_tracker_source_change!(group::_DenseScalarTrackerKernelGroup, values, source, target, old_owner, owner, cell_kinds)
     for index in eachindex(group.descriptors)
+        _finish_tracker_source_change!(getfield(group.descriptors, index), view(values, :, index), source, target, old_owner, owner, cell_kinds)
+    end
+    return nothing
+end
+@inline function _finish_tracker_source_change!(
+        group::_LifecycleDenseScalarUpdateGroup,
+        values, source, target, old_owner, owner, cell_kinds,
+    )
+    for index in 1:Int(group.active_count)
         _finish_tracker_source_change!(getfield(group.descriptors, index), view(values, :, index), source, target, old_owner, owner, cell_kinds)
     end
     return nothing

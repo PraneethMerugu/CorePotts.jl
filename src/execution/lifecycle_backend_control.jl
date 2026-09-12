@@ -84,10 +84,11 @@ struct _LifecycleStructureProgram{N, T}
     tracker_plan::T
 end
 
-struct _LifecycleStructureRuntime{P, K, G}
+struct _LifecycleStructureRuntime{P, K, G, T}
     program::P
     cell_kinds::K
     cell_generations::G
+    trackers::T
 end
 
 struct _LifecycleStructurePlan{D, O}
@@ -99,17 +100,21 @@ Adapt.@adapt_structure _LifecycleStructureProgram
 Adapt.@adapt_structure _LifecycleStructureRuntime
 Adapt.@adapt_structure _LifecycleStructurePlan
 
-function _lifecycle_structure_launch_payload(state, tracker_source)
+function _lifecycle_structure_launch_payload(state, workspace, tracker_source)
     lifecycle = state.program.lifecycle_plan
+    tracker_plan, trackers = _bind_lifecycle_tracker_updates(
+        state.program.lifecycle_tracker_plan,
+        workspace.staged_trackers,
+        tracker_source,
+    )
     runtime = _LifecycleStructureRuntime(
         _LifecycleStructureProgram(
             state.program.shape,
-            _bind_lifecycle_tracker_plan(
-                state.program.lifecycle_tracker_plan, tracker_source
-            ),
+            tracker_plan,
         ),
         state.cell_kinds,
         state.cell_generations,
+        trackers,
     )
     plan = _LifecycleStructurePlan(
         lifecycle.descriptors,

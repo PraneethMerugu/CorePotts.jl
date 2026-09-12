@@ -27,6 +27,16 @@ lifecycle selection, rollback, and bank authorization. Lifecycle selection is
 therefore reported as a Core KernelAbstractions operation followed by a genuine
 LocalMath compacted-request publication, rather than as one LocalMath law.
 
+Lifecycle preparation selects the tracker entries whose declared update bound
+admits incremental old/new-owner maintenance and binds them into a compact
+accepted-update recipe. Full-lattice reconstruction remains with its existing
+post-structure LocalMath law. The owner-change kernel receives a narrow staged
+state view rather than the complete lifecycle workspace. Dense scalar recipe
+membership is value-level through its bounded capacity class, so adding an
+equivalent maintained quantity does not create a new kernel type solely because
+the member count changed. CPU and device execution retain the same tracker and
+transaction semantics.
+
 ## Settled input publication
 
 The public `update_program_inputs!` entrypoint in

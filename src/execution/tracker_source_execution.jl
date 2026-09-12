@@ -228,12 +228,29 @@ function _bind_lifecycle_tracker(
         group.source_handles,
     )
 end
+function _bind_lifecycle_tracker(
+        group::_LifecycleDenseScalarUpdateGroup, source,
+    )
+    return _LifecycleDenseScalarUpdateGroup(
+        group.active_count,
+        map(
+            descriptor -> _bind_lifecycle_tracker(descriptor, source),
+            group.descriptors,
+        ),
+    )
+end
 
-function _bind_lifecycle_tracker_plan(plan::AbstractTrackerPlan, source)
-    return TrackerKernelPlan(map(
+function _bind_lifecycle_tracker_updates(
+        plan::_AcceptedTrackerUpdatePlan, state::TrackerState, source,
+    )
+    descriptors = map(
         descriptor -> _bind_lifecycle_tracker(descriptor, source),
         plan.descriptors,
-    ))
+    )
+    values = map(
+        index -> getfield(state.values, Int(index)), plan.state_indices
+    )
+    return TrackerKernelPlan(descriptors), TrackerState(values)
 end
 
 @inline _lifecycle_tracker_entry_updates_valid(
@@ -268,10 +285,15 @@ end
 end
 
 @inline function _lifecycle_tracker_entry_update_valid(
-        group::_DenseScalarTrackerKernelGroup,
+        group::Union{
+            _DenseScalarTrackerKernelGroup,
+            _LifecycleDenseScalarUpdateGroup,
+        },
         values, target, old_owner,
     )
-    for column in eachindex(group.descriptors)
+    count = group isa _LifecycleDenseScalarUpdateGroup ?
+        Int(group.active_count) : length(group.descriptors)
+    for column in 1:count
         _lifecycle_tracker_entry_update_valid(
             getfield(group.descriptors, column), values, column,
             target, old_owner,
@@ -329,10 +351,15 @@ end
 end
 
 @inline function _lifecycle_tracker_completed_update_valid(
-        group::_DenseScalarTrackerKernelGroup,
+        group::Union{
+            _DenseScalarTrackerKernelGroup,
+            _LifecycleDenseScalarUpdateGroup,
+        },
         values, target, owner,
     )
-    for column in eachindex(group.descriptors)
+    count = group isa _LifecycleDenseScalarUpdateGroup ?
+        Int(group.active_count) : length(group.descriptors)
+    for column in 1:count
         _lifecycle_tracker_completed_update_valid(
             getfield(group.descriptors, column), values, column,
             target, owner,
