@@ -40,7 +40,9 @@ The principal source owners are:
   owner-change transaction over its narrow ownership, cell-kind, tracker,
   descriptor-state, and status view. The function signature exposes the state
   required by this semantic operation instead of accepting the complete
-  lifecycle workspace;
+  lifecycle workspace. `test_allocation_contracts.jl` statically checks this
+  exact prepared CPU signature and its bound-contribution control, then verifies
+  zero observed heap bytes on separately constructed warmed calls;
 - `checkerboard_law.jl`: composition, storage binding, and preparation of the
   ordered LocalMath laws;
 - `checkerboard_queue.jl` and `checkerboard_runtime.jl`: submission ordering,

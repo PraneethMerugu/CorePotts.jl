@@ -37,6 +37,14 @@ equivalent maintained quantity does not create a new kernel type solely because
 the member count changed. CPU and device execution retain the same tracker and
 transaction semantics.
 
+`test_allocation_contracts.jl` checks the exact prepared host owner-change
+signature and an unchanged bound site-contribution leaf with AllocCheck, then
+executes separately constructed, warmed instances and requires zero observed
+heap bytes. Fixture construction, first compilation, checkpoint materialization,
+capacity changes, backend launch and transfers are different boundaries and are
+not covered by that zero-allocation guarantee. Device kernels remain qualified
+by their actual backend tests rather than inferred from the host check.
+
 ## Settled input publication
 
 The public `update_program_inputs!` entrypoint in
