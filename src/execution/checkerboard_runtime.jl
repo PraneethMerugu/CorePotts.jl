@@ -324,7 +324,8 @@ function _recover_checkerboard_failure!(
         )
         ordered_failure === nothing || throw(ordered_failure)
     catch error
-        error isa AbstractLifecycleFailure && rethrow()
+        (error isa AbstractLifecycleFailure ||
+            _is_receipt_owner_failure(error)) && rethrow()
         throw(
             LifecycleBackendFailure(
                 error, first_possible_mcs, last_possible_mcs

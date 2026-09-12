@@ -526,6 +526,10 @@ function settle_program!(
     )
 end
 
+@inline _is_receipt_owner_failure(error) =
+    error isa LocalMath.LocalMathValidationError &&
+    error.contract === :receipt_owner
+
 function _recover_checkerboard_program_step!(runtime; prefix_submitted = nothing)
     graph = runtime.engine_workspace
     workspace = graph.core
@@ -537,7 +541,7 @@ function _recover_checkerboard_program_step!(runtime; prefix_submitted = nothing
         # settled numerical failure. Neither a foreign task nor a pending
         # receipt establishes permission to discard the journal or roll back.
         error isa LocalMath.LocalMathValidationError || rethrow()
-        error.contract === :receipt_owner && rethrow()
+        _is_receipt_owner_failure(error) && rethrow()
         any(LocalMath.ispending, _checkerboard_settlement_events(graph)) && rethrow()
         KernelAbstractions.synchronize(backend)
         _clear_checkerboard_settlement_events!(graph)
