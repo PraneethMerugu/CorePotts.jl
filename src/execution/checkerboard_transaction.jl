@@ -908,7 +908,9 @@ end
 function _checkerboard_tracker_group(
         accepted, descriptor, value, tracker_index::Integer,
         owner_capacity::Integer, terminal_gate)
-    if descriptor isa DenseScalarTrackerGroup
+    if descriptor isa Union{
+            DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup,
+        }
         descriptors = Tuple(descriptor.descriptors)
         source_fields = map(enumerate(descriptors)) do indexed
             column, instance = indexed

@@ -212,17 +212,20 @@ function _bind_lifecycle_tracker(group::DenseScalarTrackerGroup, source)
         descriptor -> _bind_lifecycle_tracker(descriptor, source),
         Tuple(group.descriptors),
     )
-    return _LifecycleDenseScalarTrackerGroup(group.quantity, descriptors)
+    return _DenseScalarTrackerKernelGroup(
+        group.quantity, descriptors, Tuple(group.source_handles)
+    )
 end
 function _bind_lifecycle_tracker(
-        group::_LifecycleDenseScalarTrackerGroup, source
+        group::_DenseScalarTrackerKernelGroup, source
     )
-    return _LifecycleDenseScalarTrackerGroup(
+    return _DenseScalarTrackerKernelGroup(
         group.quantity,
         map(
             descriptor -> _bind_lifecycle_tracker(descriptor, source),
             group.descriptors,
         ),
+        group.source_handles,
     )
 end
 
@@ -265,7 +268,7 @@ end
 end
 
 @inline function _lifecycle_tracker_entry_update_valid(
-        group::_LifecycleDenseScalarTrackerGroup,
+        group::_DenseScalarTrackerKernelGroup,
         values, target, old_owner,
     )
     for column in eachindex(group.descriptors)
@@ -326,7 +329,7 @@ end
 end
 
 @inline function _lifecycle_tracker_completed_update_valid(
-        group::_LifecycleDenseScalarTrackerGroup,
+        group::_DenseScalarTrackerKernelGroup,
         values, target, owner,
     )
     for column in eachindex(group.descriptors)
