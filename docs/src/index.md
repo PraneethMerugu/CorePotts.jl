@@ -59,6 +59,16 @@ LocalMath reduction in `execution/tracker_source_execution.jl`. Publication
 updates the host mirror and both execution banks only after scientific
 validation, without creating a separate downstream transaction authority.
 
+Initialization validates and plans each source-dependent tracker reduction
+once. The runtime retains that host-only semantic plan and stages current
+ownership, parameters, and declared state blocks into its inputs for settled
+updates, transaction prevalidation, and scheduled source publication. A typed
+recipe-owned scratch output isolates candidate execution from committed tracker
+storage. Each invocation still creates a task-local LocalMath preparation and
+follows the same reduction executor; cached plans therefore reduce repeated
+compiler work without adding a second scientific implementation or sharing
+task-owned prepared execution state.
+
 Per-owner maintained sums may store either a scalar or a floating
 `StaticArrays.SArray` value, including `SVector` and `SMatrix`.
 `SiteSumTracker` derives comparison tolerances

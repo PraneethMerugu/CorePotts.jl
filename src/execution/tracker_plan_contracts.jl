@@ -718,6 +718,17 @@ struct TrackerState{S <: Tuple}
     values::S
 end
 
+struct _SiteTrackerRebuildRecipe{O, S, P, H, V}
+    # The LocalMath graph is cold host state. Erasing its concrete type keeps
+    # it out of the runtime and input-publication specialization surfaces.
+    plan::LocalMath.Plan
+    ownership::O
+    sources::S
+    parameters::P
+    handles::H
+    values::V
+end
+
 struct TrackerCheckpointState{S <: Tuple}
     values::S
 end
