@@ -154,12 +154,18 @@ function _stage_lifecycle_effect_base!(
         workspace.staged_cell_kinds[allocation] = descriptor.destination_kind
         workspace.staged_cell_generations[allocation] = generation
     end
-    owner_change_state = _lifecycle_owner_change_state(mode, workspace)
+    transfer_recipe = _ownership_transfer_recipe(runtime, plan)
+    owner_change_state = _lifecycle_owner_change_state(mode, runtime, workspace)
     for position in 1:Int(workspace.planned_site_count[request])
         linear = Int(@inbounds workspace.planned_sites[position, request])
         @inbounds workspace.planned_site_request[linear] = Int32(request)
         _stage_owner_change!(
-            mode, runtime, plan, owner_change_state, tracker_source, linear, allocation
+            mode,
+            transfer_recipe,
+            owner_change_state,
+            tracker_source,
+            linear,
+            allocation,
         ) || return false
     end
     return true
@@ -171,13 +177,13 @@ function _stage_lifecycle_effect_base!(
         ::_RemoveLifecyclePlan,
     )
     anchor = @inbounds workspace.anchor[request]
-    owner_change_state = _lifecycle_owner_change_state(mode, workspace)
+    transfer_recipe = _ownership_transfer_recipe(runtime, plan)
+    owner_change_state = _lifecycle_owner_change_state(mode, runtime, workspace)
     for record in _lifecycle_site_records(workspace, anchor)
         linear = Int(record.site)
         _stage_owner_change!(
             mode,
-            runtime,
-            plan,
+            transfer_recipe,
             owner_change_state,
             tracker_source,
             linear,
@@ -229,13 +235,19 @@ function _stage_lifecycle_effect_base!(
             detail = LifecycleDetailDivisionPlanMissing,
         )
     end
-    owner_change_state = _lifecycle_owner_change_state(mode, workspace)
+    transfer_recipe = _ownership_transfer_recipe(runtime, plan)
+    owner_change_state = _lifecycle_owner_change_state(mode, runtime, workspace)
     for record in _lifecycle_site_records(workspace, anchor)
         position = Int(_lifecycle_site_position(workspace, record.site))
         @inbounds workspace.partition_labels[position] == 2 || continue
         linear = Int(record.site)
         _stage_owner_change!(
-            mode, runtime, plan, owner_change_state, tracker_source, linear, allocation
+            mode,
+            transfer_recipe,
+            owner_change_state,
+            tracker_source,
+            linear,
+            allocation,
         ) || return false
     end
     return true

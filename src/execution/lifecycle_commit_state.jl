@@ -3,7 +3,22 @@
 # Arithmetic trackers consume entry contributions and the completed site clear;
 # full-reconstruction contracts wait for the completed structural transaction.
 
-"""State required by one staged ownership change and its tracker updates."""
+"""Prepared semantics for one staged ownership transfer."""
+struct _OwnershipTransferRecipe{N, T, O}
+    shape::NTuple{N, Int}
+    tracker_plan::T
+    ownership_rules::O
+end
+
+@inline function _ownership_transfer_recipe(runtime, plan)
+    return _OwnershipTransferRecipe(
+        runtime.program.shape,
+        runtime.program.tracker_plan,
+        plan.ownership_rules,
+    )
+end
+
+"""Mutable state required by one staged ownership transfer."""
 struct _LifecycleOwnerChangeState{O, K, T, D, S}
     staged_ownership::O
     staged_cell_kinds::K
@@ -13,7 +28,7 @@ struct _LifecycleOwnerChangeState{O, K, T, D, S}
 end
 
 @inline function _lifecycle_owner_change_state(
-        ::HostLifecycleExecution, workspace,
+        ::HostLifecycleExecution, runtime, workspace,
     )
     return _LifecycleOwnerChangeState(
         workspace.staged_ownership,
@@ -25,12 +40,12 @@ end
 end
 
 @inline function _lifecycle_owner_change_state(
-        ::BackendLifecycleExecution, workspace,
+        ::BackendLifecycleExecution, runtime, workspace,
     )
     return _LifecycleOwnerChangeState(
         workspace.staged_ownership,
         workspace.staged_cell_kinds,
-        nothing,
+        runtime.trackers,
         workspace.staged_descriptor_state,
         workspace.status,
     )
@@ -41,8 +56,8 @@ end
 
 @inline function _commit_lifecycle_tracker_updates!(
         ::HostLifecycleExecution,
-        workspace,
-        runtime,
+        state,
+        recipe,
         source,
         site,
         old_owner,
@@ -50,8 +65,8 @@ end
     )
     try
         commit_tracker_updates!(
-            workspace.trackers,
-            runtime.program.tracker_plan,
+            state.trackers,
+            recipe.tracker_plan,
             source,
             site,
             old_owner,
@@ -65,8 +80,8 @@ end
 end
 @inline function _commit_lifecycle_tracker_updates!(
         ::BackendLifecycleExecution,
-        workspace,
-        runtime,
+        state,
+        recipe,
         source,
         site,
         old_owner,
@@ -75,19 +90,19 @@ end
     # Device execution reports the host transaction's recoverable tracker
     # invariant; evaluator/nonfinite status denotes a terminal scientific stop.
     _lifecycle_tracker_entry_updates_valid(
-        runtime.program.tracker_plan.descriptors,
-        runtime.trackers.values,
+        recipe.tracker_plan.descriptors,
+        state.trackers.values,
         site,
         old_owner,
     ) || return _set_lifecycle_status!(
-        workspace,
+        state,
         ProgramStatusInvariant;
         anchor = old_owner > 0 ? old_owner : new_owner,
         detail = LifecycleDetailTrackerCommitInvalid,
     )
     commit_tracker_updates!(
-        runtime.trackers,
-        runtime.program.tracker_plan,
+        state.trackers,
+        recipe.tracker_plan,
         source,
         site,
         old_owner,
@@ -102,79 +117,104 @@ end
 # mutation, source clearing, and completed-source publication into each effect.
 Base.@noinline function _stage_owner_change!(
         mode::AbstractLifecycleExecutionMode,
-        runtime,
-        plan,
-        workspace,
+        recipe::_OwnershipTransferRecipe,
+        state::_LifecycleOwnerChangeState,
         tracker_source,
         linear,
         new_owner,
     )
-    old_owner = @inbounds workspace.staged_ownership[linear]
+    old_owner = @inbounds state.staged_ownership[linear]
     old_owner == new_owner && return true
-    site = CartesianIndices(runtime.program.shape)[linear]
+    site = CartesianIndices(recipe.shape)[linear]
     if !_commit_lifecycle_tracker_updates!(
             mode,
-            workspace,
-            runtime,
+            state,
+            recipe,
             tracker_source,
             site,
             old_owner,
             new_owner,
         )
-        _lifecycle_succeeded(workspace) || return false
+        _lifecycle_succeeded(state) || return false
         return _set_lifecycle_status!(
-            workspace,
+            state,
             ProgramStatusInvariant;
             anchor = old_owner > 0 ? old_owner : new_owner,
             detail = LifecycleDetailTrackerCommitInvalid,
         )
     end
-    @inbounds workspace.staged_ownership[linear] = new_owner
-    for rule in plan.ownership_rules
+    @inbounds state.staged_ownership[linear] = new_owner
+    for rule in recipe.ownership_rules
         rule.action === ClearLifecycleOwnershipState || continue
-        values = state_block(workspace.staged_descriptor_state, rule.handle).values
+        values = state_block(state.staged_descriptor_state, rule.handle).values
         _clear_site_samples!(values, site)
     end
     if !_finish_lifecycle_tracker_updates!(
-            mode, runtime, workspace, tracker_source, site,
+            mode, recipe, state, tracker_source, site,
             old_owner, new_owner,
         )
-        _lifecycle_succeeded(workspace) || return false
+        _lifecycle_succeeded(state) || return false
         return _set_lifecycle_status!(
-            workspace, ProgramStatusInvariant;
+            state, ProgramStatusInvariant;
             anchor = new_owner, detail = LifecycleDetailTrackerCommitInvalid,
         )
     end
     return true
 end
 
-function _finish_lifecycle_tracker_updates!(::HostLifecycleExecution, runtime, workspace, source, site, old_owner, new_owner)
+function _finish_lifecycle_tracker_updates!(
+        ::HostLifecycleExecution,
+        recipe,
+        state,
+        source,
+        site,
+        old_owner,
+        new_owner,
+    )
     try
         _finish_tracker_source_change!(
-            runtime.program.tracker_plan.descriptors,
-            workspace.trackers.values, source, site, old_owner, new_owner, workspace.staged_cell_kinds
+            recipe.tracker_plan.descriptors,
+            state.trackers.values,
+            source,
+            site,
+            old_owner,
+            new_owner,
+            state.staged_cell_kinds,
         )
     catch
         return false
     end
     return true
 end
-@inline function _finish_lifecycle_tracker_updates!(::BackendLifecycleExecution, runtime, workspace, source, site, old_owner, new_owner)
+@inline function _finish_lifecycle_tracker_updates!(
+        ::BackendLifecycleExecution,
+        recipe,
+        state,
+        source,
+        site,
+        old_owner,
+        new_owner,
+    )
     # Keep completed-source arithmetic in the same recoverable transaction.
     _lifecycle_tracker_completed_updates_valid(
-        runtime.program.tracker_plan.descriptors,
-        runtime.trackers.values,
+        recipe.tracker_plan.descriptors,
+        state.trackers.values,
         site,
         new_owner,
     ) || return _set_lifecycle_status!(
-        workspace,
+        state,
         ProgramStatusInvariant;
         anchor = new_owner,
         detail = LifecycleDetailTrackerCommitInvalid,
     )
     _finish_tracker_source_change!(
-        runtime.program.tracker_plan.descriptors,
-        runtime.trackers.values, source, site, old_owner, new_owner, workspace.staged_cell_kinds
+        recipe.tracker_plan.descriptors,
+        state.trackers.values,
+        source,
+        site,
+        old_owner,
+        new_owner,
+        state.staged_cell_kinds,
     )
     return true
 end

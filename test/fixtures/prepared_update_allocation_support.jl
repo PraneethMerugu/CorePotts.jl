@@ -14,18 +14,20 @@ function prepared_owner_change_arguments()
     CorePotts.copyto_auxiliary_state!(
         workspace.staged_descriptor_state, runtime.descriptor_state,
     )
-    state = CorePotts._lifecycle_owner_change_state(
-        CorePotts.HostLifecycleExecution(), workspace,
-    )
     source = CorePotts.tracker_source_view(
-        runtime.program, state.staged_ownership;
+        runtime.program, workspace.staged_ownership;
         parameters = runtime.parameters,
-        descriptor_state = state.staged_descriptor_state,
+        descriptor_state = workspace.staged_descriptor_state,
+    )
+    state = CorePotts._lifecycle_owner_change_state(
+        CorePotts.HostLifecycleExecution(), runtime, workspace,
+    )
+    recipe = CorePotts._ownership_transfer_recipe(
+        runtime, runtime.program.lifecycle_plan,
     )
     linear = LinearIndices(runtime.ownership)[3, 3]
     return (
-        CorePotts.HostLifecycleExecution(), runtime,
-        runtime.program.lifecycle_plan, state, source,
+        CorePotts.HostLifecycleExecution(), recipe, state, source,
         linear, Int32(-1),
     )
 end

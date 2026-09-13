@@ -37,12 +37,16 @@ The principal source owners are:
   update counts are values within a bounded capacity class; author quantity
   identity and reconstruction-only trackers do not enter this hot recipe;
 - `lifecycle_commit_state.jl` and `lifecycle_commit_relationships.jl`: the
-  owner-change transaction over its narrow ownership, cell-kind, tracker,
-  descriptor-state, and status view. The function signature exposes the state
-  required by this semantic operation instead of accepting the complete
-  lifecycle workspace. `test_allocation_contracts.jl` statically checks this
-  exact prepared CPU signature and its bound-contribution control, then verifies
-  zero observed heap bytes on separately constructed warmed calls.
+  owner-change transaction over one ownership-transfer recipe and its narrow
+  ownership, cell-kind, tracker, descriptor-state, and status view. Backend
+  structural staging binds its admitted incremental tracker subset before this
+  boundary; host staging retains its authoritative tracker state. Both invoke
+  the same transfer implementation. Its signature exposes the prepared
+  semantics and mutable state it consumes instead of accepting a complete
+  program, lifecycle plan, or workspace.
+  `test_allocation_contracts.jl` statically checks this exact prepared CPU
+  signature and its bound-contribution control, then verifies zero observed heap
+  bytes on separately constructed warmed calls.
   `benchmark/prepared_update_contract.jl` records their separate construction,
   first-call, and warm Chairmarks samples without imposing a timing threshold;
 - `checkerboard_law.jl`: composition, storage binding, and preparation of the

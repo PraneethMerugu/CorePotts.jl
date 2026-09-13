@@ -37,6 +37,14 @@ equivalent maintained quantity does not create a new kernel type solely because
 the member count changed. CPU and device execution retain the same tracker and
 transaction semantics.
 
+Accepted lifecycle ownership transfers consume a prepared recipe containing
+only lattice shape, the caller's prepared tracker plan, and ownership-state
+clear rules. A separate staged-state view carries only ownership, cell kinds,
+tracker values, descriptor state, and transaction status. Backend staging binds
+the admitted incremental tracker subset; host staging uses its authoritative
+tracker state. Both invoke the same transfer implementation, which no longer
+inspects a complete program or lifecycle plan to rediscover those decisions.
+
 `test_allocation_contracts.jl` checks the exact prepared host owner-change
 signature and an unchanged bound site-contribution leaf with AllocCheck, then
 executes separately constructed, warmed instances and requires zero observed

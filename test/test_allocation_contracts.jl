@@ -11,7 +11,8 @@ include("fixtures/prepared_update_allocation_support.jl")
     ))
     GC.gc()
     @test @allocated(execute_prepared_owner_change!(measured)) == 0
-    @test measured[4].staged_ownership[measured[6]] == -1
+    _, _, state, _, linear, _ = measured
+    @test state.staged_ownership[linear] == -1
 
     warm_contribution = prepared_site_contribution_arguments()
     @test evaluate_prepared_site_contribution(warm_contribution) == -4.0f0
