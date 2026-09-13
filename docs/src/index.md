@@ -44,6 +44,10 @@ heap bytes. Fixture construction, first compilation, checkpoint materialization,
 capacity changes, backend launch and transfers are different boundaries and are
 not covered by that zero-allocation guarantee. Device kernels remain qualified
 by their actual backend tests rather than inferred from the host check.
+`benchmark/prepared_update_contract.jl` uses the same fixture with Chairmarks,
+reports construction and first execution separately, and creates a fresh staged
+transaction for every warm owner-change sample. Its timing and allocation
+samples are review evidence, not machine-independent pass/fail thresholds.
 
 ## Settled input publication
 

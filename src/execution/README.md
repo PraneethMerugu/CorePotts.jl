@@ -42,7 +42,9 @@ The principal source owners are:
   required by this semantic operation instead of accepting the complete
   lifecycle workspace. `test_allocation_contracts.jl` statically checks this
   exact prepared CPU signature and its bound-contribution control, then verifies
-  zero observed heap bytes on separately constructed warmed calls;
+  zero observed heap bytes on separately constructed warmed calls.
+  `benchmark/prepared_update_contract.jl` records their separate construction,
+  first-call, and warm Chairmarks samples without imposing a timing threshold;
 - `checkerboard_law.jl`: composition, storage binding, and preparation of the
   ordered LocalMath laws;
 - `checkerboard_queue.jl` and `checkerboard_runtime.jl`: submission ordering,
