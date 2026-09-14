@@ -79,27 +79,6 @@ Adapt.@adapt_structure _LifecycleStateEvaluatorPlan
 Adapt.@adapt_structure _LifecycleStatePolicyWorkspace
 Adapt.@adapt_structure _LifecycleStateRuntime
 
-struct _LifecycleStructureProgram{N, T}
-    shape::NTuple{N, Int}
-    tracker_plan::T
-end
-
-struct _LifecycleStructureRuntime{P, K, G, T}
-    program::P
-    cell_kinds::K
-    cell_generations::G
-    trackers::T
-end
-
-struct _LifecycleStructurePlan{D, O}
-    descriptors::D
-    ownership_rules::O
-end
-
-Adapt.@adapt_structure _LifecycleStructureProgram
-Adapt.@adapt_structure _LifecycleStructureRuntime
-Adapt.@adapt_structure _LifecycleStructurePlan
-
 function _lifecycle_structure_launch_payload(state, workspace, tracker_source)
     lifecycle = state.program.lifecycle_plan
     tracker_plan, trackers = _bind_lifecycle_tracker_updates(
@@ -107,18 +86,14 @@ function _lifecycle_structure_launch_payload(state, workspace, tracker_source)
         workspace.staged_trackers,
         tracker_source,
     )
-    runtime = _LifecycleStructureRuntime(
-        _LifecycleStructureProgram(
+    structure_state = _lifecycle_structure_state(state, workspace, trackers)
+    recipe = _LifecycleStructureRecipe(
+        lifecycle.descriptors,
+        _OwnershipTransferRecipe(
             state.program.shape,
             tracker_plan,
+            lifecycle.ownership_rules,
         ),
-        state.cell_kinds,
-        state.cell_generations,
-        trackers,
-    )
-    plan = _LifecycleStructurePlan(
-        lifecycle.descriptors,
-        lifecycle.ownership_rules,
     )
     commit_source = _LifecycleTrackerCommitSource(
         tracker_source.ownership,
@@ -126,7 +101,7 @@ function _lifecycle_structure_launch_payload(state, workspace, tracker_source)
         tracker_source.periodic,
         tracker_source.domain_resources,
     )
-    return runtime, plan, commit_source
+    return recipe, structure_state, commit_source
 end
 
 function _lifecycle_state_launch_payload(state, workspace)

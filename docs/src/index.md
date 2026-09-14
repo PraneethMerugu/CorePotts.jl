@@ -45,6 +45,14 @@ the admitted incremental tracker subset; host staging uses its authoritative
 tracker state. Both invoke the same transfer implementation, which no longer
 inspects a complete program or lifecycle plan to rediscover those decisions.
 
+The enclosing structural stage follows the same boundary: its recipe owns the
+value-level lifecycle descriptors and the ownership-transfer recipe, while its
+mutable view contains only selected-request indices, placement/partition data,
+cell generations, and the staged fields those effects can change. Create,
+remove, transition, retire, and divide therefore share one structural
+implementation without passing the complete program, lifecycle plan, or
+transaction workspace into the device-reachable boundary.
+
 `test_allocation_contracts.jl` checks the exact prepared host owner-change
 signature and an unchanged bound site-contribution leaf with AllocCheck, then
 executes separately constructed, warmed instances and requires zero observed

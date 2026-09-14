@@ -138,30 +138,30 @@ function _apply_lifecycle_relationship_rules!(
     return true
 end
 
-function _allocated_generation(runtime, slot)
-    generation = @inbounds runtime.cell_generations[slot]
+@inline function _next_allocated_generation(cell_generations, slot)
+    generation = @inbounds cell_generations[slot]
     return iszero(generation) ? UInt32(1) : generation + UInt32(1)
 end
 
 function _stage_lifecycle_effect_base!(
-        mode, runtime, plan, workspace, request, descriptor,
+        mode, recipe::_LifecycleStructureRecipe,
+        state::_LifecycleStructureState, request, descriptor,
         tracker_source,
         ::_CreateLifecyclePlan,
     )
-    allocation = _lifecycle_request_allocation(workspace, request)
-    generation = _allocated_generation(runtime, allocation)
+    allocation = _lifecycle_request_allocation(state, request)
+    generation = _next_allocated_generation(state.cell_generations, allocation)
     @inbounds begin
-        workspace.staged_cell_kinds[allocation] = descriptor.destination_kind
-        workspace.staged_cell_generations[allocation] = generation
+        state.staged_cell_kinds[allocation] = descriptor.destination_kind
+        state.staged_cell_generations[allocation] = generation
     end
-    transfer_recipe = _ownership_transfer_recipe(runtime, plan)
-    owner_change_state = _lifecycle_owner_change_state(mode, runtime, workspace)
-    for position in 1:Int(workspace.planned_site_count[request])
-        linear = Int(@inbounds workspace.planned_sites[position, request])
-        @inbounds workspace.planned_site_request[linear] = Int32(request)
+    owner_change_state = _lifecycle_owner_change_state(state)
+    for position in 1:Int(state.planned_site_count[request])
+        linear = Int(@inbounds state.planned_sites[position, request])
+        @inbounds state.planned_site_request[linear] = Int32(request)
         _stage_owner_change!(
             mode,
-            transfer_recipe,
+            recipe.ownership_transfer,
             owner_change_state,
             tracker_source,
             linear,
@@ -172,18 +172,18 @@ function _stage_lifecycle_effect_base!(
 end
 
 function _stage_lifecycle_effect_base!(
-        mode, runtime, plan, workspace, request, descriptor,
+        mode, recipe::_LifecycleStructureRecipe,
+        state::_LifecycleStructureState, request, descriptor,
         tracker_source,
         ::_RemoveLifecyclePlan,
     )
-    anchor = @inbounds workspace.anchor[request]
-    transfer_recipe = _ownership_transfer_recipe(runtime, plan)
-    owner_change_state = _lifecycle_owner_change_state(mode, runtime, workspace)
-    for record in _lifecycle_site_records(workspace, anchor)
+    anchor = @inbounds state.anchor[request]
+    owner_change_state = _lifecycle_owner_change_state(state)
+    for record in _lifecycle_site_records(state, anchor)
         linear = Int(record.site)
         _stage_owner_change!(
             mode,
-            transfer_recipe,
+            recipe.ownership_transfer,
             owner_change_state,
             tracker_source,
             linear,
@@ -194,56 +194,58 @@ function _stage_lifecycle_effect_base!(
 end
 
 @inline _stage_lifecycle_effect_base!(
-    mode, runtime, plan, workspace, request, descriptor,
+    mode, recipe::_LifecycleStructureRecipe,
+    state::_LifecycleStructureState, request, descriptor,
     tracker_source,
     ::_RetireLifecyclePlan,
 ) = true
 
 @inline function _stage_lifecycle_effect_base!(
-        mode, runtime, plan, workspace, request, descriptor,
+        mode, recipe::_LifecycleStructureRecipe,
+        state::_LifecycleStructureState, request, descriptor,
         tracker_source,
         ::_TransitionLifecyclePlan,
     )
-    anchor = @inbounds workspace.anchor[request]
-    @inbounds workspace.staged_cell_kinds[anchor] = descriptor.destination_kind
+    anchor = @inbounds state.anchor[request]
+    @inbounds state.staged_cell_kinds[anchor] = descriptor.destination_kind
     return true
 end
 
 function _stage_lifecycle_effect_base!(
-        mode, runtime, plan, workspace, request, descriptor,
+        mode, recipe::_LifecycleStructureRecipe,
+        state::_LifecycleStructureState, request, descriptor,
         tracker_source,
         ::_DivideLifecyclePlan,
     )
-    anchor = @inbounds workspace.anchor[request]
-    allocation = _lifecycle_request_allocation(workspace, request)
-    generation = _allocated_generation(runtime, allocation)
+    anchor = @inbounds state.anchor[request]
+    allocation = _lifecycle_request_allocation(state, request)
+    generation = _next_allocated_generation(state.cell_generations, allocation)
     parent_kind = descriptor.parent_kind == 0 ?
-        @inbounds(runtime.cell_kinds[anchor]) : descriptor.parent_kind
+        @inbounds(state.cell_kinds[anchor]) : descriptor.parent_kind
     daughter_kind = descriptor.daughter_kind == 0 ?
-        @inbounds(runtime.cell_kinds[anchor]) : descriptor.daughter_kind
+        @inbounds(state.cell_kinds[anchor]) : descriptor.daughter_kind
     @inbounds begin
-        workspace.staged_cell_kinds[anchor] = parent_kind
-        workspace.staged_cell_kinds[allocation] = daughter_kind
-        workspace.staged_cell_generations[allocation] = generation
+        state.staged_cell_kinds[anchor] = parent_kind
+        state.staged_cell_kinds[allocation] = daughter_kind
+        state.staged_cell_generations[allocation] = generation
     end
-    if @inbounds(workspace.partition_owner[anchor]) != request
+    if @inbounds(state.partition_owner[anchor]) != request
         return _set_lifecycle_status!(
-            workspace,
+            state,
             ProgramStatusInvariant;
             source = descriptor.source_handle,
             anchor,
             detail = LifecycleDetailDivisionPlanMissing,
         )
     end
-    transfer_recipe = _ownership_transfer_recipe(runtime, plan)
-    owner_change_state = _lifecycle_owner_change_state(mode, runtime, workspace)
-    for record in _lifecycle_site_records(workspace, anchor)
-        position = Int(_lifecycle_site_position(workspace, record.site))
-        @inbounds workspace.partition_labels[position] == 2 || continue
+    owner_change_state = _lifecycle_owner_change_state(state)
+    for record in _lifecycle_site_records(state, anchor)
+        position = Int(_lifecycle_site_position(state, record.site))
+        @inbounds state.partition_labels[position] == 2 || continue
         linear = Int(record.site)
         _stage_owner_change!(
             mode,
-            transfer_recipe,
+            recipe.ownership_transfer,
             owner_change_state,
             tracker_source,
             linear,

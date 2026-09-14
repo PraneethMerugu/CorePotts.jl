@@ -334,25 +334,24 @@ end
 end
 
 @kernel function _stage_lifecycle_structure_backend_kernel!(
-        runtime, plan, tracker_source, workspace, control, plan_class
+        recipe, state, tracker_source, control, plan_class
     )
     index = @index(Global, Linear)
-    if index == 1 && _lifecycle_backend_open(workspace) &&
+    if index == 1 && _lifecycle_backend_open(state) &&
             _lifecycle_backend_due(control)
-        selected = _lifecycle_selected_count(workspace)
+        selected = _lifecycle_selected_count(state)
         failed = false
         for position in 1:selected
             if !failed
-                request = Int(_lifecycle_selected_request(workspace, position))
-                descriptor = @inbounds plan.descriptors[
-                    Int(workspace.descriptor[request])
+                request = Int(_lifecycle_selected_request(state, position))
+                descriptor = @inbounds recipe.descriptors[
+                    Int(state.descriptor[request])
                 ]
                 _lifecycle_plan_matches(descriptor, plan_class) || continue
                 failed = !_stage_lifecycle_effect_base!(
                     BackendLifecycleExecution(),
-                    runtime,
-                    plan,
-                    workspace,
+                    recipe,
+                    state,
                     request,
                     descriptor,
                     tracker_source,

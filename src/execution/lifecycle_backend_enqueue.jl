@@ -502,7 +502,7 @@ function enqueue_lifecycle_backend_index!(
             _TransitionLifecyclePlan(),
             _DivideLifecyclePlan(),
         )
-    structure_runtime, structure_plan, tracker_commit_source =
+    structure_recipe, structure_state, tracker_commit_source =
         _lifecycle_structure_launch_payload(state, workspace, tracker_source)
     for plan_class in effect_classes
         iszero(
@@ -512,10 +512,9 @@ function enqueue_lifecycle_backend_index!(
         ) && continue
         @debug "enqueue lifecycle structural staging" plan_class
         stage_structure(
-            structure_runtime,
-            structure_plan,
+            structure_recipe,
+            structure_state,
             tracker_commit_source,
-            workspace,
             control,
             plan_class;
             ndrange = 1,

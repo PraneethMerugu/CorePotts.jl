@@ -41,9 +41,12 @@ The principal source owners are:
   ownership, cell-kind, tracker, descriptor-state, and status view. Backend
   structural staging binds its admitted incremental tracker subset before this
   boundary; host staging retains its authoritative tracker state. Both invoke
-  the same transfer implementation. Its signature exposes the prepared
-  semantics and mutable state it consumes instead of accepting a complete
-  program, lifecycle plan, or workspace.
+  the same transfer implementation. The enclosing structural-effect recipe owns
+  descriptors plus that transfer contract; its state view adds only the
+  selected-request, placement, partition, generation, and staged fields needed
+  by create, remove, retire, transition, and divide. These signatures expose
+  prepared semantics and mutable state instead of accepting a complete program,
+  lifecycle plan, or workspace.
   `test_allocation_contracts.jl` statically checks this exact prepared CPU
   signature and its bound-contribution control, then verifies zero observed heap
   bytes on separately constructed warmed calls.

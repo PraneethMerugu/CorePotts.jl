@@ -10,6 +10,8 @@ struct _OwnershipTransferRecipe{N, T, O}
     ownership_rules::O
 end
 
+Adapt.@adapt_structure _OwnershipTransferRecipe
+
 @inline function _ownership_transfer_recipe(runtime, plan)
     return _OwnershipTransferRecipe(
         runtime.program.shape,
@@ -53,6 +55,165 @@ end
 
 @inline lifecycle_workspace_status(state::_LifecycleOwnerChangeState) =
     @inbounds state.status[1]
+
+"""Prepared descriptor and ownership-transfer semantics for structural staging."""
+struct _LifecycleStructureRecipe{D, T}
+    descriptors::D
+    ownership_transfer::T
+end
+
+@inline function _lifecycle_structure_recipe(runtime, plan)
+    return _LifecycleStructureRecipe(
+        plan.descriptors,
+        _ownership_transfer_recipe(runtime, plan),
+    )
+end
+
+"""Selected lifecycle requests needed while staging structural effects."""
+struct _LifecycleStructureSelectionState{B, C, R, A, P}
+    ready::B
+    count::C
+    requests::R
+    allocations::A
+    source_position::P
+end
+
+"""Owned-site lookup needed by remove and divide structural effects."""
+struct _LifecycleStructureSiteIndex{R, S, P}
+    records::R
+    segment_starts::S
+    source_position::P
+end
+
+Adapt.@adapt_structure _LifecycleStructureRecipe
+Adapt.@adapt_structure _LifecycleStructureSelectionState
+Adapt.@adapt_structure _LifecycleStructureSiteIndex
+
+@inline function _lifecycle_structure_selection(selection)
+    selected = selection.selected_requests
+    return _LifecycleStructureSelectionState(
+        selection.ready,
+        selected.count,
+        selected.records.request,
+        selected.records.allocation,
+        selected.source_position,
+    )
+end
+
+@inline function _lifecycle_structure_site_index(site_index)
+    return _LifecycleStructureSiteIndex(
+        site_index.records,
+        site_index.segment_starts,
+        site_index.source_position,
+    )
+end
+
+"""Mutable request, partition, and staged state used by structural effects."""
+struct _LifecycleStructureState{
+        K, G, T, V32, M32, V8, SI, SEL, O, D, S,
+    }
+    cell_kinds::K
+    cell_generations::G
+    trackers::T
+    descriptor::V32
+    anchor::V32
+    planned_site_count::V32
+    planned_sites::M32
+    partition_labels::V8
+    partition_owner::V32
+    site_index::SI
+    selection::SEL
+    planned_site_request::V32
+    staged_ownership::O
+    staged_cell_kinds::K
+    staged_cell_generations::G
+    staged_descriptor_state::D
+    status::S
+end
+
+Adapt.@adapt_structure _LifecycleStructureState
+
+@inline function _lifecycle_structure_state(
+        ::HostLifecycleExecution, runtime, workspace,
+    )
+    return _lifecycle_structure_state(
+        runtime, workspace, workspace.staged_trackers,
+    )
+end
+
+@inline function _lifecycle_structure_state(
+        ::BackendLifecycleExecution, runtime, workspace,
+    )
+    return _lifecycle_structure_state(runtime, workspace, runtime.trackers)
+end
+
+@inline function _lifecycle_structure_state(
+        runtime, workspace, trackers,
+    )
+    return _LifecycleStructureState(
+        runtime.cell_kinds,
+        runtime.cell_generations,
+        trackers,
+        workspace.descriptor,
+        workspace.anchor,
+        workspace.planned_site_count,
+        workspace.planned_sites,
+        workspace.partition_labels,
+        workspace.partition_owner,
+        _lifecycle_structure_site_index(workspace.site_index),
+        _lifecycle_structure_selection(workspace.selection),
+        workspace.planned_site_request,
+        workspace.staged_ownership,
+        workspace.staged_cell_kinds,
+        workspace.staged_cell_generations,
+        workspace.staged_descriptor_state,
+        workspace.status,
+    )
+end
+
+@inline lifecycle_workspace_status(state::_LifecycleStructureState) =
+    @inbounds state.status[1]
+
+@inline _lifecycle_backend_open(state::_LifecycleStructureState) =
+    lifecycle_workspace_status(state).code === ProgramStatusSuccess
+
+@inline function _lifecycle_selected_count(state::_LifecycleStructureState)
+    @inbounds state.selection.ready[1] || return 0
+    return Int(@inbounds state.selection.count[1])
+end
+
+@inline function _lifecycle_selected_request(
+        state::_LifecycleStructureState, position::Integer,
+    )
+    return @inbounds state.selection.requests[position]
+end
+
+@inline function _lifecycle_selected_position(
+        state::_LifecycleStructureState, request::Integer,
+    )
+    @inbounds state.selection.ready[1] || return Int32(0)
+    return @inbounds state.selection.source_position[Int(request)]
+end
+
+@inline function _lifecycle_request_allocation(
+        state::_LifecycleStructureState, request::Integer,
+    )
+    position = _lifecycle_selected_position(state, request)
+    return iszero(position) ? Int32(0) :
+        @inbounds(state.selection.allocations[position])
+end
+
+@inline function _lifecycle_owner_change_state(
+        state::_LifecycleStructureState,
+    )
+    return _LifecycleOwnerChangeState(
+        state.staged_ownership,
+        state.staged_cell_kinds,
+        state.trackers,
+        state.staged_descriptor_state,
+        state.status,
+    )
+end
 
 @inline function _commit_lifecycle_tracker_updates!(
         ::HostLifecycleExecution,
@@ -389,7 +550,7 @@ end
     elseif descriptor.effect in (
             CreateCellLifecycleEffect, DivideCellLifecycleEffect,
         )
-        _allocated_generation(runtime, destination)
+        _next_allocated_generation(runtime.cell_generations, destination)
     else
         @inbounds runtime.cell_generations[destination]
     end
