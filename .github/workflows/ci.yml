@@ -198,12 +198,19 @@ jobs:
             lifecycle-runtime-boundaries.toml
             Manifest.toml
 
-  metal:
+  metal_witnesses:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.execution != 'false') }}
-    name: metal
+    name: metal / ${{ matrix.group }}
     runs-on: macos-15
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - program-and-quantities
+          - state-and-history
+          - lifecycle-and-conformance
     steps:
       - name: Require a valid change selection
         if: needs.changes.result != 'success' || (needs.changes.outputs.execution != 'true' && needs.changes.outputs.execution != 'false')
@@ -226,4 +233,25 @@ jobs:
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
       - name: Metal qualification
-        run: julia --project=test/metal --startup-file=no -e 'using Pkg; Pkg.develop([PackageSpec(path=path) for path in ("deps/LocalMath", ".")]); Pkg.instantiate(); include("test/metal/runtests.jl")'
+        run: julia --project=test/metal --startup-file=no -e 'using Pkg; Pkg.develop([PackageSpec(path=path) for path in ("deps/LocalMath", ".")]); Pkg.instantiate(); include("test/metal/runtests.jl")' '${{ matrix.group }}'
+
+  metal:
+    needs: [changes, metal_witnesses]
+    if: ${{ !cancelled() }}
+    name: metal
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every selected Metal witness group
+        env:
+          CHANGE_SELECTION: ${{ needs.changes.result }}
+          EXECUTION_REQUIRED: ${{ needs.changes.outputs.execution }}
+          METAL_WITNESSES: ${{ needs.metal_witnesses.result }}
+        shell: bash
+        run: |
+          [[ "$CHANGE_SELECTION" == success ]]
+          if [[ "$EXECUTION_REQUIRED" == true ]]; then
+            [[ "$METAL_WITNESSES" == success ]]
+          else
+            [[ "$EXECUTION_REQUIRED" == false ]]
+            [[ "$METAL_WITNESSES" == skipped ]]
+          fi
