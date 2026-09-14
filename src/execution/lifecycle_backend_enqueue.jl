@@ -536,6 +536,7 @@ function enqueue_lifecycle_backend_index!(
         state.program.lifecycle_plan
     )
     relationship_state = _lifecycle_relationship_state(workspace)
+    relationship_cadence = _lifecycle_cadence_control(control)
     for action_value in (
             Val(:remove_incident), Val(:remove_incompatible),
         )
@@ -546,7 +547,8 @@ function enqueue_lifecycle_backend_index!(
         ) && continue
         @debug "enqueue lifecycle relationship staging" action
         stage_relationships(
-            relationship_recipe, relationship_state, control, action_value;
+            relationship_recipe, relationship_state, relationship_cadence,
+            action_value;
             ndrange = 1,
         )
     end

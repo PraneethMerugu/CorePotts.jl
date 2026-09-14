@@ -78,6 +78,13 @@ struct _LifecycleSelectedRequestState{B, C, R, A, P}
     source_position::P
 end
 
+"""Ready flag, count, and request order needed by relationship staging."""
+struct _LifecycleSelectedRequestSequence{B, C, R}
+    ready::B
+    count::C
+    requests::R
+end
+
 """Owned-site lookup needed by staged lifecycle effects."""
 struct _LifecycleOwnedSiteIndex{R, S, P}
     records::R
@@ -87,6 +94,7 @@ end
 
 Adapt.@adapt_structure _LifecycleStructureRecipe
 Adapt.@adapt_structure _LifecycleSelectedRequestState
+Adapt.@adapt_structure _LifecycleSelectedRequestSequence
 Adapt.@adapt_structure _LifecycleOwnedSiteIndex
 
 @inline function _lifecycle_selected_request_state(selection)
@@ -97,6 +105,15 @@ Adapt.@adapt_structure _LifecycleOwnedSiteIndex
         selected.records.request,
         selected.records.allocation,
         selected.source_position,
+    )
+end
+
+@inline function _lifecycle_selected_request_sequence(selection)
+    selected = selection.selected_requests
+    return _LifecycleSelectedRequestSequence(
+        selection.ready,
+        selected.count,
+        selected.records.request,
     )
 end
 
@@ -222,7 +239,7 @@ Adapt.@adapt_structure _LifecycleRelationshipState
     return _LifecycleRelationshipState(
         workspace.descriptor,
         workspace.anchor,
-        _lifecycle_selected_request_state(workspace.selection),
+        _lifecycle_selected_request_sequence(workspace.selection),
         workspace.staged_cell_kinds,
         workspace.staged_relationships,
         workspace.status,

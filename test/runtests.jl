@@ -67,6 +67,7 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_product_field_operations.jl",
     "test_checkerboard_read_groups.jl",
     "test_compiler_flagship_benchmark.jl",
+    "test_compiler_runtime_boundary_report.jl",
 )
 const _COREPOTTS_TEST_HELPER_EXCLUSIONS = ()
 const _COREPOTTS_DEVICE_CONFORMANCE_WITNESSES = (

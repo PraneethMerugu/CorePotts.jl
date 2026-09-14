@@ -5,6 +5,7 @@ function lifecycle_relationship_staging_runtime(
         engine,
         action;
         backend = CorePotts.CPUProgramBackend(),
+        requests = nothing,
     )
     C = CorePotts
     descriptor = receipt_descriptor(
@@ -72,15 +73,16 @@ function lifecycle_relationship_staging_runtime(
     kinds = Int16[2, 3, 5]
     generations = UInt32[1, 1, 1]
     relationships = C.ProgramRelationshipState(Float32, 2, 3, 2)
+    relationship_requests = requests === nothing ? [
+        C.CreateRelationshipRequest(1, 2; identity = 1),
+        C.CreateRelationshipRequest(1, 3; identity = 2),
+    ] : requests
     C.apply_relationship_requests!(
         relationships,
         kinds,
         generations,
         schema,
-        [
-            C.CreateRelationshipRequest(1, 2; identity = 1),
-            C.CreateRelationshipRequest(1, 3; identity = 2),
-        ],
+        relationship_requests,
     )
     initial = C.ProgramInitialState(
         ownership,
@@ -122,5 +124,103 @@ function test_lifecycle_relationship_staging(
     else
         @test all(iszero, relationships.degree)
     end
+    return nothing
+end
+
+function test_lifecycle_relationship_stage_order(plan_class)
+    C = CorePotts
+    runtime = lifecycle_relationship_staging_runtime(
+        C.SequentialProgramEngine(), C.RemoveIncidentLifecycleRelationship,
+    )
+    plan = runtime.program.lifecycle_plan
+    workspace = runtime.lifecycle_workspace
+    copyto!(workspace.staged_cell_kinds, runtime.cell_kinds)
+    copyto!(workspace.staged_relationships, runtime.relationships)
+    @inbounds workspace.anchor[1] = Int32(1)
+    recipe = C._lifecycle_relationship_recipe(plan)
+    state = C._lifecycle_relationship_state(workspace)
+    descriptor = only(plan.descriptors)
+    @test C._apply_lifecycle_pre_relationships!(
+        C.HostLifecycleExecution(), recipe, state,
+        1, descriptor, plan_class,
+    )
+    @test C._apply_lifecycle_post_relationships!(
+        C.HostLifecycleExecution(), recipe, state,
+        1, descriptor, plan_class,
+    )
+    relationships = only(workspace.staged_relationships)
+    @test count(relationships.active) == 0
+    @test all(iszero, relationships.degree)
+    return nothing
+end
+
+function test_lifecycle_relationship_request_order()
+    C = CorePotts
+    runtime = lifecycle_relationship_staging_runtime(
+        C.SequentialProgramEngine(), C.RemoveIncidentLifecycleRelationship,
+        requests = [
+            C.CreateRelationshipRequest(1, 2; identity = 1),
+            C.CreateRelationshipRequest(2, 3; identity = 2),
+        ],
+    )
+    plan = runtime.program.lifecycle_plan
+    workspace = runtime.lifecycle_workspace
+    copyto!(workspace.staged_cell_kinds, runtime.cell_kinds)
+    copyto!(workspace.staged_relationships, runtime.relationships)
+    @inbounds begin
+        workspace.anchor[1] = Int32(1)
+        workspace.anchor[2] = Int32(2)
+    end
+    recipe = C._lifecycle_relationship_recipe(plan)
+    state = C._lifecycle_relationship_state(workspace)
+    descriptor = only(plan.descriptors)
+    plan_class = C._RemoveLifecyclePlan()
+    @test C._apply_lifecycle_pre_relationships!(
+        C.HostLifecycleExecution(), recipe, state,
+        1, descriptor, plan_class,
+    )
+    @test count(only(workspace.staged_relationships).active) == 1
+    @test C._apply_lifecycle_pre_relationships!(
+        C.HostLifecycleExecution(), recipe, state,
+        2, descriptor, plan_class,
+    )
+    @test count(only(workspace.staged_relationships).active) == 0
+    @test all(iszero, only(workspace.staged_relationships).degree)
+    return nothing
+end
+
+function test_lifecycle_relationship_selected_sequence()
+    C = CorePotts
+    runtime = lifecycle_relationship_staging_runtime(
+        C.SequentialProgramEngine(), C.RemoveIncidentLifecycleRelationship,
+        requests = [
+            C.CreateRelationshipRequest(1, 2; identity = 1),
+            C.CreateRelationshipRequest(2, 3; identity = 2),
+        ],
+    )
+    workspace = runtime.lifecycle_workspace
+    copyto!(workspace.staged_cell_kinds, runtime.cell_kinds)
+    copyto!(workspace.staged_relationships, runtime.relationships)
+    @inbounds begin
+        workspace.descriptor[1] = Int32(1)
+        workspace.descriptor[2] = Int32(1)
+        workspace.anchor[1] = Int32(1)
+        workspace.anchor[2] = Int32(2)
+        workspace.selection.ready[1] = true
+        workspace.selection.selected_requests.count[1] = Int32(2)
+        workspace.selection.selected_requests.records.request[1] = Int32(1)
+        workspace.selection.selected_requests.records.request[2] = Int32(2)
+    end
+    recipe = C._lifecycle_relationship_recipe(runtime.program.lifecycle_plan)
+    state = C._lifecycle_relationship_state(workspace)
+    cadence = C._LifecycleCadenceControl(Int32[1])
+    kernel = C._stage_lifecycle_relationships_backend_kernel!(
+        KernelAbstractions.CPU(), 1,
+    )
+    kernel(
+        recipe, state, cadence, Val(:remove_incident); ndrange = 1,
+    )
+    @test count(only(workspace.staged_relationships).active) == 0
+    @test all(iszero, only(workspace.staged_relationships).degree)
     return nothing
 end

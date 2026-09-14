@@ -28,6 +28,16 @@ end
 Adapt.@adapt_structure LifecycleBackendControl
 Adapt.@adapt_structure NoLifecycleBackendControl
 
+"""Backend cadence counters needed to decide whether a lifecycle stage is due."""
+struct _LifecycleCadenceControl{C}
+    counters::C
+end
+
+Adapt.@adapt_structure _LifecycleCadenceControl
+
+@inline _lifecycle_cadence_control(control) =
+    _LifecycleCadenceControl(control.counters)
+
 struct _LifecycleStateDescriptorPlan{R}
     domain_resources::R
 end

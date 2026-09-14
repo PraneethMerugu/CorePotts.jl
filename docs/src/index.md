@@ -53,6 +53,24 @@ remove, transition, retire, and divide therefore share one structural
 implementation without passing the complete program, lifecycle plan, or
 transaction workspace into the device-reachable boundary.
 
+Lifecycle relationship staging likewise receives a prepared descriptor/rule
+recipe, the ready selected-request sequence, staged cell kinds and relationship
+storage, transaction status, and the lifecycle cadence counters it reads. It
+does not carry selection allocations/source-position maps or the complete
+backend control merely to remove incident or newly incompatible relationships.
+Host and device staging retain the same relationship rules, mutation primitives,
+ordering, and failure semantics; backend action filtering is the physical
+bounded-loop contract rather than a second scientific rule implementation.
+
+`benchmark/compiler_scaling/lifecycle_runtime_boundaries.jl` records the exact
+owner-transfer, relationship-staging, and unchanged proposal-leaf signatures as
+machine-readable TOML. It classifies typed IR, reports aggregate payload size
+without double-counting shared storage, and traces each recipe/state field to
+its semantic owner. Its `typed_method_matches` field describes only the queried
+signature; specialization reuse across values, counts, or operation families is
+reported separately. Compiler-sensitive pull requests upload this longitudinal
+evidence without turning machine-dependent counts or timings into thresholds.
+
 `test_allocation_contracts.jl` checks the exact prepared host owner-change
 signature and an unchanged bound site-contribution leaf with AllocCheck, then
 executes separately constructed, warmed instances and requires zero observed

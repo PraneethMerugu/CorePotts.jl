@@ -363,11 +363,11 @@ end
 end
 
 @kernel function _stage_lifecycle_relationships_backend_kernel!(
-        recipe, state, control, action
+        recipe, state, cadence, action
     )
     index = @index(Global, Linear)
     if index == 1 && _lifecycle_backend_open(state) &&
-            _lifecycle_backend_due(control)
+            _lifecycle_backend_due(cadence)
         selected = _lifecycle_selected_count(state)
         failed = false
         for position in 1:selected

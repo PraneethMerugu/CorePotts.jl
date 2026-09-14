@@ -42,28 +42,9 @@ function _apply_relationship_rule_action!(
     )
     action = _lifecycle_relationship_action_value(action_value)
     rule.action === action || return state
-    if action === RemoveIncidentLifecycleRelationship
-        return _remove_all_incident!(state, anchor)
-    end
-    destination_kind = descriptor.destination_kind
-    position = 1
-    while position <= @inbounds(state.degree[anchor])
-        edge = Int(@inbounds state.incident_edges[position, anchor])
-        other = @inbounds state.endpoint_a[edge] == anchor ?
-            state.endpoint_b[edge] : state.endpoint_a[edge]
-        other_kind = @inbounds workspace.staged_cell_kinds[other]
-        compatible = _relationship_kinds_match(
-            destination_kind, other_kind, rule
-        )
-        if !compatible
-            apply_validated_relationship_request!(
-                state, RemoveRelationshipRequest(edge)
-            )
-        else
-            position += 1
-        end
-    end
-    return state
+    return _apply_relationship_rule!(
+        state, workspace, descriptor, rule, anchor,
+    )
 end
 
 function _apply_lifecycle_relationship_rules!(

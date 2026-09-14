@@ -29,7 +29,11 @@ function _empty_descriptor_plan()
     )
 end
 
-function _flagship_descriptor()
+function _flagship_descriptor(;
+        effect = CorePotts.RemoveCellLifecycleEffect,
+        destination_kind::Integer = 0,
+        relationship_rule_count::Integer = 0,
+    )
     return CorePotts.LifecycleDescriptor{2, Float64}(
         Int32(1),
         UInt64(101),
@@ -39,10 +43,10 @@ function _flagship_descriptor()
         Int32(1),
         CorePotts.EveryMCSCadence,
         Int32(1),
-        CorePotts.RemoveCellLifecycleEffect,
+        effect,
         Int32(0),
         CorePotts.ErrorLifecycleInadmissible,
-        Int16(0),
+        Int16(destination_kind),
         Int16(1),
         CorePotts.NoLifecyclePlacement,
         Int32(0),
@@ -63,7 +67,7 @@ function _flagship_descriptor()
         Int32(1),
         Int32(0),
         Int32(1),
-        Int32(0),
+        Int32(relationship_rule_count),
         Int32(0),
         Int32(0),
         Int32(0),
