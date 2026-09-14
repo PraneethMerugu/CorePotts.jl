@@ -8,9 +8,7 @@ function _remove_all_incident!(state, anchor)
     return state
 end
 
-function _apply_relationship_rule!(
-        state, runtime, workspace, descriptor, rule, anchor
-    )
+function _apply_relationship_rule!(state, workspace, descriptor, rule, anchor)
     if rule.action === RemoveIncidentLifecycleRelationship
         return _remove_all_incident!(state, anchor)
     elseif rule.action in (
@@ -40,8 +38,7 @@ function _apply_relationship_rule!(
 end
 
 function _apply_relationship_rule_action!(
-        state, runtime, workspace, descriptor, rule, anchor,
-        action_value::Val,
+        state, workspace, descriptor, rule, anchor, action_value::Val,
     )
     action = _lifecycle_relationship_action_value(action_value)
     rule.action === action || return state
@@ -71,14 +68,13 @@ end
 
 function _apply_lifecycle_relationship_rules!(
         mode::AbstractLifecycleExecutionMode,
-        runtime,
-        plan,
+        recipe,
         workspace,
         descriptor,
         anchor,
     )
     for offset in 0:(Int(descriptor.relationship_rule_count) - 1)
-        rule = @inbounds plan.relationship_rules[
+        rule = @inbounds recipe.relationship_rules[
             Int(descriptor.relationship_rule_offset) + offset
         ]
         succeeded = if mode isa HostLifecycleExecution
@@ -87,7 +83,7 @@ function _apply_lifecycle_relationship_rules!(
                     _apply_relationship_rule!,
                     workspace.staged_relationships,
                     rule.relationship_slot,
-                    (runtime, workspace, descriptor, rule, Int(anchor)),
+                    (workspace, descriptor, rule, Int(anchor)),
                 )
                 true
             catch
@@ -98,7 +94,7 @@ function _apply_lifecycle_relationship_rules!(
                 _apply_relationship_rule!,
                 workspace.staged_relationships,
                 rule.relationship_slot,
-                (runtime, workspace, descriptor, rule, Int(anchor)),
+                (workspace, descriptor, rule, Int(anchor)),
             )
             true
         end
@@ -117,22 +113,21 @@ end
 
 function _apply_lifecycle_relationship_rules!(
         mode::AbstractLifecycleExecutionMode,
-        runtime,
-        plan,
+        recipe,
         workspace,
         descriptor,
         anchor,
         action::Val,
     )
     for offset in 0:(Int(descriptor.relationship_rule_count) - 1)
-        rule = @inbounds plan.relationship_rules[
+        rule = @inbounds recipe.relationship_rules[
             Int(descriptor.relationship_rule_offset) + offset
         ]
         _call_relationship_slot(
             _apply_relationship_rule_action!,
             workspace.staged_relationships,
             rule.relationship_slot,
-            (runtime, workspace, descriptor, rule, Int(anchor), action),
+            (workspace, descriptor, rule, Int(anchor), action),
         )
     end
     return true
@@ -256,17 +251,16 @@ function _stage_lifecycle_effect_base!(
 end
 
 @inline _apply_lifecycle_effect_relationships!(
-    mode, runtime, plan, workspace, request, descriptor,
+    mode, recipe, workspace, request, descriptor,
     ::_CreateLifecyclePlan,
 ) = true
 
 @inline function _apply_lifecycle_effect_relationships!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class
+        mode, recipe, workspace, request, descriptor, plan_class
     )
     return _apply_lifecycle_relationship_rules!(
         mode,
-        runtime,
-        plan,
+        recipe,
         workspace,
         descriptor,
         @inbounds(workspace.anchor[request]),
@@ -274,14 +268,13 @@ end
 end
 
 @inline function _apply_lifecycle_effect_relationships!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class,
+        mode, recipe, workspace, request, descriptor, plan_class,
         action::Val,
     )
     plan_class isa _CreateLifecyclePlan && return true
     return _apply_lifecycle_relationship_rules!(
         mode,
-        runtime,
-        plan,
+        recipe,
         workspace,
         descriptor,
         @inbounds(workspace.anchor[request]),
@@ -290,50 +283,50 @@ end
 end
 
 @inline _apply_lifecycle_pre_relationships!(
-    mode, runtime, plan, workspace, request, descriptor, plan_class
+    mode, recipe, workspace, request, descriptor, plan_class
 ) = true
 @inline _apply_lifecycle_pre_relationships!(
-    mode, runtime, plan, workspace, request, descriptor,
+    mode, recipe, workspace, request, descriptor,
     plan_class::_RemoveLifecyclePlan,
 ) = _apply_lifecycle_effect_relationships!(
-    mode, runtime, plan, workspace, request, descriptor, plan_class
+    mode, recipe, workspace, request, descriptor, plan_class
 )
 @inline _apply_lifecycle_pre_relationships!(
-    mode, runtime, plan, workspace, request, descriptor,
+    mode, recipe, workspace, request, descriptor,
     plan_class::_RetireLifecyclePlan,
 ) = _apply_lifecycle_effect_relationships!(
-    mode, runtime, plan, workspace, request, descriptor, plan_class
+    mode, recipe, workspace, request, descriptor, plan_class
 )
 @inline _apply_lifecycle_post_relationships!(
-    mode, runtime, plan, workspace, request, descriptor, plan_class
+    mode, recipe, workspace, request, descriptor, plan_class
 ) = true
 @inline _apply_lifecycle_post_relationships!(
-    mode, runtime, plan, workspace, request, descriptor,
+    mode, recipe, workspace, request, descriptor,
     plan_class::_TransitionLifecyclePlan,
 ) = _apply_lifecycle_effect_relationships!(
-    mode, runtime, plan, workspace, request, descriptor, plan_class
+    mode, recipe, workspace, request, descriptor, plan_class
 )
 
 @inline _apply_lifecycle_pre_relationships!(
-    mode, runtime, plan, workspace, request, descriptor, plan_class,
+    mode, recipe, workspace, request, descriptor, plan_class,
     action::Val,
 ) = plan_class isa Union{_RemoveLifecyclePlan, _RetireLifecyclePlan} ?
     _apply_lifecycle_effect_relationships!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class, action
+        mode, recipe, workspace, request, descriptor, plan_class, action
     ) : true
 
 @inline _apply_lifecycle_post_relationships!(
-    mode, runtime, plan, workspace, request, descriptor, plan_class,
+    mode, recipe, workspace, request, descriptor, plan_class,
     action::Val,
 ) = plan_class isa Union{_TransitionLifecyclePlan, _DivideLifecyclePlan} ?
     _apply_lifecycle_effect_relationships!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class, action
+        mode, recipe, workspace, request, descriptor, plan_class, action
     ) : true
 @inline _apply_lifecycle_post_relationships!(
-    mode, runtime, plan, workspace, request, descriptor,
+    mode, recipe, workspace, request, descriptor,
     plan_class::_DivideLifecyclePlan,
 ) = _apply_lifecycle_effect_relationships!(
-    mode, runtime, plan, workspace, request, descriptor, plan_class
+    mode, recipe, workspace, request, descriptor, plan_class
 )
 
 @inline _lifecycle_state_endpoints(

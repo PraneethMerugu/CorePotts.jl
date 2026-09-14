@@ -363,24 +363,30 @@ end
 end
 
 @kernel function _stage_lifecycle_relationships_backend_kernel!(
-        state, workspace, control, action
+        recipe, state, control, action
     )
     index = @index(Global, Linear)
-    if index == 1 && _lifecycle_backend_open(workspace) &&
+    if index == 1 && _lifecycle_backend_open(state) &&
             _lifecycle_backend_due(control)
-        selected = _lifecycle_selected_count(workspace)
+        selected = _lifecycle_selected_count(state)
         failed = false
         for position in 1:selected
             if !failed
-                request = Int(_lifecycle_selected_request(workspace, position))
-                failed = !_stage_lifecycle_request_relationships!(
-                    BackendLifecycleExecution(),
-                    state,
-                    state.program.lifecycle_plan,
-                    workspace,
-                    request,
+                request = Int(_lifecycle_selected_request(state, position))
+                descriptor = @inbounds recipe.descriptors[
+                    Int(state.descriptor[request])
+                ]
+                plan_class = _lifecycle_request_plan_class(descriptor)
+                plan_class === nothing && (failed = true; continue)
+                failed = !_apply_lifecycle_pre_relationships!(
+                    BackendLifecycleExecution(), recipe, state,
+                    request, descriptor, plan_class,
                     action,
                 )
+                failed || (failed = !_apply_lifecycle_post_relationships!(
+                    BackendLifecycleExecution(), recipe, state,
+                    request, descriptor, plan_class, action,
+                ))
             end
         end
     end

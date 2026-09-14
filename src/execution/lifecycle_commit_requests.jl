@@ -85,8 +85,11 @@ end
 function _apply_lifecycle_request_effect!(
     mode, runtime, plan, workspace, request, descriptor, plan_class
 )
+    relationship_recipe = _lifecycle_relationship_recipe(plan)
+    relationship_state = _lifecycle_relationship_state(workspace)
     _apply_lifecycle_pre_relationships!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class
+        mode, relationship_recipe, relationship_state,
+        request, descriptor, plan_class,
     ) || return -1
     tracker_source = tracker_source_view(
         runtime.program, workspace.staged_ownership
@@ -98,7 +101,8 @@ function _apply_lifecycle_request_effect!(
         tracker_source, plan_class,
     ) || return -1
     _apply_lifecycle_post_relationships!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class
+        mode, relationship_recipe, relationship_state,
+        request, descriptor, plan_class,
     ) || return -1
     state_recipe = _lifecycle_state_recipe(plan)
     state_view = _lifecycle_state_view(workspace)
@@ -154,30 +158,18 @@ end
 end
 
 @inline function _stage_lifecycle_request_relationships!(
-        mode, runtime, plan, workspace, request
+        mode, plan, workspace, request
     )
     descriptor = @inbounds plan.descriptors[Int(workspace.descriptor[request])]
     plan_class = _lifecycle_request_plan_class(descriptor)
     plan_class === nothing && return false
+    recipe = _lifecycle_relationship_recipe(plan)
+    state = _lifecycle_relationship_state(workspace)
     _apply_lifecycle_pre_relationships!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class
+        mode, recipe, state, request, descriptor, plan_class
     ) || return false
     return _apply_lifecycle_post_relationships!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class
-    )
-end
-
-@inline function _stage_lifecycle_request_relationships!(
-        mode, runtime, plan, workspace, request, action::Val
-    )
-    descriptor = @inbounds plan.descriptors[Int(workspace.descriptor[request])]
-    plan_class = _lifecycle_request_plan_class(descriptor)
-    plan_class === nothing && return false
-    _apply_lifecycle_pre_relationships!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class, action
-    ) || return false
-    return _apply_lifecycle_post_relationships!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class, action
+        mode, recipe, state, request, descriptor, plan_class
     )
 end
 

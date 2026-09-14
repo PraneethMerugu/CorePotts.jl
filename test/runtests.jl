@@ -47,6 +47,7 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_logical_state_lifecycle.jl",
     "test_lifecycle_value_conversion.jl",
     "test_lifecycle_rule_composition.jl",
+    "test_lifecycle_relationship_staging.jl",
     "test_lifecycle_scalar_retirement.jl",
     "test_lifecycle_numeric_conversion.jl",
     "test_lifecycle_integer_conversion_bounds.jl",

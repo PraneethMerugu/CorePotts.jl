@@ -532,6 +532,10 @@ function enqueue_lifecycle_backend_index!(
     _enqueue_lifecycle_failure_stamp!(state, ProgramStageStructure)
     relationship_action_mask =
         state.program.lifecycle_plan.relationship_action_mask
+    relationship_recipe = _lifecycle_relationship_recipe(
+        state.program.lifecycle_plan
+    )
+    relationship_state = _lifecycle_relationship_state(workspace)
     for action_value in (
             Val(:remove_incident), Val(:remove_incompatible),
         )
@@ -542,7 +546,8 @@ function enqueue_lifecycle_backend_index!(
         ) && continue
         @debug "enqueue lifecycle relationship staging" action
         stage_relationships(
-            state, workspace, control, action_value; ndrange = 1
+            relationship_recipe, relationship_state, control, action_value;
+            ndrange = 1,
         )
     end
     _enqueue_lifecycle_failure_stamp!(state, ProgramStageRelationships)

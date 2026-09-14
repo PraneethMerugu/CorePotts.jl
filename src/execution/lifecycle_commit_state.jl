@@ -191,6 +191,63 @@ end
         @inbounds(state.selection.allocations[position])
 end
 
+"""Prepared relationship-removal semantics for lifecycle staging."""
+struct _LifecycleRelationshipRecipe{D, R}
+    descriptors::D
+    relationship_rules::R
+end
+
+Adapt.@adapt_structure _LifecycleRelationshipRecipe
+
+@inline function _lifecycle_relationship_recipe(plan)
+    return _LifecycleRelationshipRecipe(
+        plan.descriptors,
+        plan.relationship_rules,
+    )
+end
+
+"""Selected requests and mutable relationship state used by lifecycle rules."""
+struct _LifecycleRelationshipState{V, SEL, K, R, S}
+    descriptor::V
+    anchor::V
+    selection::SEL
+    staged_cell_kinds::K
+    staged_relationships::R
+    status::S
+end
+
+Adapt.@adapt_structure _LifecycleRelationshipState
+
+@inline function _lifecycle_relationship_state(workspace)
+    return _LifecycleRelationshipState(
+        workspace.descriptor,
+        workspace.anchor,
+        _lifecycle_selected_request_state(workspace.selection),
+        workspace.staged_cell_kinds,
+        workspace.staged_relationships,
+        workspace.status,
+    )
+end
+
+@inline lifecycle_workspace_status(state::_LifecycleRelationshipState) =
+    @inbounds state.status[1]
+
+@inline _lifecycle_backend_open(state::_LifecycleRelationshipState) =
+    lifecycle_workspace_status(state).code === ProgramStatusSuccess
+
+@inline function _lifecycle_selected_count(
+        state::_LifecycleRelationshipState,
+    )
+    @inbounds state.selection.ready[1] || return 0
+    return Int(@inbounds state.selection.count[1])
+end
+
+@inline function _lifecycle_selected_request(
+        state::_LifecycleRelationshipState, position::Integer,
+    )
+    return @inbounds state.selection.requests[position]
+end
+
 """Mutable request, partition, and staged state used by structural effects."""
 struct _LifecycleStructureState{
         K, G, T, V32, M32, V8, SI, SEL, O, D, S,
