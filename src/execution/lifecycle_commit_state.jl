@@ -69,8 +69,8 @@ end
     )
 end
 
-"""Selected lifecycle requests needed while staging structural effects."""
-struct _LifecycleStructureSelectionState{B, C, R, A, P}
+"""Selected lifecycle requests needed by staged lifecycle effects."""
+struct _LifecycleSelectedRequestState{B, C, R, A, P}
     ready::B
     count::C
     requests::R
@@ -78,20 +78,20 @@ struct _LifecycleStructureSelectionState{B, C, R, A, P}
     source_position::P
 end
 
-"""Owned-site lookup needed by remove and divide structural effects."""
-struct _LifecycleStructureSiteIndex{R, S, P}
+"""Owned-site lookup needed by staged lifecycle effects."""
+struct _LifecycleOwnedSiteIndex{R, S, P}
     records::R
     segment_starts::S
     source_position::P
 end
 
 Adapt.@adapt_structure _LifecycleStructureRecipe
-Adapt.@adapt_structure _LifecycleStructureSelectionState
-Adapt.@adapt_structure _LifecycleStructureSiteIndex
+Adapt.@adapt_structure _LifecycleSelectedRequestState
+Adapt.@adapt_structure _LifecycleOwnedSiteIndex
 
-@inline function _lifecycle_structure_selection(selection)
+@inline function _lifecycle_selected_request_state(selection)
     selected = selection.selected_requests
-    return _LifecycleStructureSelectionState(
+    return _LifecycleSelectedRequestState(
         selection.ready,
         selected.count,
         selected.records.request,
@@ -100,12 +100,95 @@ Adapt.@adapt_structure _LifecycleStructureSiteIndex
     )
 end
 
-@inline function _lifecycle_structure_site_index(site_index)
-    return _LifecycleStructureSiteIndex(
+@inline function _lifecycle_owned_site_index(site_index)
+    return _LifecycleOwnedSiteIndex(
         site_index.records,
         site_index.segment_starts,
         site_index.source_position,
     )
+end
+
+"""Prepared evaluator and state-rule semantics for lifecycle state staging."""
+struct _LifecycleStateRecipe{D, E, S}
+    descriptors::D
+    evaluators::E
+    state_rules::S
+end
+
+Adapt.@adapt_structure _LifecycleStateRecipe
+
+@inline function _lifecycle_state_recipe(plan)
+    return _LifecycleStateRecipe(
+        plan.descriptors,
+        plan.evaluators,
+        plan.state_rules,
+    )
+end
+
+"""Request-local state required by lifecycle state transforms."""
+struct _LifecycleStateView{
+        V32, M32, V8, SI, SEL, G, T, D, S,
+    }
+    descriptor::V32
+    anchor::V32
+    planned_site_count::V32
+    planned_sites::M32
+    partition_labels::V8
+    partition_owner::V32
+    site_index::SI
+    selection::SEL
+    planned_site_request::V32
+    staged_cell_generations::G
+    staged_trackers::T
+    staged_descriptor_state::D
+    status::S
+end
+
+Adapt.@adapt_structure _LifecycleStateView
+
+@inline function _lifecycle_state_view(workspace)
+    return _LifecycleStateView(
+        workspace.descriptor,
+        workspace.anchor,
+        workspace.planned_site_count,
+        workspace.planned_sites,
+        workspace.partition_labels,
+        workspace.partition_owner,
+        _lifecycle_owned_site_index(workspace.site_index),
+        _lifecycle_selected_request_state(workspace.selection),
+        workspace.planned_site_request,
+        workspace.staged_cell_generations,
+        workspace.staged_trackers,
+        workspace.staged_descriptor_state,
+        workspace.status,
+    )
+end
+
+@inline lifecycle_workspace_status(state::_LifecycleStateView) =
+    @inbounds state.status[1]
+
+@inline _lifecycle_backend_open(state::_LifecycleStateView) =
+    lifecycle_workspace_status(state).code === ProgramStatusSuccess
+
+@inline function _lifecycle_selected_position(
+        state::_LifecycleStateView, request::Integer,
+    )
+    @inbounds state.selection.ready[1] || return Int32(0)
+    return @inbounds state.selection.source_position[Int(request)]
+end
+
+@inline function _lifecycle_request_selected(
+        state::_LifecycleStateView, request::Integer,
+    )
+    return !iszero(_lifecycle_selected_position(state, request))
+end
+
+@inline function _lifecycle_request_allocation(
+        state::_LifecycleStateView, request::Integer,
+    )
+    position = _lifecycle_selected_position(state, request)
+    return iszero(position) ? Int32(0) :
+        @inbounds(state.selection.allocations[position])
 end
 
 """Mutable request, partition, and staged state used by structural effects."""
@@ -160,8 +243,8 @@ end
         workspace.planned_sites,
         workspace.partition_labels,
         workspace.partition_owner,
-        _lifecycle_structure_site_index(workspace.site_index),
-        _lifecycle_structure_selection(workspace.selection),
+        _lifecycle_owned_site_index(workspace.site_index),
+        _lifecycle_selected_request_state(workspace.selection),
         workspace.planned_site_request,
         workspace.staged_ownership,
         workspace.staged_cell_kinds,

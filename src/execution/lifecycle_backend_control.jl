@@ -45,11 +45,6 @@ struct _LifecycleStateProgram{N, TP, D, L}
     lifecycle_plan::L
 end
 
-struct _LifecycleStateEvaluatorPlan{E, S}
-    evaluators::E
-    state_rules::S
-end
-
 struct _LifecycleStatePolicyWorkspace{P}
     policy_workspace::P
 end
@@ -75,7 +70,6 @@ end
 Adapt.@adapt_structure _LifecycleStateDescriptorPlan
 Adapt.@adapt_structure _LifecycleStateRelationshipPlan
 Adapt.@adapt_structure _LifecycleStateProgram
-Adapt.@adapt_structure _LifecycleStateEvaluatorPlan
 Adapt.@adapt_structure _LifecycleStatePolicyWorkspace
 Adapt.@adapt_structure _LifecycleStateRuntime
 
@@ -131,10 +125,8 @@ function _lifecycle_state_launch_payload(state, workspace)
         state.repeat,
         state.mcs,
     )
-    plan = _LifecycleStateEvaluatorPlan(
-        lifecycle.evaluators, lifecycle.state_rules
-    )
-    return runtime, lifecycle.descriptors, plan
+    recipe = _lifecycle_state_recipe(lifecycle)
+    return runtime, recipe, _lifecycle_state_view(workspace)
 end
 
 struct _ProgramStatusSlot{S} <: AbstractVector{ProgramStatus}
@@ -221,6 +213,26 @@ end
 
 @inline _lifecycle_workspace_with_status(workspace::NamedTuple, status) =
     merge(workspace, (; status))
+
+@inline function _lifecycle_workspace_with_status(
+        workspace::_LifecycleStateView, status,
+    )
+    return _LifecycleStateView(
+        workspace.descriptor,
+        workspace.anchor,
+        workspace.planned_site_count,
+        workspace.planned_sites,
+        workspace.partition_labels,
+        workspace.partition_owner,
+        workspace.site_index,
+        workspace.selection,
+        workspace.planned_site_request,
+        workspace.staged_cell_generations,
+        workspace.staged_trackers,
+        workspace.staged_descriptor_state,
+        status,
+    )
+end
 
 @inline function _lifecycle_workspace_with_staged_state(
         workspace::LifecycleWorkspace, state

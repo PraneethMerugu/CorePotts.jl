@@ -387,22 +387,22 @@ end
 end
 
 @kernel function _stage_lifecycle_state_backend_kernel!(
-        runtime, descriptors, plan, workspace, control, plan_class, action
+        runtime, recipe, state, control, plan_class, action
     )
     request = @index(Global, Linear)
-    if request <= length(workspace.active) &&
-            _lifecycle_backend_open(workspace) &&
+    if request <= length(state.descriptor) &&
+            _lifecycle_backend_open(state) &&
             _lifecycle_backend_due(control) &&
-            _lifecycle_request_selected(workspace, request)
-        descriptor = @inbounds descriptors[
-            Int(workspace.descriptor[request])
+            _lifecycle_request_selected(state, request)
+        descriptor = @inbounds recipe.descriptors[
+            Int(state.descriptor[request])
         ]
         if _lifecycle_plan_matches(descriptor, plan_class)
             _apply_lifecycle_effect_state!(
                 BackendLifecycleExecution(),
                 runtime,
-                plan,
-                workspace,
+                recipe,
+                state,
                 request,
                 descriptor,
                 plan_class,

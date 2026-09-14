@@ -100,8 +100,10 @@ function _apply_lifecycle_request_effect!(
     _apply_lifecycle_post_relationships!(
         mode, runtime, plan, workspace, request, descriptor, plan_class
     ) || return -1
+    state_recipe = _lifecycle_state_recipe(plan)
+    state_view = _lifecycle_state_view(workspace)
     _apply_lifecycle_effect_state!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class
+        mode, runtime, state_recipe, state_view, request, descriptor, plan_class
     ) || return -1
     return _finalize_lifecycle_effect!(
         workspace, request, descriptor, plan_class
@@ -185,8 +187,10 @@ end
     descriptor = @inbounds plan.descriptors[Int(workspace.descriptor[request])]
     plan_class = _lifecycle_request_plan_class(descriptor)
     plan_class === nothing && return false
+    state_recipe = _lifecycle_state_recipe(plan)
+    state_view = _lifecycle_state_view(workspace)
     return _apply_lifecycle_effect_state!(
-        mode, runtime, plan, workspace, request, descriptor, plan_class
+        mode, runtime, state_recipe, state_view, request, descriptor, plan_class
     )
 end
 

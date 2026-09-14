@@ -559,7 +559,7 @@ function enqueue_lifecycle_backend_index!(
         Val(:transform_daughters),
         Val(:redraw_daughters),
     )
-    state_runtime, state_descriptors, state_plan =
+    state_runtime, state_recipe, state_view =
         _lifecycle_state_launch_payload(state, workspace)
     for action_value in state_actions
         action = _lifecycle_state_action_value(action_value)
@@ -578,9 +578,8 @@ function enqueue_lifecycle_backend_index!(
             @debug "enqueue lifecycle state staging" plan_class action
             stage_state(
                 state_runtime,
-                state_descriptors,
-                state_plan,
-                workspace,
+                state_recipe,
+                state_view,
                 control,
                 plan_class,
                 action_value;
