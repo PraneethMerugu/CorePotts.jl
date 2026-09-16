@@ -113,16 +113,19 @@ function _boundary_program(
         (CorePotts.OwnershipCountTracker(),),
         "boundary-tracker-plan-v1",
     )
+    domain = CorePotts._standard_cartesian_ownership_domain(
+        shape, (true, true), 2, 1, Bool[true, false]
+    )
     checkerboard_plan = CorePotts.CheckerboardPlan(
-        shape, (true, true), zeros(Int8, 2, 0)
+        domain, zeros(Int8, 2, 0)
     )
     return CorePotts.CompiledPottsProgram(
-        shape, (true, true), offsets, 2, 1,
+        domain, offsets, 2,
         CorePotts.CompiledScalar(2.0f0), 1, Float32[], (), tracker_plan,
         _boundary_descriptor_plan(branch), CorePotts.StageExecutionPlan(),
         CorePotts.CheckerboardProgramEngine(), CorePotts.CPUProgramBackend(),
         "boundary-program-$(shape)-$branch-v1";
-        medium_kinds = Bool[true, false], checkerboard_plan,
+        checkerboard_plan,
     )
 end
 

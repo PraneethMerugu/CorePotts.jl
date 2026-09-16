@@ -218,10 +218,9 @@ function tracker_ownership_delta end
 function tracker_adapt end
 
 """Read-only tracker source shared by rebuild, proposal, and oracle paths."""
-struct TrackerSourceView{O, S, P, R}
+struct TrackerSourceView{O, D, R}
     ownership::O
-    shape::S
-    periodic::P
+    domain::D
     domain_resources::R
 end
 
@@ -230,8 +229,7 @@ Adapt.@adapt_structure TrackerSourceView
 """Construct the read-only authoritative source used by tracker protocols."""
 tracker_source_view(program, ownership) = TrackerSourceView(
     ownership,
-    program.shape,
-    program.periodic,
+    program.domain,
     program.descriptor_plan.domain_resources,
 )
 

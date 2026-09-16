@@ -12,6 +12,7 @@ const COREPOTTS_METAL_WITNESSES = (
     "corepotts_scheduled_draws.jl",
     "corepotts_feasibility.jl",
     "corepotts_stage_boundaries.jl",
+    "corepotts_cartesian_domain.jl",
     "corepotts_structured_transactions.jl",
     "corepotts_cell_stages.jl",
     "corepotts_history_ownership.jl",

@@ -5,30 +5,26 @@ struct _CheckerboardModelDomain end
 struct _CheckerboardProposalDomain end
 struct _CheckerboardLatticeDomain end
 struct _CheckerboardCellDomain end
+struct _CheckerboardOwnerDirectoryDomain end
 
-struct _CheckerboardGeometryEvaluator{N,O}
-    shape::NTuple{N,Int}
-    periodic::NTuple{N,Bool}
+struct _CheckerboardGeometryEvaluator{D,O,C}
+    topology::D
     offsets::O
+    color_offsets::C
     trajectory_key::NTuple{2, UInt64}
     site_count::Int32
 end
 
 @inline function _checkerboard_neighbor_linear(
-        shape::NTuple{N,Int},
-        periodic::NTuple{N,Bool},
+        topology::CartesianFaceTopology{N},
         target_linear::Int32,
         offset::NTuple{N,Int8},
     ) where {N}
-    target = CartesianIndices(shape)[Int(target_linear)]
-    coordinates = Tuple(target)
-    source = ntuple(Val(N)) do dimension
-        value = coordinates[dimension] + Int(offset[dimension])
-        periodic[dimension] ? mod1(value, shape[dimension]) :
-            1 <= value <= shape[dimension] ? value : 0
-    end
-    any(iszero, source) && return Int32(0)
-    return Int32(LinearIndices(shape)[CartesianIndex(source)])
+    return cartesian_lattice_neighbor_site(
+        topology,
+        CartesianIndices(topology.shape)[Int(target_linear)],
+        offset,
+    )
 end
 
 @inline function (evaluator::_CheckerboardGeometryEvaluator)(
@@ -39,7 +35,8 @@ end
     color = getfield(parameters, 2)
     attempt_round = getfield(parameters, 3)
     target = @inbounds target_options[color]
-    semantic = (attempt_round - Int32(1)) * evaluator.site_count + target
+    ordinal = @inbounds evaluator.color_offsets[color] + item - Int32(1)
+    semantic = (attempt_round - Int32(1)) * evaluator.site_count + ordinal
     direction_address = _program_address(
         ProposalDirectionStream, Int(mcs), _CORE_RNG_OPERATIONS.proposal_direction, semantic; subround = color
     )
@@ -47,7 +44,7 @@ end
             Philox4x64x10V3(), evaluator.trajectory_key,
         direction_address, UInt32(length(evaluator.offsets)))) + 1
     source = _checkerboard_neighbor_linear(
-        evaluator.shape, evaluator.periodic, target,
+        evaluator.topology, target,
         getfield(evaluator.offsets, direction))
     priority_address = _program_address(
         CheckerboardPriorityStream, Int(mcs), _CORE_RNG_OPERATIONS.checkerboard_priority, semantic; subround = color
@@ -108,6 +105,7 @@ function _checkerboard_status_fragments(
 end
 
 function _checkerboard_geometry_declaration(
+        domain::CartesianOwnershipDomain,
         plan::CheckerboardPlan,
         proposal_offsets::AbstractMatrix{<:Integer},
         seed::UInt64,
@@ -132,11 +130,11 @@ function _checkerboard_geometry_declaration(
     batch_size = LocalMath.Parameter(:batch_size, Int32;
         bounds = (Int32(0), plan.maximum_color_size))
     evaluator = _CheckerboardGeometryEvaluator(
-        plan.shape,
-        plan.periodic,
+        cartesian_face_topology(domain),
         _proposal_offsets_tuple(proposal_offsets, length(plan.shape)),
+        Tuple(plan.color_offsets),
         _trajectory_key(seed, replica, repeat),
-        Int32(prod(plan.shape; init = 1)),
+        Int32(length(plan.sites)),
     )
     stage = LocalMath.Stage(
         source_space,
@@ -161,63 +159,122 @@ function _checkerboard_geometry_declaration(
         source_space, identity, mcs, color, attempt_round, batch_size)
 end
 
-struct _CheckerboardOwnerEvaluator end
+struct _CheckerboardOwnerEvaluator
+    owner_directory::OwnerDirectoryLayout
+end
 
-@inline function (::_CheckerboardOwnerEvaluator)(
+@inline function (evaluator::_CheckerboardOwnerEvaluator)(
         item::Int32, reads, parameters,
     )
     owner_samples = getfield(reads, 1)
-    old_owner = something(@inbounds owner_samples[1].value)
+    mutable_samples = getfield(reads, 2)
+    obstacle_samples = getfield(reads, 3)
+    old_owner = _owner_at(
+        something(@inbounds owner_samples[1].value),
+        something(@inbounds obstacle_samples[1].value),
+        something(@inbounds mutable_samples[1].value))
     source_sample = @inbounds owner_samples[2]
-    new_owner = source_sample.present ? something(source_sample.value) : old_owner
-    actionable = source_sample.present && old_owner != new_owner
-    raw_priority = something(@inbounds getfield(reads, 2)[1].value)
+    source_mutable = source_sample.present &&
+        (@inbounds mutable_samples[2]).present &&
+        !iszero(something(@inbounds mutable_samples[2].value))
+    new_owner = source_mutable ? _owner_at(
+        something(source_sample.value),
+        something(@inbounds obstacle_samples[2].value), true) : old_owner
+    actionable = source_mutable && old_owner != new_owner
+    raw_priority = something(@inbounds getfield(reads, 4)[1].value)
     return (
         owners = LocalMath.UniqueValue((old_owner, new_owner)),
+        kind_routes = LocalMath.UniqueValue((
+            @inbounds(owner_directory_index(
+                evaluator.owner_directory, old_owner)),
+            @inbounds(owner_directory_index(
+                evaluator.owner_directory, new_owner)),
+        )),
         priority = LocalMath.UniqueValue(
             actionable ? raw_priority : UInt32(0)),
         actionable = LocalMath.UniqueValue(actionable),
     )
 end
 
+
+struct _CheckerboardOwnerKindEvaluator end
+
+@inline function (::_CheckerboardOwnerKindEvaluator)(item, reads, parameters)
+    samples = getfield(reads, 1)
+    return (kinds = LocalMath.UniqueValue((
+        something(@inbounds(samples[1].value)),
+        something(@inbounds(samples[2].value)),
+    )),)
+end
+
 function _checkerboard_proposal_topology_declaration(
+        domain::CartesianOwnershipDomain,
         plan::CheckerboardPlan,
         proposal_offsets::AbstractMatrix{<:Integer},
         seed::UInt64,
         replica::UInt32,
         repeat::UInt32,
+        cell_capacity::Integer,
     )
     geometry = _checkerboard_geometry_declaration(
-        plan, proposal_offsets, seed, replica, repeat)
+        domain, plan, proposal_offsets, seed, replica, repeat)
     lattice_space = LocalMath.Space(_CheckerboardLatticeDomain, plan.shape)
     ownership = LocalMath.Field(lattice_space, Int32)
+    mutable_mask = LocalMath.Field(lattice_space, Bool)
+    obstacle_owner_handles = LocalMath.Field(lattice_space, Int32)
+    directory_count = owner_directory_count(domain, cell_capacity)
+    owner_directory_space = LocalMath.Space(
+        _CheckerboardOwnerDirectoryDomain, Int(directory_count))
+    owner_directory_kinds = LocalMath.Field(owner_directory_space, Int16)
     owner_relation = LocalMath.IndexRelation(
         geometry.sites => lattice_space; optional = true)
     owners = LocalMath.Field(geometry.source_space, NTuple{2,Int32})
+    kind_routes = LocalMath.Field(geometry.source_space, NTuple{2,Int32})
+    kinds = LocalMath.Field(geometry.source_space, NTuple{2,Int16})
     actionable = LocalMath.Field(geometry.source_space, Bool)
     owner_stage = LocalMath.Stage(
         geometry.source_space,
         (
             ownership = LocalMath.Access(
                 ownership, owner_relation; required = false),
+            mutable_mask = LocalMath.Access(
+                mutable_mask, owner_relation; required = false),
+            obstacle_owner_handles = LocalMath.Access(
+                obstacle_owner_handles, owner_relation; required = false),
             raw_priority = LocalMath.Access(
                 geometry.priority, geometry.identity; required = true),
         ),
         (
             _checkerboard_scratch_publication(owners, :owners),
+            _checkerboard_scratch_publication(kind_routes, :kind_routes),
             _checkerboard_scratch_publication(geometry.priority, :priority),
             _checkerboard_scratch_publication(actionable, :actionable),
         ),
-        LocalMath.Evaluator(_CheckerboardOwnerEvaluator()),
+        LocalMath.Evaluator(_CheckerboardOwnerEvaluator(
+            owner_directory_layout(domain, cell_capacity))),
         LocalMath.Control(; prefix = geometry.batch_size),
         LocalMath.SourceOrigin(@__FILE__, @__LINE__;
             label = :checkerboard_proposal_owners),
     )
+    kind_relation = LocalMath.IndexRelation(
+        kind_routes => owner_directory_space; optional = false)
+    kind_stage = LocalMath.Stage(
+        geometry.source_space,
+        (owner_directory_kinds = LocalMath.Access(
+            owner_directory_kinds, kind_relation; required = true),),
+        (_checkerboard_scratch_publication(kinds, :kinds),),
+        LocalMath.Evaluator(_CheckerboardOwnerKindEvaluator()),
+        LocalMath.Control(; prefix = geometry.batch_size),
+        LocalMath.SourceOrigin(@__FILE__, @__LINE__;
+            label = :checkerboard_owner_kinds),
+    )
     law = LocalMath.sequence(
-        geometry.law, LocalMath.LocalLaw(owner_stage))
+        geometry.law, LocalMath.LocalLaw(owner_stage), LocalMath.LocalLaw(kind_stage))
     return merge(geometry, (;
-        law, lattice_space, ownership, owner_relation,
-        owners, qualified_priority = geometry.priority, actionable))
+        law, lattice_space, ownership, mutable_mask, obstacle_owner_handles,
+        owner_relation,
+        owner_directory_space, owner_directory_kinds, kind_routes,
+        owners, kinds, qualified_priority = geometry.priority, actionable))
 end
 
 struct _CheckerboardCellResourceEvaluator end
@@ -239,89 +296,257 @@ struct _CheckerboardTrackerResourceEvaluator{Names,Types} end
     return :(NamedTuple{$(QuoteNode(Names))}(($(results...),)))
 end
 
-struct _CheckerboardContactGatherEvaluator{Degree} end
-struct _CheckerboardReverseContactGatherEvaluator{Degree} end
-
-Base.@noinline function _checkerboard_contact_sample(samples, lane::Int)
-    return @inbounds samples[lane]
+struct _CheckerboardContactGeometryEvaluator{Degree,N,T,O}
+    topology::T
+    offsets::O
 end
 
-function _checkerboard_contact_result(::Val{Reverse}, ::Val{Degree}) where {Reverse,Degree}
-    samples = [gensym(:sample) for _ in 1:Degree]
-    loads = [:( $(samples[lane]) =
-                    _checkerboard_contact_sample(source, $lane) )
-             for lane in 1:Degree]
-    owners = Expr(:tuple, (
-        :($(samples[lane]).present ?
-            something($(samples[lane]).value) : Int32(0))
-        for lane in 1:Degree)...)
-    sites = Expr(:tuple, (
-        :($(samples[lane]).present ?
-            $(samples[lane]).endpoint : Int32(0))
-        for lane in 1:Degree)...)
-    owner_name = Reverse ? :reverse_contact_owners : :contact_owners
-    site_name = Reverse ? :reverse_contact_sites : :contact_sites
-    result = Reverse ?
-        :(($site_name = LocalMath.UniqueValue($sites),
-           $owner_name = LocalMath.UniqueValue($owners))) :
-        :(($owner_name = LocalMath.UniqueValue($owners),
-           $site_name = LocalMath.UniqueValue($sites)))
+# LocalMath global fields admit UInt64 scalar words but not Int64 endpoint
+# tuples. Preserve the signed coordinate bits exactly: a fixed endpoint may be
+# as far as an Int8 relation offset beyond an Int32-bounded lattice face, so an
+# Int32 payload would not cover every admitted domain.
+@inline _checkerboard_endpoint_word(value::Int64) = reinterpret(UInt64, value)
+@inline _checkerboard_endpoint_coordinate(word::UInt64) = reinterpret(Int64, word)
+
+function _CheckerboardContactGeometryEvaluator(topology, offsets)
+    return _CheckerboardContactGeometryEvaluator{
+        length(offsets), length(topology.shape), typeof(topology), typeof(offsets),
+    }(topology, offsets)
+end
+
+@inline function _checkerboard_realize_contact_geometry(
+        topology::CartesianContactTopology{N}, target::CartesianIndex{N},
+        offset, lane::Integer, access::CartesianRelationAccess,
+    )::CartesianNeighbor{N} where {N}
+    return realize_cartesian_contact_geometry(
+        topology, target, offset, lane, access)
+end
+
+@generated function _checkerboard_contact_geometry(
+        evaluator::_CheckerboardContactGeometryEvaluator{Degree,N}, target,
+    ) where {Degree,N}
+    contacts = [gensym(:contact) for _ in 1:Degree]
+    reverse = [gensym(:reverse) for _ in 1:Degree]
+    assignments = Expr[]
+    for lane in 1:Degree
+        reverse_offset = Expr(:tuple, (
+            :(-Int(@inbounds evaluator.offsets[$lane][$axis]))
+            for axis in 1:N)...)
+        push!(assignments, :($(contacts[lane]) =
+            _checkerboard_realize_contact_geometry(
+                evaluator.topology, target,
+                @inbounds(evaluator.offsets[$lane]), $lane,
+                OwnerRelationAccess)))
+        push!(assignments, :($(reverse[lane]) =
+            cartesian_lattice_neighbor_site(
+                evaluator.topology, target, $reverse_offset)))
+    end
+    tuple_field(field, values) = Expr(:tuple,
+        [:(@inbounds $(values[lane]).$field) for lane in 1:Degree]...)
+    categories = Expr(:tuple,
+        [:(UInt8(@inbounds $(contacts[lane]).category))
+            for lane in 1:Degree]...)
+    endpoints = Expr(:tuple, [:(_checkerboard_endpoint_word(
+            @inbounds $(contacts[lane]).endpoint[$axis]))
+        for lane in 1:Degree for axis in 1:N]...)
     return quote
-        source = getfield(reads, 1)
-        $(loads...)
-        $result
+        $(assignments...)
+        (
+            contact_routes = $(tuple_field(:site, contacts)),
+            reverse_contact_routes = $(Expr(:tuple, reverse...)),
+            geometry_categories = $categories,
+            fixed_owners = $(tuple_field(:owner, contacts)),
+            endpoints = $endpoints,
+        )
     end
 end
 
-@generated function (::_CheckerboardContactGatherEvaluator{Degree})(
-        item::Int32, reads, parameters) where {Degree}
-    return _checkerboard_contact_result(Val(false), Val(Degree))
+@inline function (evaluator::_CheckerboardContactGeometryEvaluator{Degree,N,T,O})(
+        item::Int32, reads, parameters,
+    )::NamedTuple{
+        (:contact_routes, :reverse_contact_routes, :geometry_categories,
+            :fixed_owners, :endpoints),
+        Tuple{
+            LocalMath.UniqueValue{NTuple{Degree,Int32}},
+            LocalMath.UniqueValue{NTuple{Degree,Int32}},
+            LocalMath.UniqueValue{NTuple{Degree,UInt8}},
+            LocalMath.UniqueValue{NTuple{Degree,Int32}},
+            LocalMath.UniqueValue{NTuple{Degree * N,UInt64}},
+        },
+    } where {Degree,N,T,O}
+    target_linear = something(@inbounds getfield(reads, 1)[1].value)
+    target = _checkerboard_cartesian_site(
+        evaluator.topology.shape, target_linear
+    )
+    geometry = _checkerboard_contact_geometry(evaluator, target)
+    return (
+        contact_routes = LocalMath.UniqueValue(geometry.contact_routes),
+        reverse_contact_routes =
+            LocalMath.UniqueValue(geometry.reverse_contact_routes),
+        geometry_categories =
+            LocalMath.UniqueValue(geometry.geometry_categories),
+        fixed_owners = LocalMath.UniqueValue(geometry.fixed_owners),
+        endpoints = LocalMath.UniqueValue(geometry.endpoints),
+    )
 end
 
-@generated function (::_CheckerboardReverseContactGatherEvaluator{Degree})(
-        item::Int32, reads, parameters) where {Degree}
-    return _checkerboard_contact_result(Val(true), Val(Degree))
+struct _CheckerboardContactOwnerEvaluator{Degree}
+    owner_directory::OwnerDirectoryLayout
 end
 
+Base.@noinline function _checkerboard_semantic_contact(
+        category_code::UInt8,
+        site::Int32,
+        fixed_owner::Int32,
+        owner_sample,
+        mutable_sample,
+        obstacle_sample,
+        mutable_only::Bool,
+    )
+    if category_code == UInt8(FixedExteriorCartesianNeighbor)
+        return (category_code, site, fixed_owner)
+    elseif category_code != UInt8(MutableCartesianNeighbor) ||
+            !owner_sample.present
+        return (UInt8(AbsentCartesianNeighbor), Int32(0), Int32(0))
+    end
+    site_mutable = mutable_sample.present &&
+        something(mutable_sample.value)
+    owner = something(owner_sample.value)
+    if !site_mutable
+        resolved = mutable_only ?
+            AbsentCartesianNeighbor : FixedObstacleCartesianNeighbor
+        return (UInt8(resolved), site,
+            mutable_only ? Int32(0) : _owner_at(
+                owner, something(obstacle_sample.value), false))
+    end
+    return (UInt8(MutableCartesianNeighbor), site, owner)
+end
 
-struct _CheckerboardContactKindEvaluator{Degree} end
-struct _CheckerboardReverseContactKindEvaluator{Degree} end
+Base.@noinline function _checkerboard_mutable_contact(
+        site::Int32, owner_sample, mutable_sample,
+    )
+    if iszero(site) || !owner_sample.present || !mutable_sample.present ||
+            !something(mutable_sample.value)
+        return (UInt8(AbsentCartesianNeighbor), Int32(0), Int32(0))
+    end
+    return (UInt8(MutableCartesianNeighbor), site,
+        something(owner_sample.value))
+end
 
-function _checkerboard_contact_kind_result(
-        ::Val{Reverse}, ::Val{Degree}) where {Reverse,Degree}
-    samples = [gensym(:sample) for _ in 1:Degree]
-    loads = [:( $(samples[lane]) = @inbounds(source[$lane]) )
-             for lane in 1:Degree]
-    kinds = Expr(:tuple, (
-        :($(samples[lane]).present ?
-            something($(samples[lane]).value) : Int16(0))
-        for lane in 1:Degree)...)
-    name = Reverse ? :reverse_contact_kinds : :contact_kinds
+@inline _checkerboard_contact_site(category::UInt8, site::Int32) =
+    category == UInt8(MutableCartesianNeighbor) ? site : Int32(0)
+
+@generated function _checkerboard_contact_owner_result(
+        evaluator::_CheckerboardContactOwnerEvaluator{Degree},
+        contact_routes, reverse_routes, reads,
+    ) where {Degree}
+    contacts = [gensym(:contact) for _ in 1:Degree]
+    reverse = [gensym(:reverse) for _ in 1:Degree]
+    assignments = Expr[]
+    for lane in 1:Degree
+        push!(assignments, :($(contacts[lane]) =
+            _checkerboard_semantic_contact(
+                @inbounds(getfield(reads, 3)[1].value[$lane]),
+                @inbounds(contact_routes[$lane]),
+                @inbounds(getfield(reads, 4)[1].value[$lane]),
+                @inbounds(getfield(reads, 5)[$lane]),
+                @inbounds(getfield(reads, 6)[$lane]),
+                @inbounds(getfield(reads, 7)[$lane]), false)))
+        push!(assignments, :($(reverse[lane]) =
+            _checkerboard_mutable_contact(
+                @inbounds(reverse_routes[$lane]),
+                @inbounds(getfield(reads, 8)[$lane]),
+                @inbounds(getfield(reads, 9)[$lane]))))
+    end
+    contact_categories = Expr(:tuple,
+        [:(@inbounds $(contacts[lane])[1]) for lane in 1:Degree]...)
+    contact_sites = Expr(:tuple,
+        [:(_checkerboard_contact_site(
+            @inbounds($(contacts[lane])[1]),
+            @inbounds($(contacts[lane])[2]))) for lane in 1:Degree]...)
+    contact_owners = Expr(:tuple,
+        [:(@inbounds $(contacts[lane])[3]) for lane in 1:Degree]...)
+    contact_kind_routes = Expr(:tuple,
+        [:(@inbounds owner_directory_index(
+            evaluator.owner_directory,
+            @inbounds($(contacts[lane])[3]))) for lane in 1:Degree]...)
+    reverse_sites = Expr(:tuple,
+        [:(_checkerboard_contact_site(
+            @inbounds($(reverse[lane])[1]),
+            @inbounds($(reverse[lane])[2]))) for lane in 1:Degree]...)
+    reverse_owners = Expr(:tuple,
+        [:(@inbounds $(reverse[lane])[3]) for lane in 1:Degree]...)
+    reverse_kind_routes = Expr(:tuple,
+        [:(@inbounds owner_directory_index(
+            evaluator.owner_directory,
+            @inbounds($(reverse[lane])[3]))) for lane in 1:Degree]...)
     return quote
-        source = getfield(reads, 1)
-        $(loads...)
-        ($name = LocalMath.UniqueValue($kinds),)
+        $(assignments...)
+        contact_categories = $contact_categories
+        contact_sites = $contact_sites
+        contact_owners = $contact_owners
+        reverse_sites = $reverse_sites
+        reverse_owners = $reverse_owners
+        (
+            contact_categories = LocalMath.UniqueValue(contact_categories),
+            contact_sites = LocalMath.UniqueValue(contact_sites),
+            contact_owners = LocalMath.UniqueValue(contact_owners),
+            contact_kind_routes = LocalMath.UniqueValue($contact_kind_routes),
+            reverse_contact_sites = LocalMath.UniqueValue(reverse_sites),
+            reverse_contact_owners = LocalMath.UniqueValue(reverse_owners),
+            reverse_contact_kind_routes =
+                LocalMath.UniqueValue($reverse_kind_routes),
+        )
     end
 end
 
-@generated function (::_CheckerboardContactKindEvaluator{Degree})(
-        item::Int32, reads, parameters) where {Degree}
-    return _checkerboard_contact_kind_result(Val(false), Val(Degree))
+@inline function (evaluator::_CheckerboardContactOwnerEvaluator{Degree})(
+        item::Int32, reads, parameters,
+    ) where {Degree}
+    contact_routes = something(@inbounds getfield(reads, 1)[1].value)
+    reverse_routes = something(@inbounds getfield(reads, 2)[1].value)
+    return _checkerboard_contact_owner_result(
+        evaluator, contact_routes, reverse_routes, reads)
 end
 
-@generated function (::_CheckerboardReverseContactKindEvaluator{Degree})(
-        item::Int32, reads, parameters) where {Degree}
-    return _checkerboard_contact_kind_result(Val(true), Val(Degree))
+struct _CheckerboardContactDirectoryKindEvaluator{Degree} end
+
+@generated function _checkerboard_contact_directory_kind_result(
+        ::Val{Degree}, contacts, reverse,
+        contact_categories::NTuple{Degree,UInt8},
+        reverse_sites::NTuple{Degree,Int32},
+    ) where {Degree}
+    contact_kinds = Expr(:tuple, [:(
+        @inbounds(contact_categories[$lane]) ==
+            UInt8(AbsentCartesianNeighbor) ? Int16(0) :
+            something(@inbounds contacts[$lane].value)
+    ) for lane in 1:Degree]...)
+    reverse_kinds = Expr(:tuple, [:(
+        iszero(@inbounds reverse_sites[$lane]) ? Int16(0) :
+            something(@inbounds reverse[$lane].value)
+    ) for lane in 1:Degree]...)
+    return quote
+        (
+            contact_kinds = LocalMath.UniqueValue($contact_kinds),
+            reverse_contact_kinds = LocalMath.UniqueValue($reverse_kinds),
+        )
+    end
+end
+
+@inline function (::_CheckerboardContactDirectoryKindEvaluator{Degree})(
+        item::Int32, reads, parameters,
+    ) where {Degree}
+    contacts = getfield(reads, 1)
+    reverse = getfield(reads, 2)
+    contact_categories = something(@inbounds getfield(reads, 3)[1].value)
+    reverse_sites = something(@inbounds getfield(reads, 4)[1].value)
+    return _checkerboard_contact_directory_kind_result(
+        Val(Degree), contacts, reverse, contact_categories, reverse_sites)
 end
 
 @inline function (::_CheckerboardCellResourceEvaluator)(
         item::Int32, reads, parameters)
-    kind_samples = getfield(reads, 1)
-    volume_samples = getfield(reads, 2)
-    old_sample = @inbounds kind_samples[1]
-    new_sample = @inbounds kind_samples[2]
-    old_kind = old_sample.present ? something(old_sample.value) : Int16(0)
-    new_kind = new_sample.present ? something(new_sample.value) : Int16(0)
+    volume_samples = getfield(reads, 1)
     old_volume_sample = @inbounds volume_samples[1]
     new_volume_sample = @inbounds volume_samples[2]
     old_volume = old_volume_sample.present ?
@@ -329,7 +554,6 @@ end
     new_volume = new_volume_sample.present ?
         something(new_volume_sample.value) : Int32(0)
     return (
-        kinds = LocalMath.UniqueValue((old_kind, new_kind)),
         volumes = LocalMath.UniqueValue((old_volume, new_volume)),
     )
 end
@@ -966,20 +1190,79 @@ end
 @inline _checkerboard_scientific_parameters(reads, ::Val{true}, ::Val{Offset}) where {Offset} =
     something(@inbounds getfield(reads, Offset + 1)[1].value)
 
-@generated function _checkerboard_scientific_contact(
+@inline function _checkerboard_neighbor_category(code::UInt8)
+    code == UInt8(MutableCartesianNeighbor) &&
+        return MutableCartesianNeighbor
+    code == UInt8(FixedExteriorCartesianNeighbor) &&
+        return FixedExteriorCartesianNeighbor
+    code == UInt8(FixedObstacleCartesianNeighbor) &&
+        return FixedObstacleCartesianNeighbor
+    code == UInt8(AbsentCartesianNeighbor) &&
+        return AbsentCartesianNeighbor
+    return InvalidCartesianNeighbor
+end
+
+struct _CheckerboardEndpointCoordinate{N,E}
+    endpoints::E
+    lane::Int
+end
+
+@inline function (coordinate::_CheckerboardEndpointCoordinate{N})(axis::Int) where {N}
+    return _checkerboard_endpoint_coordinate(
+        @inbounds coordinate.endpoints[(coordinate.lane - 1) * N + axis])
+end
+
+struct _CheckerboardContactNeighborBuilder{N,C,E,S,O}
+    categories::C
+    endpoints::E
+    sites::S
+    owners::O
+end
+
+@inline function _checkerboard_contact_neighbor_builder(
+        categories::NTuple{Degree,UInt8}, endpoints::NTuple{Count,UInt64},
+        sites::NTuple{Degree,Int32}, owners::NTuple{Degree,Int32},
+    ) where {Degree,Count}
+    Count % Degree == 0 || error("contact endpoint payload has invalid width")
+    N = Count ÷ Degree
+    return _CheckerboardContactNeighborBuilder{
+        N,typeof(categories),typeof(endpoints),typeof(sites),typeof(owners)}(
+            categories, endpoints, sites, owners)
+end
+
+@inline function (builder::_CheckerboardContactNeighborBuilder{N})(lane::Int) where {N}
+    endpoint = ntuple(
+        _CheckerboardEndpointCoordinate{N,typeof(builder.endpoints)}(
+            builder.endpoints, lane), Val(N))
+    return CartesianNeighbor(
+        _checkerboard_neighbor_category(
+            @inbounds builder.categories[lane]),
+        @inbounds(builder.sites[lane]), @inbounds(builder.owners[lane]),
+        Int32(lane), endpoint)
+end
+
+@inline function _checkerboard_scientific_contact(
         reads, ::Val{Degree}, ::Val{Offset},
     ) where {Degree, Offset}
-    iszero(Degree) && return :(((), (), (), (), (), ()))
-    return quote
-        (
-            something(@inbounds getfield(reads, $(1 + Offset))[1].value),
-            something(@inbounds getfield(reads, $(2 + Offset))[1].value),
-            something(@inbounds getfield(reads, $(3 + Offset))[1].value),
-            something(@inbounds getfield(reads, $(4 + Offset))[1].value),
-            something(@inbounds getfield(reads, $(5 + Offset))[1].value),
-            something(@inbounds getfield(reads, $(6 + Offset))[1].value),
-        )
-    end
+    iszero(Degree) && return ((), (), (), (), (), (), ())
+    categories = something(
+        @inbounds getfield(reads, 1 + Offset)[1].value)
+    endpoints = something(@inbounds getfield(reads, 2 + Offset)[1].value)
+    sites = something(@inbounds getfield(reads, 3 + Offset)[1].value)
+    owners = something(@inbounds getfield(reads, 4 + Offset)[1].value)
+    neighbors = ntuple(
+        _checkerboard_contact_neighbor_builder(
+            categories, endpoints, sites, owners),
+        Val(Degree))
+    return (
+        neighbors,
+        sites,
+        owners,
+        something(@inbounds getfield(reads, 5 + Offset)[1].value),
+        something(@inbounds getfield(reads, 6 + Offset)[1].value),
+        something(@inbounds getfield(reads, 7 + Offset)[1].value),
+        something(@inbounds getfield(reads, 8 + Offset)[1].value),
+    )
 end
 
 @inline function _checkerboard_proposal_context(
@@ -996,10 +1279,15 @@ end
     science_parameters = _checkerboard_scientific_parameters(
         reads, Val(HasParameters), _checkerboard_read_offset(offsets, Val(:parameters))
     )
-    contact_sites, contact_owners, contact_kinds,
+    target_linear, source_linear = sites
+    target = _checkerboard_cartesian_site(plan.shape, target_linear)
+    source = source_linear > 0 ?
+        _checkerboard_cartesian_site(plan.shape, source_linear) : target
+    contact_neighbors, contact_sites, contact_owners, contact_kinds,
         reverse_contact_sites, reverse_contact_owners, reverse_contact_kinds =
         _checkerboard_scientific_contact(
-        reads, Val(Degree), _checkerboard_read_offset(offsets, Val(:contact))
+        reads, Val(Degree),
+        _checkerboard_read_offset(offsets, Val(:contact))
     )
     tracker_values = _checkerboard_scientific_tracker_values(
         reads, Val(length(plan.tracker_descriptors)),
@@ -1024,10 +1312,6 @@ end
         _checkerboard_read_offset(offsets, Val(:state)),
         Val(Degree)
     )
-    target_linear, source_linear = sites
-    target = _checkerboard_cartesian_site(plan.shape, target_linear)
-    source = source_linear > 0 ?
-        _checkerboard_cartesian_site(plan.shape, source_linear) : target
     context = _GatheredProposalContext(;
         source,
         target,
@@ -1044,6 +1328,7 @@ end
         scalar_zero = zero(T),
         parameters = science_parameters,
         state_values,
+        contact_neighbors,
         contact_sites,
         contact_owners,
         contact_kinds,
@@ -1105,6 +1390,7 @@ Base.@noinline function (evaluator::_CheckerboardConstraintEvaluator{
 end
 
 function _checkerboard_scientific_declaration(
+        domain::CartesianOwnershipDomain,
         checkerboard::CheckerboardPlan,
         proposal_offsets::AbstractMatrix{<:Integer},
         seed::UInt64,
@@ -1123,7 +1409,8 @@ function _checkerboard_scientific_declaration(
     cell_capacity >= 0 || throw(ArgumentError(
         "checkerboard cell capacity cannot be negative"))
     topology = _checkerboard_proposal_topology_declaration(
-        checkerboard, proposal_offsets, seed, replica, repeat)
+        domain, checkerboard, proposal_offsets, seed, replica, repeat,
+        cell_capacity)
     inventory = _proposal_gather_inventory(descriptor_plan)
     history_clear_handles = filter(ownership_change_handles) do handle
         state_read_source(stage_plan, descriptor_plan.state_layout, handle).schema.domain === :history
@@ -1142,12 +1429,11 @@ function _checkerboard_scientific_declaration(
         stage_plan, descriptor_plan, state_handles,
         relationship_schemas, relationship_state)
     cell_space = LocalMath.Space(_CheckerboardCellDomain, Int(cell_capacity))
-    cell_kinds = LocalMath.Field(cell_space, Int16)
     cell_generations = LocalMath.Field(cell_space, UInt32)
     cell_volumes = LocalMath.Field(cell_space, Int32)
     kind_relation = LocalMath.IndexRelation(
         topology.owners => cell_space; optional = true)
-    kinds = LocalMath.Field(topology.source_space, NTuple{2,Int16})
+    kinds = topology.kinds
     volumes = LocalMath.Field(topology.source_space, NTuple{2,Int32})
     tracker_keys = requirements.tracker_keys
     tracker_descriptors = requirements.tracker_descriptors
@@ -1246,23 +1532,46 @@ function _checkerboard_scientific_declaration(
     contact = if iszero(contact_degree)
         nothing
     else
-        target_selection = LocalMath.IndexRelation(
-            topology.target => topology.lattice_space; optional = false)
-        affine = LocalMath.AffineRelation(
-            topology.lattice_space => topology.lattice_space;
-            offsets = contact_offsets)
-        boundary = LocalMath.BoundaryRelation(
-            affine, LocalMath.PeriodicBoundary(Tuple(checkerboard.periodic)))
-        relation = LocalMath.compose(target_selection, boundary)
-        reverse_affine = LocalMath.AffineRelation(
-            topology.lattice_space => topology.lattice_space;
-            offsets = map(offset -> map(-, offset), contact_offsets))
-        reverse_boundary = LocalMath.BoundaryRelation(
-            reverse_affine,
-            LocalMath.PeriodicBoundary(Tuple(checkerboard.periodic)))
-        reverse_relation = LocalMath.compose(target_selection, reverse_boundary)
-        affected_relation = LocalMath.compose(
-            target_selection, reverse_boundary, boundary)
+        N = length(checkerboard.shape)
+        contact_topology = cartesian_contact_topology(domain)
+        contact_routes = LocalMath.Field(
+            topology.source_space, NTuple{contact_degree,Int32})
+        reverse_contact_routes = LocalMath.Field(
+            topology.source_space, NTuple{contact_degree,Int32})
+        geometry_categories = LocalMath.Field(
+            topology.source_space, NTuple{contact_degree,UInt8})
+        fixed_owners = LocalMath.Field(
+            topology.source_space, NTuple{contact_degree,Int32})
+        contact_endpoints = LocalMath.Field(
+            topology.source_space,
+            NTuple{contact_degree * N,UInt64})
+        geometry_stage = LocalMath.Stage(
+            topology.source_space,
+            (target = LocalMath.Access(
+                topology.target, topology.identity; required = true),),
+            (
+                _checkerboard_scratch_publication(
+                    contact_routes, :contact_routes),
+                _checkerboard_scratch_publication(
+                    reverse_contact_routes, :reverse_contact_routes),
+                _checkerboard_scratch_publication(
+                    geometry_categories, :geometry_categories),
+                _checkerboard_scratch_publication(
+                    fixed_owners, :fixed_owners),
+                _checkerboard_scratch_publication(
+                    contact_endpoints, :endpoints),
+            ),
+            LocalMath.Evaluator(_CheckerboardContactGeometryEvaluator(
+                contact_topology, contact_offsets
+            )),
+            LocalMath.Control(; prefix = topology.batch_size),
+            LocalMath.SourceOrigin(@__FILE__, @__LINE__;
+                label = :checkerboard_contact_geometry),
+        )
+        contact_route = LocalMath.IndexRelation(
+            contact_routes => topology.lattice_space; optional = true)
+        reverse_contact_route = LocalMath.IndexRelation(
+            reverse_contact_routes => topology.lattice_space; optional = true)
         contact_owners = LocalMath.Field(
             topology.source_space, NTuple{contact_degree,Int32})
         reverse_contact_owners = LocalMath.Field(
@@ -1275,77 +1584,129 @@ function _checkerboard_scientific_declaration(
             topology.source_space, NTuple{contact_degree,Int16})
         reverse_contact_sites = LocalMath.Field(
             topology.source_space, NTuple{contact_degree,Int32})
-        kind_selection = LocalMath.IndexRelation(
-            contact_owners => cell_space; optional = true)
-        reverse_kind_selection = LocalMath.IndexRelation(
-            reverse_contact_owners => cell_space; optional = true)
+        contact_kind_routes = LocalMath.Field(
+            topology.source_space, NTuple{contact_degree,Int32})
+        reverse_contact_kind_routes = LocalMath.Field(
+            topology.source_space, NTuple{contact_degree,Int32})
+        contact_categories = LocalMath.Field(
+            topology.source_space, NTuple{contact_degree,UInt8})
         owner_stage = LocalMath.Stage(
             topology.source_space,
-            (ownership = LocalMath.Access(
-                topology.ownership, relation; required = false),),
             (
+                contact_routes = LocalMath.Access(
+                    contact_routes, topology.identity; required = true),
+                reverse_contact_routes = LocalMath.Access(
+                    reverse_contact_routes, topology.identity; required = true),
+                geometry_categories = LocalMath.Access(
+                    geometry_categories, topology.identity; required = true),
+                fixed_owners = LocalMath.Access(
+                    fixed_owners, topology.identity; required = true),
+                contact_ownership = LocalMath.Access(
+                    topology.ownership, contact_route; required = false),
+                contact_mutable = LocalMath.Access(
+                    topology.mutable_mask, contact_route; required = false),
+                contact_obstacle_owner_handles = LocalMath.Access(
+                    topology.obstacle_owner_handles, contact_route;
+                    required = false),
+                reverse_ownership = LocalMath.Access(
+                    topology.ownership, reverse_contact_route;
+                    required = false),
+                reverse_mutable = LocalMath.Access(
+                    topology.mutable_mask, reverse_contact_route; required = false),
+            ),
+            (
+                _checkerboard_scratch_publication(
+                    contact_categories, :contact_categories),
+                _checkerboard_scratch_publication(
+                    contact_sites, :contact_sites),
                 _checkerboard_scratch_publication(
                     contact_owners, :contact_owners),
                 _checkerboard_scratch_publication(
-                    contact_sites, :contact_sites),
-            ),
-            LocalMath.Evaluator(
-                _CheckerboardContactGatherEvaluator{contact_degree}()),
-            LocalMath.Control(; prefix = topology.batch_size),
-            LocalMath.SourceOrigin(@__FILE__, @__LINE__;
-                label = :checkerboard_contact_ownership),
-        )
-        reverse_owner_stage = LocalMath.Stage(
-            topology.source_space,
-            (ownership = LocalMath.Access(
-                topology.ownership, reverse_relation; required = false),),
-            (
+                    contact_kind_routes, :contact_kind_routes),
                 _checkerboard_scratch_publication(
                     reverse_contact_sites, :reverse_contact_sites),
                 _checkerboard_scratch_publication(
                     reverse_contact_owners, :reverse_contact_owners),
+                _checkerboard_scratch_publication(
+                    reverse_contact_kind_routes,
+                    :reverse_contact_kind_routes),
             ),
-            LocalMath.Evaluator(
-                _CheckerboardReverseContactGatherEvaluator{contact_degree}()),
+            LocalMath.Evaluator(_CheckerboardContactOwnerEvaluator{
+                contact_degree}(
+                    owner_directory_layout(domain, cell_capacity))),
             LocalMath.Control(; prefix = topology.batch_size),
             LocalMath.SourceOrigin(@__FILE__, @__LINE__;
-                label = :checkerboard_reverse_contact_ownership),
+                label = :checkerboard_contact_owners),
         )
+        contact_kind_relation = LocalMath.IndexRelation(
+            contact_kind_routes => topology.owner_directory_space;
+            optional = false)
+        reverse_contact_kind_relation = LocalMath.IndexRelation(
+            reverse_contact_kind_routes => topology.owner_directory_space;
+            optional = false)
         kind_stage = LocalMath.Stage(
             topology.source_space,
-            (cell_kinds = LocalMath.Access(
-                cell_kinds, kind_selection; required = false),),
-            (_checkerboard_scratch_publication(
-                contact_kinds, :contact_kinds),),
+            (
+                contact_directory_kinds = LocalMath.Access(
+                    topology.owner_directory_kinds, contact_kind_relation;
+                    required = true),
+                reverse_contact_directory_kinds = LocalMath.Access(
+                    topology.owner_directory_kinds,
+                    reverse_contact_kind_relation; required = true),
+                contact_categories = LocalMath.Access(
+                    contact_categories, topology.identity; required = true),
+                reverse_contact_sites = LocalMath.Access(
+                    reverse_contact_sites, topology.identity; required = true),
+            ),
+            (
+                _checkerboard_scratch_publication(
+                    contact_kinds, :contact_kinds),
+                _checkerboard_scratch_publication(
+                    reverse_contact_kinds, :reverse_contact_kinds),
+            ),
             LocalMath.Evaluator(
-                _CheckerboardContactKindEvaluator{contact_degree}()),
+                _CheckerboardContactDirectoryKindEvaluator{contact_degree}()),
             LocalMath.Control(; prefix = topology.batch_size),
             LocalMath.SourceOrigin(@__FILE__, @__LINE__;
                 label = :checkerboard_contact_kinds),
         )
-        reverse_kind_stage = LocalMath.Stage(
-            topology.source_space,
-            (cell_kinds = LocalMath.Access(
-                cell_kinds, reverse_kind_selection; required = false),),
-            (_checkerboard_scratch_publication(
-                reverse_contact_kinds, :reverse_contact_kinds),),
-            LocalMath.Evaluator(
-                _CheckerboardReverseContactKindEvaluator{contact_degree}()),
-            LocalMath.Control(; prefix = topology.batch_size),
-            LocalMath.SourceOrigin(@__FILE__, @__LINE__;
-                label = :checkerboard_reverse_contact_kinds),
+        relation = LocalMath.IndexRelation(
+            contact_sites => topology.lattice_space; optional = true)
+        reverse_relation = LocalMath.IndexRelation(
+            reverse_contact_sites => topology.lattice_space; optional = true)
+        affected_affine = LocalMath.AffineRelation(
+            topology.lattice_space => topology.lattice_space;
+            offsets = contact_offsets,
         )
+        affected_boundary = LocalMath.BoundaryRelation(
+            affected_affine,
+            LocalMath.MaskedBoundary(
+                topology.mutable_mask,
+                LocalMath.PeriodicBoundary(cartesian_periodic_axes(domain)),
+            ),
+        )
+        affected_relation = LocalMath.compose(
+            reverse_relation, affected_boundary
+        )
+        kind_selection = LocalMath.IndexRelation(
+            contact_owners => cell_space; optional = true)
         (; relation, reverse_relation, affected_relation,
             owners = contact_owners, sites = contact_sites,
             kinds = contact_kinds, reverse_sites = reverse_contact_sites,
             reverse_owners = reverse_contact_owners,
             reverse_kinds = reverse_contact_kinds,
-            kind_selection, reverse_kind_selection,
+            categories = contact_categories,
+            endpoints = contact_endpoints,
+            kind_selection,
+            geometry_fields = (
+                contact_routes, reverse_contact_routes,
+                geometry_categories, fixed_owners, contact_endpoints,
+                contact_kind_routes, reverse_contact_kind_routes,
+            ),
             law = LocalMath.sequence(
+                LocalMath.LocalLaw(geometry_stage),
                 LocalMath.LocalLaw(owner_stage),
-                LocalMath.LocalLaw(reverse_owner_stage),
-                LocalMath.LocalLaw(kind_stage),
-                LocalMath.LocalLaw(reverse_kind_stage)))
+                LocalMath.LocalLaw(kind_stage)))
     end
     state_accesses = map(state_fields) do field
         LocalMath.Access(field, field.space == model_space ? model_state_relation : proposal_site_relation; required = false)
@@ -1370,13 +1731,10 @@ function _checkerboard_scientific_declaration(
     cell_resource_stage = LocalMath.Stage(
         topology.source_space,
         (
-            cell_kinds = LocalMath.Access(
-                cell_kinds, kind_relation; required = false),
             cell_volumes = LocalMath.Access(
                 cell_volumes, kind_relation; required = false),
         ),
         (
-            _checkerboard_scratch_publication(kinds, :kinds),
             _checkerboard_scratch_publication(volumes, :volumes),
         ),
         LocalMath.Evaluator(_CheckerboardCellResourceEvaluator()),
@@ -1432,6 +1790,12 @@ function _checkerboard_scientific_declaration(
             ),
         )
     contact_reads = contact === nothing ? NamedTuple() : (
+            contact_categories = LocalMath.Access(
+                contact.categories, topology.identity; required = true
+            ),
+            contact_endpoints = LocalMath.Access(
+                contact.endpoints, topology.identity; required = true
+            ),
             contact_sites = LocalMath.Access(
                 contact.sites, topology.identity; required = true
             ),
@@ -1602,7 +1966,7 @@ function _checkerboard_scientific_declaration(
     )
     return merge(topology, (;
         law, terms, shape = checkerboard.shape,
-        cell_space, cell_kinds, cell_generations, cell_volumes,
+        cell_space, cell_generations, cell_volumes,
         kind_relation,
         kinds, volumes,
         evaluation, accepted_site_terms, accepted_site_fields,
