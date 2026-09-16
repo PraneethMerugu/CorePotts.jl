@@ -13,9 +13,9 @@ function _metal_fixed_owner_plan(contact_offsets)
     evaluator = CorePotts.StaticEvaluator(CorePotts.OperationExpression(
         CorePotts.OrderedFold(+),
         CorePotts.OperationExpression(
-            *, CorePotts.LiteralExpression(-1.0f0), owner_a),
+            *, CorePotts.LiteralExpression(1.0f0), owner_a),
         CorePotts.OperationExpression(
-            *, CorePotts.LiteralExpression(-3.0f0), owner_a, owner_b),
+            *, CorePotts.LiteralExpression(3.0f0), owner_a, owner_b),
     ))
     descriptor = CorePotts.ProposalDescriptor(
         evaluator,
@@ -57,7 +57,7 @@ function _metal_cartesian_case(case::Symbol)
                 CorePotts.PeriodicCartesianFace),
             face_owner_handles = (Int32(1), Int32(0), Int32(0), Int32(0)))
         ownership = reshape(Int32[1, 1, 0], shape)
-        expected = reshape(Int32[0, 1, 0], shape)
+        expected = reshape(Int32[1, 1, 0], shape)
     elseif case === :fixed_obstacle
         shape = (4, 1)
         proposal_offsets = reshape(Int8[3, 0], 2, 1)
@@ -73,7 +73,7 @@ function _metal_cartesian_case(case::Symbol)
                 CorePotts.PeriodicCartesianFace),
             obstacle_owner_handles = obstacle_handles)
         ownership = reshape(Int32[1, 1, 7, 0], shape)
-        expected = reshape(Int32[0, 1, -1, 0], shape)
+        expected = reshape(Int32[1, 1, -1, 0], shape)
     else
         error("unknown Cartesian Metal case: $case")
     end
@@ -114,7 +114,10 @@ function _run_metal_cartesian_case(case, to_backend)
     isolated = CorePotts.fold_proposal_contributions(
         fixture.program.descriptor_plan, contributions
     )
-    @test isolated.delta_h == -2.0f0
+    # The fixed-owner contribution makes this proposal uphill. At zero
+    # temperature the device must reject it; a missing contact contribution
+    # would instead produce ΔH == 0 and accept, changing ownership below.
+    @test isolated.delta_h == 2.0f0
 
     runtime = to_backend === identity ? host :
         CorePotts.adapt_program_runtime(to_backend, host)
@@ -126,8 +129,8 @@ function _run_metal_cartesian_case(case, to_backend)
     @test receipt.committed_mcs == 1
     @test receipt.snapshot.ownership == fixture.expected
     counters = receipt.counters
-    @test counters.accepted == 1
-    @test counters.rejected == 0
+    @test counters.accepted == 0
+    @test counters.rejected == 1
     @test counters.null_attempts == fixture.mutable_attempts - 1
     @test counters.accepted + counters.rejected + counters.null_attempts ==
         fixture.mutable_attempts
