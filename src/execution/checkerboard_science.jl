@@ -410,14 +410,23 @@ Base.@noinline function _checkerboard_semantic_contact(
         return (UInt8(AbsentCartesianNeighbor), Int32(0), Int32(0))
     end
     site_mutable = mutable_sample.present &&
-        something(mutable_sample.value)
-    owner = something(owner_sample.value)
+        something(mutable_sample.value, false)
+    owner = something(owner_sample.value, Int32(0))
     if !site_mutable
-        resolved = mutable_only ?
-            AbsentCartesianNeighbor : FixedObstacleCartesianNeighbor
-        return (UInt8(resolved), site,
-            mutable_only ? Int32(0) : _owner_at(
-                owner, something(obstacle_sample.value), false))
+        mutable_only && return (
+            UInt8(AbsentCartesianNeighbor), Int32(0), Int32(0)
+        )
+        obstacle_sample.present || return (
+            UInt8(AbsentCartesianNeighbor), Int32(0), Int32(0)
+        )
+        return (
+            UInt8(FixedObstacleCartesianNeighbor), site,
+            _owner_at(
+                owner,
+                something(obstacle_sample.value, Int32(0)),
+                false,
+            ),
+        )
     end
     return (UInt8(MutableCartesianNeighbor), site, owner)
 end
@@ -426,11 +435,11 @@ Base.@noinline function _checkerboard_mutable_contact(
         site::Int32, owner_sample, mutable_sample,
     )
     if iszero(site) || !owner_sample.present || !mutable_sample.present ||
-            !something(mutable_sample.value)
+            !something(mutable_sample.value, false)
         return (UInt8(AbsentCartesianNeighbor), Int32(0), Int32(0))
     end
     return (UInt8(MutableCartesianNeighbor), site,
-        something(owner_sample.value))
+        something(owner_sample.value, Int32(0)))
 end
 
 @inline _checkerboard_contact_site(category::UInt8, site::Int32) =
@@ -438,7 +447,15 @@ end
 
 @generated function _checkerboard_contact_owner_result(
         evaluator::_CheckerboardContactOwnerEvaluator{Degree},
-        contact_routes, reverse_routes, reads,
+        contact_routes::NTuple{Degree,Int32},
+        reverse_routes::NTuple{Degree,Int32},
+        geometry_categories::NTuple{Degree,UInt8},
+        fixed_owners::NTuple{Degree,Int32},
+        contact_ownership,
+        contact_mutable,
+        contact_obstacle_owner_handles,
+        reverse_ownership,
+        reverse_mutable,
     ) where {Degree}
     contacts = [gensym(:contact) for _ in 1:Degree]
     reverse = [gensym(:reverse) for _ in 1:Degree]
@@ -446,17 +463,17 @@ end
     for lane in 1:Degree
         push!(assignments, :($(contacts[lane]) =
             _checkerboard_semantic_contact(
-                @inbounds(getfield(reads, 3)[1].value[$lane]),
+                @inbounds(geometry_categories[$lane]),
                 @inbounds(contact_routes[$lane]),
-                @inbounds(getfield(reads, 4)[1].value[$lane]),
-                @inbounds(getfield(reads, 5)[$lane]),
-                @inbounds(getfield(reads, 6)[$lane]),
-                @inbounds(getfield(reads, 7)[$lane]), false)))
+                @inbounds(fixed_owners[$lane]),
+                @inbounds(contact_ownership[$lane]),
+                @inbounds(contact_mutable[$lane]),
+                @inbounds(contact_obstacle_owner_handles[$lane]), false)))
         push!(assignments, :($(reverse[lane]) =
             _checkerboard_mutable_contact(
                 @inbounds(reverse_routes[$lane]),
-                @inbounds(getfield(reads, 8)[$lane]),
-                @inbounds(getfield(reads, 9)[$lane]))))
+                @inbounds(reverse_ownership[$lane]),
+                @inbounds(reverse_mutable[$lane]))))
     end
     contact_categories = Expr(:tuple,
         [:(@inbounds $(contacts[lane])[1]) for lane in 1:Degree]...)
@@ -503,10 +520,34 @@ end
 @inline function (evaluator::_CheckerboardContactOwnerEvaluator{Degree})(
         item::Int32, reads, parameters,
     ) where {Degree}
-    contact_routes = something(@inbounds getfield(reads, 1)[1].value)
-    reverse_routes = something(@inbounds getfield(reads, 2)[1].value)
+    absent_categories = ntuple(
+        _ -> UInt8(AbsentCartesianNeighbor), Val(Degree)
+    )
+    absent_owners = ntuple(_ -> Int32(0), Val(Degree))
+    contact_routes = something(
+        @inbounds(getfield(reads, 1)[1].value), absent_owners
+    )
+    reverse_routes = something(
+        @inbounds(getfield(reads, 2)[1].value), absent_owners
+    )
+    geometry_categories = something(
+        @inbounds(getfield(reads, 3)[1].value), absent_categories
+    )
+    fixed_owners = something(
+        @inbounds(getfield(reads, 4)[1].value), absent_owners
+    )
     return _checkerboard_contact_owner_result(
-        evaluator, contact_routes, reverse_routes, reads)
+        evaluator,
+        contact_routes,
+        reverse_routes,
+        geometry_categories,
+        fixed_owners,
+        getfield(reads, 5),
+        getfield(reads, 6),
+        getfield(reads, 7),
+        getfield(reads, 8),
+        getfield(reads, 9),
+    )
 end
 
 struct _CheckerboardContactDirectoryKindEvaluator{Degree} end

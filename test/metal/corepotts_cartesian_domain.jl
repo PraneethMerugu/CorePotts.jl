@@ -98,6 +98,24 @@ function _run_metal_cartesian_case(case, to_backend)
     fixture = _metal_cartesian_case(case)
     host = CorePotts.initialize_program(
         fixture.program, fixture.initial, Float32[], UInt64(3), UInt32(1))
+    target = first(CartesianIndices(host.ownership))
+    source = last(CartesianIndices(host.ownership))
+    context = CorePotts._ProposalEvaluationContext(
+        host, source, target, Int32(1), Int32(0), 1, 1
+    )
+    contributions = Vector{CorePotts.ProposalEvaluation{Float32}}(
+        undef, CorePotts._descriptor_source_count(
+            fixture.program.descriptor_plan
+        )
+    )
+    CorePotts.evaluate_proposal_contributions!(
+        contributions, fixture.program.descriptor_plan, context
+    )
+    isolated = CorePotts.fold_proposal_contributions(
+        fixture.program.descriptor_plan, contributions
+    )
+    @test isolated.delta_h == -2.0f0
+
     runtime = to_backend === identity ? host :
         CorePotts.adapt_program_runtime(to_backend, host)
     CorePotts.enqueue_program_through!(runtime, 1)
@@ -116,28 +134,11 @@ function _run_metal_cartesian_case(case, to_backend)
     if case === :fixed_obstacle
         @test receipt.snapshot.ownership[3, 1] == -1
     end
-
-    declaration = runtime.engine_workspace.color_laws.declaration
-    deltas = Float32[]
-    for prepared in runtime.engine_workspace.color_laws.prepared
-        sites = CorePotts.Adapt.adapt(
-            Array, LocalMath.storage(prepared, declaration.sites))
-        owners = CorePotts.Adapt.adapt(
-            Array, LocalMath.storage(prepared, declaration.owners))
-        actionable = Array(LocalMath.storage(
-            prepared, declaration.actionable))
-        energy = Array(LocalMath.storage(
-            prepared, declaration.evaluation.delta_h))
-        for item in eachindex(actionable)
-            actionable[item] || continue
-            target, _ = sites[item]
-            old_owner, new_owner = owners[item]
-            target == 1 && old_owner == 1 && new_owner == 0 || continue
-            push!(deltas, energy[item])
-        end
-    end
-    @test deltas == Float32[-2]
-    return (; ownership = receipt.snapshot.ownership, counters, deltas)
+    return (
+        ownership = receipt.snapshot.ownership,
+        counters,
+        isolated_delta = isolated.delta_h,
+    )
 end
 
 @testset "fixed Cartesian owners share CPU and Metal checkerboard semantics" begin
