@@ -25,6 +25,7 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_scientific_reference.jl",
     "test_surface_tracker_contract.jl",
     "test_scientific_geometry_contract.jl",
+    "test_cartesian_ownership_domain.jl",
     "test_relationship_access_contract.jl",
     "test_descriptor_state_spi.jl",
     "test_logical_state_values.jl",

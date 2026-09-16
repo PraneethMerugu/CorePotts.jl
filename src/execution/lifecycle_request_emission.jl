@@ -43,6 +43,7 @@ const _LIFECYCLE_STATUS_DETAILS = (
     :acceptance_nonfinite => LifecycleDetailAcceptanceNonfinite,
     :acceptance_zero_temperature_drive =>
         LifecycleDetailAcceptanceZeroTemperatureDrive,
+    :immutable_domain_site => LifecycleDetailImmutableDomainSite,
 )
 
 function _program_status_detail_symbol(detail::ProgramStatusDetailCode)
@@ -87,6 +88,8 @@ end
 
 function _validate_lifecycle_ownership!(runtime, workspace)
     maximum = length(runtime.cell_kinds)
+    # This validates the normalized commit buffer: nonpositive domain-owner and
+    # obstacle codes are admitted; only finite owner slots require capacity.
     for owner in runtime.ownership
         owner <= 0 && continue
         owner <= maximum || return _set_lifecycle_status!(
@@ -187,17 +190,17 @@ end
         linear::Int,
         offset::NTuple{N, <:Integer},
     ) where {N}
-    center = CartesianIndices(program.shape)[linear]
+    center = CartesianIndices(program.domain.shape)[linear]
     coordinates = ntuple(N) do dimension
         value = center[dimension] + Int(offset[dimension])
-        if program.periodic[dimension]
-            mod1(value, program.shape[dimension])
-        elseif 1 <= value <= program.shape[dimension]
+        if cartesian_periodic_axes(program.domain)[dimension]
+            mod1(value, program.domain.shape[dimension])
+        elseif 1 <= value <= program.domain.shape[dimension]
             value
         else
             0
         end
     end
     any(iszero, coordinates) && return 0
-    return LinearIndices(program.shape)[CartesianIndex(coordinates)]
+    return LinearIndices(program.domain.shape)[CartesianIndex(coordinates)]
 end

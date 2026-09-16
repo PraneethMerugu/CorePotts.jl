@@ -143,6 +143,15 @@ ownership-change paths delegate there instead of defining backend-specific
 product semantics.
 `checkerboard_science.jl` owns the shared parameter view; its semantic consumers
 provide their execution-domain shapes without expanding parameter storage.
+`program/cartesian_ownership_domain.jl` owns Cartesian face realization,
+non-finite owner identity, fixed obstacles, and the one mutable-site set.
+Sequential proposal traversal and the LocalMath checkerboard stages consume
+that same authority. The latter separates compact geometry, semantic `owner_at`
+reads, and dense owner-directory kind gathers so device signatures state the
+exact semantics they need without carrying the full program or specializing on
+the model claim graph. Contact relations retain fixed owner endpoints; proposal,
+lifecycle, relationship, and state-write relations admit finite mutable owners
+only.
 Cell effects use the same boundary emission/application transaction and the
 same identity-domain publication builder as singleton model effects. Their
 distinct evaluation context reads finite-cell slots, not lattice sites.

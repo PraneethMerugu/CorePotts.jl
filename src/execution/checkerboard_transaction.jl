@@ -1051,14 +1051,16 @@ function _checkerboard_relationship_endpoint_accesses(accepted, term_fields)
     names = Symbol[]
     accesses = Any[]
     for (index, fields) in enumerate(term_fields)
-        relation = LocalMath.IndexRelation(
+        kind_relation = LocalMath.IndexRelation(
+            fields.endpoints => accepted.owner_directory_space; optional = true)
+        generation_relation = LocalMath.IndexRelation(
             fields.endpoints => accepted.cell_space; optional = true)
         push!(names, Symbol(:relationship_, index, :_status))
         push!(accesses, LocalMath.Access(
-            accepted.cell_kinds, relation; required = false))
+            accepted.owner_directory_kinds, kind_relation; required = false))
         push!(names, Symbol(:relationship_, index, :_generations))
         push!(accesses, LocalMath.Access(
-            accepted.cell_generations, relation; required = false))
+            accepted.cell_generations, generation_relation; required = false))
     end
     return NamedTuple{Tuple(names)}(Tuple(accesses))
 end
@@ -1240,7 +1242,8 @@ end
             _RELATIONSHIP_CREATE_INACTIVE_ENDPOINT :
             endpoint_a == endpoint_b ?
             _RELATIONSHIP_CREATE_SELF_EDGE : iszero(endpoint_status_a) ||
-            iszero(endpoint_status_b) ?
+            iszero(endpoint_status_b) || iszero(generation_a) ||
+            iszero(generation_b) ?
             _RELATIONSHIP_CREATE_INACTIVE_ENDPOINT :
             _RELATIONSHIP_CREATE_APPLY
         local existing = Int32(0)

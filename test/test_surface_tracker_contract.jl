@@ -22,12 +22,13 @@ function surface_program(periodic::NTuple{2, Bool}, offsets::Matrix{Int8})
         (CorePotts.OwnershipCountTracker(), surface),
         "surface-tracker-plan-v1",
     )
+    domain = CorePotts._standard_cartesian_ownership_domain(
+        (6, 6), periodic, 2, 1, Bool[true, false]
+    )
     program = CorePotts.CompiledPottsProgram(
-        (6, 6),
-        periodic,
+        domain,
         offsets,
         2,
-        1,
         CorePotts.CompiledScalar(0.0),
         1,
         Float64[],

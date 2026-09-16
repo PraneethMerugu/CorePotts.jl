@@ -166,9 +166,8 @@ end
     )
     program = state.program
     lifecycle_program = (
-        shape = program.shape,
-        periodic = program.periodic,
-        medium_kind = program.medium_kind,
+        shape = program.domain.shape,
+        domain = program.domain,
         tracker_plan = program.tracker_plan,
         domain_resources = program.domain_resources,
         lifecycle_plan = program.lifecycle_plan,
