@@ -256,6 +256,12 @@ end
     )
     @test length(domain.mutable_sites) == 8
     @test domain.mutable_mask[2, 2] == 0
+    report = @inferred C.cartesian_domain_report(domain)
+    @test isconcretetype(Core.Compiler.return_type(
+        C.cartesian_domain_report, Tuple{typeof(domain)}))
+    @test report.domain_owners == domain.domain_owners
+    @test report.domain_owners !== domain.domain_owners
+    @test report.obstacles == [(site = Int32(5), owner_handle = Int32(1))]
 
     offsets = reshape(Int8[1, 0], 2, 1)
     obstacle = C.realize_cartesian_neighbor(
