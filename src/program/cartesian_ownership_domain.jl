@@ -1,17 +1,25 @@
 # Cartesian ownership realization and non-finite owner identity.
 
+"""Durable category of a finite cell or declared non-finite domain owner."""
 @enum OwnerCategory::UInt8 begin
     InvalidOwnerCategory = 0x00
     FiniteCellOwnerCategory = 0x01
     MediumDomainOwnerCategory = 0x02
     WallDomainOwnerCategory = 0x03
 end
+@doc "Category assigned to positive finite-cell owner codes." FiniteCellOwnerCategory
+@doc "Category assigned to a declared non-finite medium owner." MediumDomainOwnerCategory
+@doc "Category assigned to a declared non-finite wall owner." WallDomainOwnerCategory
 
+"""Boundary realization law for one oriented face of a Cartesian domain."""
 @enum CartesianFaceKind::UInt8 begin
     PeriodicCartesianFace = 0x01
     ClosedCartesianFace = 0x02
     FixedExteriorCartesianFace = 0x03
 end
+@doc "Wrap coordinates crossing this Cartesian face to the opposite face." PeriodicCartesianFace
+@doc "Reject owner and mutable-site relations crossing this Cartesian face." ClosedCartesianFace
+@doc "Resolve crossings of this Cartesian face to its declared fixed owner." FixedExteriorCartesianFace
 
 @enum CartesianNeighborCategory::UInt8 begin
     MutableCartesianNeighbor = 0x01
@@ -102,6 +110,7 @@ struct OwnerDirectoryLayout
     domain_owner_count::Int32
 end
 
+"""Return the stable category-and-identity key for resolved owner metadata."""
 @inline owner_key(metadata::OwnerMetadata) =
     OwnerKey(metadata.category, metadata.identity)
 
@@ -495,6 +504,7 @@ function _standard_cartesian_ownership_domain(
     )
 end
 
+"""Return the dense domain-owner handle encoded by a non-positive owner code."""
 @inline function domain_owner_handle(
         domain::CartesianOwnershipDomain, owner::Int32,
     )
@@ -549,6 +559,7 @@ end
     return @inbounds domain_owners[-owner].kind
 end
 
+"""Resolve one owner code to its finite or declared non-finite metadata."""
 @inline function owner_metadata(
         domain::CartesianOwnershipDomain,
         cell_kinds,
@@ -573,6 +584,7 @@ end
     )
 end
 
+"""Return the stable identity of a finite generation or declared domain owner."""
 @inline function owner_identity(domain, cell_generations, owner)
     code = Int32(owner)
     code > 0 || return _domain_owner_metadata(domain, code).identity
@@ -585,6 +597,7 @@ end
     owner_category(domain, owner),
     owner_identity(domain, cell_generations, owner),
 )
+"""Return the durable owner category associated with one owner code."""
 @inline function owner_category(domain, owner)
     code = Int32(owner)
     return code > 0 ? FiniteCellOwnerCategory :
@@ -598,6 +611,7 @@ end
     end
     return _domain_owner_metadata(domain, code).kind
 end
+"""Return a finite owner's generation, or zero for a non-finite owner."""
 @inline function owner_generation(cell_generations, owner)
     code = Int32(owner)
     code > 0 || return UInt32(0)
@@ -619,6 +633,7 @@ end
     return Int32(cell_capacity)
 end
 
+"""Construct the compact dense address layout for finite and domain owners."""
 @inline function owner_directory_layout(
         domain::CartesianOwnershipDomain, cell_capacity::Integer,
     )
@@ -626,6 +641,7 @@ end
     return OwnerDirectoryLayout(capacity, Int32(length(domain.domain_owners)))
 end
 
+"""Map an owner code to its validated dense owner-directory index."""
 @inline function owner_directory_index(
         layout::OwnerDirectoryLayout, owner::Int32,
     )
@@ -659,12 +675,14 @@ end
     return owner_directory_index(layout, code)
 end
 
+"""Return the storage length required by the dense owner directory."""
 @inline owner_directory_count(
     domain::CartesianOwnershipDomain, cell_capacity::Integer,
 ) = let layout = owner_directory_layout(domain, cell_capacity)
     layout.cell_capacity + layout.domain_owner_count + Int32(1)
 end
 
+"""Resolve the authoritative owner at a Cartesian site, including obstacles."""
 @inline function owner_at(
         domain::CartesianOwnershipDomain, ownership, site,
     )
@@ -710,6 +728,7 @@ function domain_kind_mask(
     return mask
 end
 
+"""Return an immutable inspection report derived from a Cartesian domain."""
 function cartesian_domain_report(domain::CartesianOwnershipDomain)
     return (
         shape = domain.shape,
