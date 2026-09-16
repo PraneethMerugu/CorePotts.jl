@@ -728,7 +728,7 @@ function domain_kind_mask(
     return mask
 end
 
-"""Return an immutable inspection report derived from a Cartesian domain."""
+"""Return a derived domain report with defensive variable-length collections."""
 function cartesian_domain_report(domain::CartesianOwnershipDomain)
     return (
         shape = domain.shape,
@@ -739,12 +739,12 @@ function cartesian_domain_report(domain::CartesianOwnershipDomain)
             )
         end,
         default_owner = domain.default_owner,
-        domain_owners = Tuple(domain.domain_owners),
-        obstacles = Tuple(
+        domain_owners = copy(domain.domain_owners),
+        obstacles = [
             (site = Int32(site), owner_handle = domain.obstacle_owner_handles[site])
             for site in eachindex(domain.obstacle_owner_handles)
             if !domain.mutable_mask[site]
-        ),
+        ],
         mutable_site_count = length(domain.mutable_sites),
     )
 end
