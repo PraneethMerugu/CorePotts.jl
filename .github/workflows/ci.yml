@@ -76,6 +76,8 @@ jobs:
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
       - name: Resolve package environment
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: '0'
         run: julia --startup-file=no .github/scripts/run-phase.jl environment-resolution julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate()'
       - name: Precompile package environment
         run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=. --startup-file=no -e 'using Pkg; Pkg.precompile()'
@@ -118,7 +120,11 @@ jobs:
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
       - name: Resolve package environment
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: '0'
         run: julia --startup-file=no .github/scripts/run-phase.jl environment-resolution julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate()'
+      - name: Precompile package environment
+        run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=. --startup-file=no -e 'using Pkg; Pkg.precompile()'
       - name: Package smoke tests
         shell: bash
         run: |
@@ -156,7 +162,11 @@ jobs:
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
       - name: Resolve package environment
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: '0'
         run: julia --startup-file=no .github/scripts/run-phase.jl environment-resolution julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate()'
+      - name: Precompile package environment
+        run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=. --startup-file=no -e 'using Pkg; Pkg.precompile()'
       - name: Complete macOS package tests
         shell: bash
         run: |
@@ -193,7 +203,11 @@ jobs:
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
       - name: Resolve documentation environment
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: '0'
         run: julia --startup-file=no .github/scripts/run-phase.jl environment-resolution julia --project=docs --startup-file=no -e 'using Pkg; Pkg.develop([PackageSpec(path=path) for path in ("deps/LocalMath", ".")]); Pkg.instantiate()'
+      - name: Precompile documentation environment
+        run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=docs --startup-file=no -e 'using Pkg; Pkg.precompile()'
       - name: Build documentation
         run: julia --startup-file=no .github/scripts/run-phase.jl documentation julia --project=docs --startup-file=no -e 'include("docs/make.jl")'
       - name: Upload documentation telemetry
@@ -232,7 +246,11 @@ jobs:
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
       - name: Resolve Metal environment
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: '0'
         run: julia --startup-file=no .github/scripts/run-phase.jl environment-resolution julia --project=test/metal --startup-file=no -e 'using Pkg; Pkg.develop([PackageSpec(path=path) for path in ("deps/LocalMath", ".")]); Pkg.instantiate()'
+      - name: Precompile Metal environment
+        run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=test/metal --startup-file=no -e 'using Pkg; Pkg.precompile()'
       - name: Metal qualification
         run: julia --startup-file=no .github/scripts/run-phase.jl metal-qualification julia --project=test/metal --startup-file=no -e 'include("test/metal/runtests.jl")'
       - name: Upload Metal telemetry
