@@ -857,6 +857,7 @@ end
         retirement_ownership, Int16[2]; scalar_type = Float64
     )
     retirement_event = nothing
+    seed_search_started = time_ns()
     for seed in UInt64(1):UInt64(128)
         candidate = CorePotts.initialize_program(
             retirement_program,
@@ -879,6 +880,11 @@ end
         end
         retirement_event === nothing || break
     end
+    CorePottsTestTelemetry.record_duration(
+        "lifecycle-retirement-seed-search",
+        seed_search_started;
+        values = Dict("kind" => "lifecycle_seed_search"),
+    )
     @test retirement_event isa CorePotts.RetireLifecycleEvent
     @test retirement_event.before == CorePotts.CellIdentity(1, 1, 2)
     @test retirement_event.cause_identity == UInt64(101)

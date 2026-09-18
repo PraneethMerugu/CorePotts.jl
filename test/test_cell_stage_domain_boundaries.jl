@@ -35,6 +35,7 @@ end
 @testset "zero-occupancy identity executes before retirement but not after" begin
     for engine in (CorePotts.SequentialProgramEngine(), CorePotts.CheckerboardProgramEngine())
         retired = false
+        seed_search_started = time_ns()
         for seed in UInt64(1):UInt64(128)
             runtime, handle = retiring_cell_stage_runtime(engine, seed)
             for _ in 1:8
@@ -53,6 +54,14 @@ end
             end
             retired && break
         end
+        CorePottsTestTelemetry.record_duration(
+            "cell-stage-retirement-seed-search",
+            seed_search_started;
+            values = Dict(
+                "kind" => "lifecycle_seed_search",
+                "engine" => string(typeof(engine)),
+            ),
+        )
         @test retired
     end
 end

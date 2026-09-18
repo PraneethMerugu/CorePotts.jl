@@ -2,6 +2,9 @@ using ParallelTestRunner
 using Test
 import CorePotts
 
+const _COREPOTTS_TELEMETRY_FILE = joinpath(@__DIR__, "telemetry.jl")
+Base.include(Main, _COREPOTTS_TELEMETRY_FILE)
+
 const _COREPOTTS_COMPILED_PROGRAM_TESTS = (
     "test_compiled_program_execution.jl",
     "test_compiled_program_checkerboard_oracles.jl",
@@ -156,8 +159,10 @@ testsuite["package_quality"] = quote
 end
 
 init_code = quote
+    local fixture_initialization_started = time_ns()
     import CorePotts
     import LocalMath
+    using Main.CorePottsTestTelemetry
     include(
         joinpath(
             $(_COREPOTTS_TEST_DIRECTORY), "fixtures", "compiled_program_support.jl"
@@ -170,12 +175,26 @@ init_code = quote
     )
     const _COREPOTTS_COMPILED_PROGRAM_TESTS =
         $(_COREPOTTS_COMPILED_PROGRAM_TESTS)
+    CorePottsTestTelemetry.record_duration(
+        "common-fixture-initialization",
+        fixture_initialization_started;
+        values = Dict("kind" => "fixture_initialization"),
+    )
 end
+
+init_worker_code = quote
+    isdefined(Main, :CorePottsTestTelemetry) ||
+        include($(_COREPOTTS_TELEMETRY_FILE))
+end
+
+Core.eval(Main, init_worker_code)
 
 ParallelTestRunner.runtests(
     CorePotts,
     ARGS;
     testsuite,
     init_code,
+    init_worker_code,
+    RecordType = Main.CorePottsTestTelemetry.TelemetryRecord,
     serial = ["inventory", "package_quality"],
 )
