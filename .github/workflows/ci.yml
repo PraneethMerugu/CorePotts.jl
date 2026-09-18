@@ -21,7 +21,7 @@ permissions:
 env:
   JULIA_VERSION: '1.12.6'
   LOCALMATH_REF: ${{ inputs.localmath_ref || '22e7b42905522e53e04b4c0febadb96e30189a80' }}
-  COREPOTTS_TELEMETRY_DIR: ${{ runner.temp }}/corepotts-telemetry/${{ github.job }}
+  COREPOTTS_TELEMETRY_DIR: corepotts-telemetry
 
 jobs:
   changes:
