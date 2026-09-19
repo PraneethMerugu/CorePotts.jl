@@ -71,7 +71,8 @@ function tracker_rebuild(
         cell_kinds,
     )
     values = zeros(Int32, length(cell_kinds))
-    for owner in source.ownership
+    for site in source.domain.mutable_sites
+        owner = owner_at(source.domain, source.ownership, site)
         owner > 0 && (values[Int(owner)] += Int32(1))
     end
     return values
@@ -87,14 +88,19 @@ end
         source.domain_resources, descriptor.relation_handle
     )
     1 <= direction <= count || throw(BoundsError(1:count, direction))
-    return relation_neighbor_index(
-        source.shape,
-        source.periodic,
+    return realize_cartesian_neighbor(
+        source.domain,
+        source.ownership,
         site,
         source.domain_resources.contact_offsets,
         start + direction - 1,
+        OwnerRelationAccess,
     )
 end
+
+@inline _cartesian_neighbor_duplicate_key(neighbor::CartesianNeighbor) = (
+    UInt8(neighbor.category), neighbor.endpoint
+)
 
 @inline function _surface_neighbor_is_duplicate(
         descriptor::CellSurfaceTracker,
@@ -104,7 +110,9 @@ end
         direction::Int,
     )
     for prior in 1:(direction - 1)
-        _surface_neighbor(descriptor, source, site, prior) == neighbor &&
+        _cartesian_neighbor_duplicate_key(
+            _surface_neighbor(descriptor, source, site, prior)
+        ) == _cartesian_neighbor_duplicate_key(neighbor) &&
             return true
     end
     return false
@@ -117,18 +125,19 @@ function tracker_rebuild(
     )
     values = zeros(Int32, length(cell_kinds))
     indices = CartesianIndices(source.ownership)
-    for linear_index in eachindex(source.ownership)
-        owner = @inbounds source.ownership[linear_index]
+    for linear_index in source.domain.mutable_sites
+        owner = owner_at(source.domain, source.ownership, linear_index)
         owner > 0 || continue
         site = indices[linear_index]
         for direction in 1:Int(descriptor.maximum_neighbors)
             neighbor = _surface_neighbor(descriptor, source, site, direction)
-            neighbor === nothing && continue
-            neighbor == site && continue
+            neighbor.category === AbsentCartesianNeighbor && continue
+            neighbor.category === MutableCartesianNeighbor &&
+                neighbor.site == linear_index && continue
             _surface_neighbor_is_duplicate(
                 descriptor, source, site, neighbor, direction
             ) && continue
-            @inbounds(source.ownership[neighbor]) == owner && continue
+            neighbor.owner == owner && continue
             @inbounds values[Int(owner)] += Int32(1)
         end
     end
@@ -146,8 +155,10 @@ function tracker_rebuild(
     ))
     first = zeros(T, N, length(cell_kinds))
     second = zeros(T, N * N, length(cell_kinds))
-    for site in CartesianIndices(ownership)
-        owner = @inbounds ownership[site]
+    indices = CartesianIndices(ownership)
+    for linear in source.domain.mutable_sites
+        site = indices[Int(linear)]
+        owner = owner_at(source.domain, ownership, linear)
         owner > 0 || continue
         coordinates = ntuple(
             dimension -> T(site[dimension]) - T(0.5), N
@@ -171,8 +182,8 @@ function tracker_recompute(
     )
     ownership = source.ownership
     expected = fill(Int32(0), length(cell_kinds))
-    for linear_index in eachindex(ownership)
-        owner = @inbounds ownership[linear_index]
+    for linear_index in source.domain.mutable_sites
+        owner = owner_at(source.domain, ownership, linear_index)
         owner > 0 || continue
         expected[Int(owner)] += Int32(1)
     end
@@ -192,36 +203,42 @@ function tracker_recompute(
     count == Int(descriptor.maximum_neighbors) || throw(ArgumentError(
         "surface tracker relation degree differs from its compiled bound"
     ))
-    for site in CartesianIndices(source.ownership)
-        owner = @inbounds source.ownership[site]
+    indices = CartesianIndices(source.ownership)
+    for linear in source.domain.mutable_sites
+        site = indices[Int(linear)]
+        owner = owner_at(source.domain, source.ownership, linear)
         owner > 0 || continue
         boundary = Int32(0)
         for direction in 1:count
-            neighbor = relation_neighbor_index(
-                source.shape,
-                source.periodic,
+            neighbor = realize_cartesian_neighbor(
+                source.domain,
+                source.ownership,
                 site,
                 source.domain_resources.contact_offsets,
                 start + direction - 1,
+                OwnerRelationAccess,
             )
-            neighbor === nothing && continue
-            neighbor == site && continue
+            neighbor.category === AbsentCartesianNeighbor && continue
+            neighbor.category === MutableCartesianNeighbor &&
+                neighbor.site == linear && continue
             duplicate = false
             for prior in 1:(direction - 1)
-                prior_neighbor = relation_neighbor_index(
-                    source.shape,
-                    source.periodic,
+                prior_neighbor = realize_cartesian_neighbor(
+                    source.domain,
+                    source.ownership,
                     site,
                     source.domain_resources.contact_offsets,
                     start + prior - 1,
+                    OwnerRelationAccess,
                 )
-                if prior_neighbor == neighbor
+                if _cartesian_neighbor_duplicate_key(prior_neighbor) ==
+                        _cartesian_neighbor_duplicate_key(neighbor)
                     duplicate = true
                     break
                 end
             end
             duplicate && continue
-            boundary += Int32(@inbounds(source.ownership[neighbor]) != owner)
+            boundary += Int32(neighbor.owner != owner)
         end
         @inbounds expected[Int(owner)] += boundary
     end
@@ -240,8 +257,8 @@ function tracker_recompute(
     expected_first = fill(zero(T), N, length(cell_kinds))
     expected_second = fill(zero(T), N * N, length(cell_kinds))
     indices = CartesianIndices(ownership)
-    for linear_index in eachindex(ownership)
-        owner = @inbounds ownership[linear_index]
+    for linear_index in source.domain.mutable_sites
+        owner = owner_at(source.domain, ownership, linear_index)
         owner > 0 || continue
         site = indices[linear_index]
         coordinates = map(dimension -> T(site[dimension]) - T(0.5), 1:N)
@@ -292,14 +309,18 @@ end
     old_owner == new_owner && return OldNewOwnerValueDelta(Int32(0), Int32(0))
     old_amount = Int32(0)
     new_amount = Int32(0)
+    target_linear = _cartesian_linear_site(
+        source.domain.shape, Tuple(target)
+    )
     for direction in 1:Int(descriptor.maximum_neighbors)
         neighbor = _surface_neighbor(descriptor, source, target, direction)
-        neighbor === nothing && continue
-        neighbor == target && continue
+        neighbor.category === AbsentCartesianNeighbor && continue
+        neighbor.category === MutableCartesianNeighbor &&
+            neighbor.site == target_linear && continue
         _surface_neighbor_is_duplicate(
             descriptor, source, target, neighbor, direction
         ) && continue
-        neighbor_owner = @inbounds source.ownership[neighbor]
+        neighbor_owner = neighbor.owner
         old_owner > 0 && (old_amount += neighbor_owner == old_owner ?
             Int32(1) : Int32(-1))
         new_owner > 0 && (new_amount += neighbor_owner == new_owner ?

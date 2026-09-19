@@ -367,10 +367,9 @@ function tracker_adapt end
 abstract type AbstractTrackerCommitSource end
 
 """Read-only tracker source shared by rebuild, proposal, and oracle paths."""
-struct TrackerSourceView{O, S, P, R, V, A} <: AbstractTrackerCommitSource
+struct TrackerSourceView{O, D, R, V, A} <: AbstractTrackerCommitSource
     ownership::O
-    shape::S
-    periodic::P
+    domain::D
     domain_resources::R
     parameters::V
     descriptor_state::A
@@ -379,10 +378,9 @@ end
 Adapt.@adapt_structure TrackerSourceView
 
 """Ownership geometry required by lifecycle tracker updates."""
-struct _LifecycleTrackerCommitSource{O, S, P, R} <: AbstractTrackerCommitSource
+struct _LifecycleTrackerCommitSource{O, D, R} <: AbstractTrackerCommitSource
     ownership::O
-    shape::S
-    periodic::P
+    domain::D
     domain_resources::R
 end
 
@@ -391,8 +389,7 @@ Adapt.@adapt_structure _LifecycleTrackerCommitSource
 """Construct the read-only authoritative source used by tracker protocols."""
 tracker_source_view(program, ownership; parameters = (), descriptor_state = nothing) = TrackerSourceView(
     ownership,
-    program.shape,
-    program.periodic,
+    program.domain,
     program.descriptor_plan.domain_resources,
     parameters,
     descriptor_state,

@@ -70,6 +70,18 @@ end
     site == view.target ? view.new_owner :
     _proposal_science_site_owner(view.runtime, site)
 
+@inline function _view_neighbor_owner(view, neighbor::CartesianNeighbor)
+    neighbor.category === MutableCartesianNeighbor || return neighbor.owner
+    site = CartesianIndices(_proposal_science_shape(view.runtime))[
+        Int(neighbor.site)
+    ]
+    return _view_owner(view, site)
+end
+@inline _view_owner(view::BeforeProposalView, neighbor::CartesianNeighbor) =
+    _view_neighbor_owner(view, neighbor)
+@inline _view_owner(view::AfterProposalView, neighbor::CartesianNeighbor) =
+    _view_neighbor_owner(view, neighbor)
+
 @inline _view_volume(view::BeforeProposalView, cell::Int32) =
     cell <= 0 ? Int32(0) : _proposal_science_tracker_value(
         view.runtime, Val(:cell_volume), cell)
@@ -379,11 +391,37 @@ operation_context_supported(
     Tuple{typeof(operation), Tuple, HamiltonianEvaluationContext},
 )
 
-@inline function _canonical_contact(runtime, first, second)
-    return _proposal_science_linear_site(runtime, first) <=
-            _proposal_science_linear_site(runtime, second) ?
-           CanonicalContactAnchor(first, second) :
-           CanonicalContactAnchor(second, first)
+@inline function _canonical_contact(first, second)
+    first_key = _contact_endpoint_key(first)
+    second_key = _contact_endpoint_key(second)
+    first_endpoint = _semantic_contact_endpoint(first)
+    second_endpoint = _semantic_contact_endpoint(second)
+    return first_key <= second_key ?
+           CanonicalContactAnchor(first_endpoint, second_endpoint) :
+           CanonicalContactAnchor(second_endpoint, first_endpoint)
+end
+
+@inline _contact_endpoint_key(endpoint::CartesianNeighbor) = (
+    UInt8(endpoint.category),
+    endpoint.site,
+    endpoint.owner,
+    endpoint.endpoint,
+)
+
+@inline _semantic_contact_endpoint(endpoint::CartesianNeighbor) =
+    CartesianNeighbor(
+        endpoint.category, endpoint.site, endpoint.owner, Int32(0),
+        endpoint.endpoint,
+    )
+
+@inline function _mutable_contact_endpoint(runtime, site)
+    return CartesianNeighbor(
+        MutableCartesianNeighbor,
+        Int32(_proposal_science_linear_site(runtime, site)),
+        _proposal_science_site_owner(runtime, site),
+        Int32(0),
+        map(Int64, Tuple(site)),
+    )
 end
 
 @inline function _compiled_anchor_energy(
@@ -552,8 +590,9 @@ end
             resources.contact_offsets,
             direction,
         )
-        neighbor === nothing && continue
-        contact = _canonical_contact(runtime, proposal.target, neighbor)
+        neighbor.category === AbsentCartesianNeighbor && continue
+        target = _mutable_contact_endpoint(runtime, proposal.target)
+        contact = _canonical_contact(target, neighbor)
         duplicate = false
         for prior in start:(direction - 1)
             prior_neighbor = _proposal_science_neighbor(
@@ -562,8 +601,8 @@ end
                 resources.contact_offsets,
                 prior,
             )
-            prior_neighbor === nothing && continue
-            if _canonical_contact(runtime, proposal.target, prior_neighbor) == contact
+            prior_neighbor.category === AbsentCartesianNeighbor && continue
+            if _canonical_contact(target, prior_neighbor) == contact
                 duplicate = true
                 break
             end

@@ -155,7 +155,7 @@ function _materialize_program(
     initial_descriptor_state = _program_initial_field(
         initial, :descriptor_state
     )
-    size(initial_ownership) == program.shape ||
+    size(initial_ownership) == program.domain.shape ||
         throw(ArgumentError("initial ownership shape does not match the program"))
     runtime_parameters = _validated_program_parameters(program, parameters)
     lifecycle_plan = program.lifecycle_plan
@@ -166,19 +166,19 @@ function _materialize_program(
     length(initial_cell_kinds) <= cell_capacity || throw(ArgumentError(
         "initial finite-cell count exceeds compiled max_cells=$cell_capacity"
     ))
-    maximum(initial_ownership; init = Int32(0)) <= length(initial_cell_kinds) ||
-        throw(ArgumentError("initial ownership references an unknown cell label"))
-    minimum(initial_ownership; init = Int32(0)) >= -program.kind_count ||
-        throw(ArgumentError("initial ownership references an unknown medium kind"))
-    all(initial_ownership) do owner
-        owner >= 0 || @inbounds(program.medium_kinds[-owner])
-    end || throw(ArgumentError(
-        "initial ownership uses a non-medium kind as a medium domain"
-    ))
+    for site in program.domain.mutable_sites
+        owner = @inbounds initial_ownership[site]
+        owner <= length(initial_cell_kinds) || throw(ArgumentError(
+            "initial ownership references an unknown cell label"
+        ))
+        owner <= 0 && _domain_owner_metadata(program.domain, owner)
+    end
     all(kind -> kind == 0 || 1 <= kind <= program.kind_count, initial_cell_kinds) ||
         throw(ArgumentError("initial cell kind is outside the compiled kind table"))
-    all(kind -> kind == 0 || !program.medium_kinds[kind], initial_cell_kinds) ||
-        throw(ArgumentError("a finite cell cannot use a medium kind"))
+    all(kind -> kind == 0 || !domain_owner_kind(program.domain, kind),
+        initial_cell_kinds) || throw(ArgumentError(
+        "a finite cell cannot use a non-finite domain-owner kind"
+    ))
     length(initial_cell_generations) == length(initial_cell_kinds) ||
         throw(ArgumentError("initial cell generation table has the wrong length"))
     all(eachindex(initial_cell_kinds)) do index
@@ -189,6 +189,12 @@ function _materialize_program(
     repeat > 0 || throw(ArgumentError("ensemble repeat identity must be positive"))
 
     runtime_ownership = copy(initial_ownership)
+    for site in eachindex(program.domain.obstacle_owner_handles)
+        @inbounds program.domain.mutable_mask[site] && continue
+        handle = @inbounds program.domain.obstacle_owner_handles[site]
+        @inbounds runtime_ownership[site] =
+            _domain_owner_code_from_handle(handle)
+    end
     runtime_cell_kinds = zeros(Int16, cell_capacity)
     runtime_cell_generations = zeros(UInt32, cell_capacity)
     copyto!(
@@ -263,7 +269,7 @@ function _materialize_program(
         allocate_stage_runtime_buffers(
             program.stage_plan,
             T,
-            program.shape,
+            program.domain.shape,
             relationships,
             accepted_batch_bound = _accepted_copy_batch_bound(program),
             accepted_relationship_transactions = true,
@@ -300,9 +306,8 @@ function _materialize_program(
     end
     if lifecycle_workspace isa LifecycleWorkspace
         decision_program = _LifecycleDecisionProgram(
-            program.shape,
-            program.periodic,
-            program.medium_kind,
+            program.domain.shape,
+            program.domain,
             program.tracker_plan,
             _LifecycleDecisionDescriptorPlan(
                 program.descriptor_plan.domain_resources

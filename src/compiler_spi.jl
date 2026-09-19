@@ -20,6 +20,44 @@ import ..CorePotts: AbstractCellStageEvaluationContext, CellAssignmentEffect, Bo
 public AbstractCellStageEvaluationContext, CellAssignmentEffect, BoundCellStateValueOperation, stage_cell
 import ..CorePotts: history_source, history_sample_handle, state_read_source, expression_state_handles
 public history_source, history_sample_handle, state_read_source, expression_state_handles
+import ..CorePotts:
+    CartesianOwnershipDomain,
+    DomainOwnerMetadata,
+    OwnerMetadata,
+    OwnerKey,
+    OwnerDirectoryLayout,
+    OwnerCategory,
+    FiniteCellOwnerCategory,
+    MediumDomainOwnerCategory,
+    WallDomainOwnerCategory,
+    CartesianFaceKind,
+    PeriodicCartesianFace,
+    ClosedCartesianFace,
+    FixedExteriorCartesianFace,
+    owner_metadata,
+    owner_key,
+    owner_identity,
+    owner_category,
+    owner_kind,
+    owner_generation,
+    owner_directory_index,
+    owner_directory_count,
+    owner_directory_layout,
+    owner_at,
+    domain_owner_handle,
+    domain_owner_code,
+    cartesian_domain_report
+import ..CorePotts: cartesian_domain
+public CartesianOwnershipDomain, DomainOwnerMetadata, OwnerMetadata, OwnerKey
+public OwnerDirectoryLayout
+public OwnerCategory, FiniteCellOwnerCategory, MediumDomainOwnerCategory
+public WallDomainOwnerCategory, CartesianFaceKind, PeriodicCartesianFace
+public ClosedCartesianFace, FixedExteriorCartesianFace
+public owner_metadata, owner_key, owner_identity, owner_category, owner_kind
+public owner_generation, owner_directory_index, owner_directory_count
+public owner_directory_layout
+public owner_at, domain_owner_handle, domain_owner_code, cartesian_domain_report
+public cartesian_domain
 
 import ..CorePotts:
     AbstractCompiledStage,

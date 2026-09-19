@@ -24,7 +24,7 @@ function _logical_lifecycle_runtime(last_value)
     descriptor = CorePotts.LifecycleDescriptor{2, Float32}(
         1, 0x61, 0x62, CorePotts.CellKindLifecycleDomain, 2,
         1, CorePotts.EveryMCSCadence, 1, CorePotts.TransitionCellLifecycleEffect, 0,
-        CorePotts.ErrorLifecycleInadmissible, 3, 1, CorePotts.NoLifecyclePlacement, 0,
+        CorePotts.ErrorLifecycleInadmissible, 3, Int32(0), CorePotts.NoLifecyclePlacement, 0,
         1, 0, 0, 0, CorePotts.NoLifecyclePartition,
         0, false, (0.0f0, 0.0f0), (0.0f0, 0.0f0), CorePotts.CanonicalLifecycleSide,
         CorePotts.RNGOperationKey(), CorePotts.RNGOperationKey(), 0, 0, 1,
@@ -53,8 +53,11 @@ function _logical_lifecycle_runtime(last_value)
         CorePotts.LifecycleRelationStorage((), Val(2)),
         CorePotts.StablePriorityLifecycleConflicts, 1, 1, 1, 0, falses(3),
     )
+    domain = CorePotts._standard_cartesian_ownership_domain(
+        (2, 2), (false, false), 3, 1, Bool[true, false, false]
+    )
     program = CorePotts.CompiledPottsProgram(
-        (2, 2), (false, false), zeros(Int8, 2, 1), 3, 1,
+        domain, zeros(Int8, 2, 1), 3,
         CorePotts.CompiledScalar(0.0f0), 1, Float32[], (),
         CorePotts.TrackerExecutionPlan((CorePotts.OwnershipCountTracker(),), "logical-state-count"),
         descriptor_plan, CorePotts.StageExecutionPlan(),

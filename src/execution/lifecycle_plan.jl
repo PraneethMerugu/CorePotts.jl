@@ -485,7 +485,7 @@ struct LifecycleDescriptor{N, T <: AbstractFloat}
     priority::Int32
     on_inadmissible::LifecycleInadmissibilityDisposition
     destination_kind::Int16
-    replacement_medium::Int16
+    replacement_owner::Int32
     placement::LifecyclePlacementCode
     placement_evaluator::Int32
     placement_maximum::Int32
@@ -599,6 +599,23 @@ struct LifecycleExecutionPlan{
     maximum_placement_sites::Int32
     maximum_policy_workspace::Int32
     forbid_extinction::F
+end
+
+function validate_lifecycle_domain_owners(
+        domain::CartesianOwnershipDomain, plan::LifecycleExecutionPlan,
+    )
+    for descriptor in plan.descriptors
+        descriptor.effect === RemoveCellLifecycleEffect || continue
+        code = descriptor.replacement_owner
+        code <= 0 || throw(ArgumentError(
+            "remove-cell replacement must name a declared non-finite owner"
+        ))
+        metadata = _domain_owner_metadata(domain, code)
+        metadata.category === MediumDomainOwnerCategory || throw(ArgumentError(
+            "remove-cell replacement must name a declared medium owner"
+        ))
+    end
+    return plan
 end
 
 function LifecycleExecutionPlan(

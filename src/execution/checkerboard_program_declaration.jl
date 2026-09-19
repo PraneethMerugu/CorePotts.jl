@@ -67,11 +67,10 @@ struct _CheckerboardRelationshipLayout{S,B}
     banks::B
 end
 
-struct CheckerboardKernelProgram{T, N, O, R, TP, LT, DR, L, H, C, E, RL}
+struct CheckerboardKernelProgram{T, N, CD, O, R, TP, LT, DR, L, H, C, E, RL}
     shape::NTuple{N, Int}
-    periodic::NTuple{N, Bool}
+    domain::CD
     proposal_offsets::O
-    medium_kind::Int16
     temperature::CompiledScalar{T}
     attempts_per_site::Int32
     relationships::R
@@ -126,7 +125,7 @@ function _checkerboard_logical_topology_epoch(
     io = IOBuffer()
     write(io, "corepotts/checkerboard-logical-topology/v1")
     foreach(value -> write(io, Int64(value)), plan.shape)
-    foreach(value -> write(io, UInt8(value)), plan.periodic)
+    write(io, plan.domain_identity)
     write(io, Int64(plan.color_count))
     write(io, Int64(plan.maximum_color_size))
     write(io, Int64(length(plan.sites)))
@@ -818,7 +817,7 @@ function _validate_checkerboard_stage_program_preparation(
     )
     _validate_checkerboard_identity_order(host_plan)
     host_plan.shape == plan.shape &&
-        host_plan.periodic == plan.periodic &&
+        host_plan.domain_identity == plan.domain_identity &&
         host_plan.color_count == plan.color_count &&
         host_plan.maximum_color_size == plan.maximum_color_size ||
         throw(ArgumentError(plan_mismatch))
@@ -833,7 +832,7 @@ function _validate_checkerboard_stage_program_preparation(
     ))
     maximum_semantic_id = _checked_checkerboard_capacity_mul(
         Int(state.program.attempts_per_site),
-        length(state.ownership),
+        length(host_plan.sites),
         :maximum_semantic_identity,
     )
     maximum_semantic_id <= typemax(Int32) || throw(ArgumentError(

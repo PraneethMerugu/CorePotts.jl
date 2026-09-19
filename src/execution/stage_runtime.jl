@@ -252,7 +252,9 @@ operation_context_supported(::ContextOperation{:energy_anchor_site}, ::Type{Abst
 end
 @inline site_owner(
     context::_SiteStageEvaluationContext, site
-) = @inbounds context.runtime.ownership[site]
+) = owner_at(
+    context.runtime.program.domain, context.runtime.ownership, site
+)
 @inline owner_kind(
     context::_SiteStageEvaluationContext, owner::Integer
 ) = _owner_kind(context.runtime, Int32(owner))

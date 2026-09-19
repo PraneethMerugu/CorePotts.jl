@@ -590,7 +590,10 @@ function _validate_stage_tracker_anchor(expression::OperationExpression, effect,
     return nothing
 end
 
-function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources, kind_count, medium_kinds, tracker_plan)
+function _validate_stage_state_domains(
+        plan::StageExecutionPlan, layout, sources, kind_count,
+        domain_kind_mask, tracker_plan,
+    )
     for group in (plan.accepted_copy..., plan.before_lifecycle..., plan.after_lifecycle...),
             descriptor in group.instances
         source = _descriptor_source(
@@ -618,7 +621,7 @@ function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources
             end
         end
         if effect isa CellAssignmentEffect
-            effect.domain_kind <= kind_count && !medium_kinds[effect.domain_kind] ||
+            effect.domain_kind <= kind_count && !domain_kind_mask[effect.domain_kind] ||
                 throw(ArgumentError("cell-stage at $source requires a declared finite-cell kind"))
             expression_handles = (expression_state_handles(descriptor.condition.expression)...,
                 expression_state_handles(descriptor.value.expression)...)

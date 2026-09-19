@@ -157,6 +157,7 @@ Adapt.@adapt_structure RelationshipSlot
 struct CompiledPottsProgram{
         T <: AbstractFloat,
         N,
+        C <: CartesianOwnershipDomain{N},
         E <: AbstractProgramEngine,
         B,
         R,
@@ -168,12 +169,9 @@ struct CompiledPottsProgram{
         CP <: AbstractCheckerboardPlan,
         Q,
     }
-    shape::NTuple{N, Int}
-    periodic::NTuple{N, Bool}
+    domain::C
     proposal_offsets::Matrix{Int8}
     kind_count::Int16
-    medium_kind::Int16
-    medium_kinds::BitVector
     temperature::CompiledScalar{T}
     attempts_per_site::Int32
     parameter_defaults::Vector{T}
@@ -191,16 +189,16 @@ struct CompiledPottsProgram{
     integrity_fingerprint::String
 end
 
+"""Return the sole Cartesian ownership domain of a compiled program."""
+@inline cartesian_domain(program::CompiledPottsProgram) = program.domain
+
 """Own one compiler-supplied value before it enters a durable program."""
 _own_compiled_program_value(value) = deepcopy(value)
 
 function _compiled_program_integrity_fingerprint(
-        shape,
-        periodic,
+        domain,
         proposal_offsets,
         kind_count,
-        medium_kind,
-        medium_kinds,
         temperature,
         attempts_per_site,
         parameter_defaults,
@@ -218,12 +216,9 @@ function _compiled_program_integrity_fingerprint(
     )
     payload = (
         schema = v"1.0.0",
-        shape,
-        periodic,
+        domain = cartesian_domain_report(domain),
         proposal_offsets,
         kind_count,
-        medium_kind,
-        medium_kinds,
         temperature,
         attempts_per_site,
         parameter_defaults,
@@ -244,12 +239,9 @@ end
 
 function _compiled_program_integrity_fingerprint(program::CompiledPottsProgram)
     return _compiled_program_integrity_fingerprint(
-        program.shape,
-        program.periodic,
+        program.domain,
         program.proposal_offsets,
         program.kind_count,
-        program.medium_kind,
-        program.medium_kinds,
         program.temperature,
         program.attempts_per_site,
         program.parameter_defaults,
@@ -277,11 +269,9 @@ function _validate_compiled_program_integrity(program::CompiledPottsProgram)
 end
 
 function CompiledPottsProgram(
-        shape::NTuple{N, Int},
-        periodic::NTuple{N, Bool},
+        domain::C,
         proposal_offsets::Matrix{Int8},
         kind_count::Integer,
-        medium_kind::Integer,
         temperature::CompiledScalar{T},
         attempts_per_site::Integer,
         parameter_defaults::Vector{T},
@@ -292,27 +282,43 @@ function CompiledPottsProgram(
         engine::E,
         backend::B,
         fingerprint::AbstractString;
-        medium_kinds = nothing,
         lifecycle_plan::AbstractLifecycleExecutionPlan = NoLifecycleExecutionPlan(),
         checkerboard_plan = nothing,
         ownership_change_handles::Tuple = (),
         mechanism_authority = nothing,
-    ) where {T <: AbstractFloat, N, TP, D, SP, E <: AbstractProgramEngine, B}
+    ) where {
+        T <: AbstractFloat,
+        N,
+        C <: CartesianOwnershipDomain{N},
+        TP,
+        D,
+        SP,
+        E <: AbstractProgramEngine,
+        B,
+    }
+    shape = domain.shape
     all(>(0), shape) || throw(ArgumentError("program dimensions must be positive"))
     size(proposal_offsets, 1) == N ||
         throw(ArgumentError("proposal offsets have the wrong dimensionality"))
+    validate_cartesian_relation_realization(
+        domain, proposal_offsets, MutableSiteRelationAccess
+    )
     kind_count > 0 || throw(ArgumentError("a program requires at least one kind"))
-    1 <= medium_kind <= kind_count ||
-        throw(ArgumentError("the medium kind must be declared"))
-    medium_mask = medium_kinds === nothing ? begin
-        value = falses(kind_count)
-        value[medium_kind] = true
-        value
-    end : BitVector(medium_kinds)
-    length(medium_mask) == kind_count ||
-        throw(ArgumentError("the medium-kind table has the wrong size"))
-    medium_mask[medium_kind] ||
-        throw(ArgumentError("the default medium must be a declared medium kind"))
+    domain.default_owner.kind <= kind_count || throw(ArgumentError(
+        "the default domain owner kind is outside the compiled kind table"
+    ))
+    for metadata in domain.domain_owners
+        metadata.category === InvalidOwnerCategory && continue
+        metadata.kind <= kind_count || throw(ArgumentError(
+            "a domain-owner kind is outside the compiled kind table"
+        ))
+    end
+    validate_cartesian_relation_realization(
+        domain,
+        descriptor_plan.domain_resources.contact_offsets,
+        OwnerRelationAccess,
+    )
+    validate_lifecycle_domain_owners(domain, lifecycle_plan)
     attempts_per_site > 0 || throw(ArgumentError(
         "attempts per site must be positive"
     ))
@@ -334,12 +340,12 @@ function CompiledPottsProgram(
         resolved_checkerboard_plan.shape == shape || throw(ArgumentError(
             "checkerboard plan shape does not match the compiled program"
         ))
-        resolved_checkerboard_plan.periodic == periodic || throw(ArgumentError(
-            "checkerboard plan periodicity does not match the compiled program"
+        resolved_checkerboard_plan.domain_identity ==
+            cartesian_domain_identity(domain) || throw(ArgumentError(
+            "checkerboard plan domain does not match the compiled program"
         ))
         resolved_checkerboard_plan = CheckerboardPlan(
-            resolved_checkerboard_plan.shape,
-            resolved_checkerboard_plan.periodic,
+            domain,
             resolved_checkerboard_plan.sites,
             resolved_checkerboard_plan.color_offsets,
             resolved_checkerboard_plan.conflict_displacements,
@@ -353,7 +359,14 @@ function CompiledPottsProgram(
         )
     _validate_descriptor_state_domains(descriptor_plan, stage_plan)
     _validate_tracker_sources(tracker_plan, descriptor_plan, stage_plan, parameter_defaults, shape)
-    _validate_stage_state_domains(stage_plan, descriptor_plan.state_layout, descriptor_plan.source_table, kind_count, medium_mask, tracker_plan)
+    _validate_stage_state_domains(
+        stage_plan,
+        descriptor_plan.state_layout,
+        descriptor_plan.source_table,
+        kind_count,
+        domain_kind_mask(domain, kind_count, MediumDomainOwnerCategory),
+        tracker_plan,
+    )
     ownership_targets = lifecycle_plan isa LifecycleExecutionPlan ?
         (ownership_change_handles..., (rule.handle for rule in lifecycle_plan.ownership_rules)...) :
         ownership_change_handles
@@ -380,7 +393,7 @@ function CompiledPottsProgram(
         end
     end
     owned_proposal_offsets = copy(proposal_offsets)
-    owned_medium_mask = copy(medium_mask)
+    owned_domain = _own_compiled_program_value(domain)
     owned_parameter_defaults = copy(parameter_defaults)
     owned_relationship_storage = _own_compiled_program_value(
         relationship_storage
@@ -404,12 +417,9 @@ function CompiledPottsProgram(
     )
     compiler_fingerprint = String(fingerprint)
     integrity_fingerprint = _compiled_program_integrity_fingerprint(
-        shape,
-        periodic,
+        owned_domain,
         owned_proposal_offsets,
         Int16(kind_count),
-        Int16(medium_kind),
-        owned_medium_mask,
         temperature,
         Int32(attempts_per_site),
         owned_parameter_defaults,
@@ -426,7 +436,7 @@ function CompiledPottsProgram(
         compiler_fingerprint,
     )
     return CompiledPottsProgram{
-        T, N, typeof(owned_engine), typeof(owned_backend),
+        T, N, typeof(owned_domain), typeof(owned_engine), typeof(owned_backend),
         typeof(owned_relationship_storage), typeof(owned_tracker_plan),
         typeof(owned_descriptor_plan), typeof(owned_stage_plan),
         typeof(owned_ownership_change_handles),
@@ -434,12 +444,9 @@ function CompiledPottsProgram(
         typeof(owned_checkerboard_plan),
         typeof(owned_mechanism_authority),
     }(
-        shape,
-        periodic,
+        owned_domain,
         owned_proposal_offsets,
         Int16(kind_count),
-        Int16(medium_kind),
-        owned_medium_mask,
         temperature,
         Int32(attempts_per_site),
         owned_parameter_defaults,

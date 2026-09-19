@@ -24,6 +24,37 @@ compiler extensions describe validated scientific/compiler meaning, while
 backend extensions provide execution, storage, and settlement behavior for an
 admitted device profile.
 
+### Cartesian ownership domains
+
+`CompilerSPI.CartesianOwnershipDomain` is the single runtime authority for a
+Cartesian program's shape, per-face boundary law, non-finite owners, fixed
+obstacles, and mutable recipient population. Positive owner codes address
+finite-cell slots, zero names the declared default domain owner, and negative
+codes are handles into the domain-owned non-finite owner directory. Stable
+owner equality is the pair `(category, identity)`, represented by `OwnerKey`;
+kind is scientific metadata and is not an identity substitute.
+
+Each face is explicitly periodic, closed, or fixed to one declared domain
+owner. An explicit Boolean `obstacle_mask` distinguishes a fixed obstacle owned
+by the default owner (handle zero) from a mutable site. `owner_at` applies this
+authority uniformly, while the domain's validated mutable-site set supplies the
+exact sequential and checkerboard recipient population and MCS budget. Fixed
+exterior and obstacle owners participate in owner/contact reads, but they are
+absent from proposal, lifecycle, relationship-endpoint, and write targets.
+
+Compiler clients lower these facts as runtime data, and Core validates and owns
+their realization. Device geometry receives compact face and owner-directory
+payloads; it does not specialize on the completed model's claim graph.
+Sequential and checkerboard execution share the same Cartesian realization and
+owner laws, including periodic alias canonicalization and multi-face
+incompatibility rejection.
+
+Exact-continuation checkpoints bind the complete validated executable identity,
+including face laws, domain-owner metadata, obstacle ownership and the resulting
+mutable-site set. A compiler-supplied source fingerprint is not sufficient by
+itself: restoring into a program with a different Cartesian domain rejects
+before any destination-domain realization can alter the saved logical state.
+
 ```@example core_boundary
 using CorePotts
 runtime_api = Set((
