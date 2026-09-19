@@ -263,6 +263,7 @@ function _commit_copy!(
         context,
     ) where {T, N}
     source = tracker_source_view(runtime.program, runtime.ownership;
+        cell_generations = runtime.cell_generations,
         parameters = runtime.parameters, descriptor_state = runtime.descriptor_state)
     commit_tracker_updates!(
         runtime.trackers,

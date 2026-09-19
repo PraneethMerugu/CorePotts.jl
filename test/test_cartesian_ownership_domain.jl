@@ -105,7 +105,8 @@ function checkerboard_fixed_owner_oracle_plan(contact_offsets)
         C.DescriptorSupport(true, true, true, true),
         (), (), role, 1)
     resources = C.HamiltonianDomainResources(
-        contact_offsets, Int32[1], Int32[size(contact_offsets, 2)], Int32[0])
+        contact_offsets, ones(Float32, size(contact_offsets, 2)),
+        Int32[1], Int32[size(contact_offsets, 2)], Int32[0])
     return C.DescriptorExecutionPlan(
         (C.ProposalDescriptorGroup(
             [descriptor], (), (), (family = :fixed_owner_oracle,)),),
@@ -463,7 +464,7 @@ end
         (), (), role, 1,
     )
     resources = C.HamiltonianDomainResources(
-        Int8[-1 2; 0 0], Int32[1], Int32[2], Int32[0]
+        Int8[-1 2; 0 0], Float32[1, 1], Int32[1], Int32[2], Int32[0]
     )
     descriptor_plan = C.DescriptorExecutionPlan(
         (C.ProposalDescriptorGroup(

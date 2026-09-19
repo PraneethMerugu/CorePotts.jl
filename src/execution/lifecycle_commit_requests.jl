@@ -89,7 +89,8 @@ function _apply_lifecycle_request_effect!(
         mode, runtime, plan, workspace, request, descriptor, plan_class
     ) || return -1
     tracker_source = tracker_source_view(
-        runtime.program, workspace.staged_ownership
+        runtime.program, workspace.staged_ownership;
+        cell_generations = workspace.staged_cell_generations,
     )
     _stage_lifecycle_effect_base!(
         mode, runtime, plan, workspace, request, descriptor,

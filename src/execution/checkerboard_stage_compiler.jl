@@ -1006,8 +1006,12 @@ function _compile_stage_expression(
         end
         if operation isa QualifiedTrackerOperation
             quantity = only(typeof(operation.quantity).parameters)
-            return _GatheredQualifiedTrackerCall{quantity, typeof(operation.operation), typeof(arguments)}(
-                operation.operation, arguments, operation.source_handle
+            return _GatheredQualifiedTrackerCall{
+                quantity, typeof(operation.operation), typeof(arguments),
+                typeof(operation.payload),
+            }(
+                operation.operation, arguments, operation.source_handle,
+                operation.payload,
             )
         end
         return _ExecutableContextualCall(operation, arguments)

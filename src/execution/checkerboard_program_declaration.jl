@@ -606,7 +606,28 @@ function _program_state_copy_schema(state)
         _program_state_copy_leaf(:parameters, state.parameters),
     ]
     for (index, tracker) in enumerate(state.trackers.values)
-        if tracker isa CellMomentsState
+        if tracker isa SpatialRelationQueryState
+            record_components = StructArrays.components(tracker.pairs.records)
+            key_components = StructArrays.components(record_components.key)
+            for (component, values) in enumerate(key_components)
+                push!(leaves, _program_state_copy_leaf(
+                    Symbol(:tracker_, index, :_key_, component), values))
+            end
+            push!(leaves, _program_state_copy_leaf(
+                Symbol(:tracker_, index, :_incidence), record_components.value))
+            push!(leaves, _program_state_copy_leaf(
+                Symbol(:tracker_, index, :_pair_count), tracker.pairs.count))
+            contact_components = StructArrays.components(tracker.contacts.records)
+            for (component, values) in enumerate(
+                    StructArrays.components(contact_components.key))
+                push!(leaves, _program_state_copy_leaf(
+                    Symbol(:tracker_, index, :_contact_key_, component), values))
+            end
+            push!(leaves, _program_state_copy_leaf(
+                Symbol(:tracker_, index, :_contact_value), contact_components.value))
+            push!(leaves, _program_state_copy_leaf(
+                Symbol(:tracker_, index, :_contact_count), tracker.contacts.count))
+        elseif tracker isa CellMomentsState
             push!(leaves,
                 _program_state_copy_leaf(
                     Symbol(:tracker_, index, :_first), tracker.first

@@ -367,10 +367,11 @@ function tracker_adapt end
 abstract type AbstractTrackerCommitSource end
 
 """Read-only tracker source shared by rebuild, proposal, and oracle paths."""
-struct TrackerSourceView{O, D, R, V, A} <: AbstractTrackerCommitSource
+struct TrackerSourceView{O, D, R, G, V, A} <: AbstractTrackerCommitSource
     ownership::O
     domain::D
     domain_resources::R
+    cell_generations::G
     parameters::V
     descriptor_state::A
 end
@@ -387,10 +388,14 @@ end
 Adapt.@adapt_structure _LifecycleTrackerCommitSource
 
 """Construct the read-only authoritative source used by tracker protocols."""
-tracker_source_view(program, ownership; parameters = (), descriptor_state = nothing) = TrackerSourceView(
+tracker_source_view(
+    program, ownership;
+    cell_generations = UInt32[], parameters = (), descriptor_state = nothing,
+) = TrackerSourceView(
     ownership,
     program.domain,
     program.descriptor_plan.domain_resources,
+    cell_generations,
     parameters,
     descriptor_state,
 )
@@ -855,6 +860,7 @@ _tracker_storage_inspection(
     dimensions = N,
     element_type = T,
 )
+
 
 """Return stable scientific and execution facts for a tracker descriptor."""
 function tracker_inspection(descriptor::AbstractTrackerDescriptor)
