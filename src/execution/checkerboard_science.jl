@@ -1509,7 +1509,7 @@ function _checkerboard_scientific_declaration(
     state_fields = map(state_handles) do handle
         entry = state_read_source(stage_plan, descriptor_plan.state_layout, handle)
         shape = Tuple(Int.(handle_shape(handle)))
-        domain = if entry.schema.domain === :model
+        state_space = if entry.schema.domain === :model
             prod(shape; init = 1) == 1 || throw(ArgumentError("model proposal state requires one logical value"))
             model_space
         else
@@ -1517,7 +1517,7 @@ function _checkerboard_scientific_declaration(
                 throw(ArgumentError("checkerboard proposal state requires a declared model value or lattice-shaped site state"))
             topology.lattice_space
         end
-        LocalMath.Field(domain, _state_handle_element_type(handle))
+        LocalMath.Field(state_space, _state_handle_element_type(handle))
     end
     accepted_state_handles = requirements.accepted_state_handles
     accepted_state_fields = map(accepted_state_handles) do handle
