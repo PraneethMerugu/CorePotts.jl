@@ -300,7 +300,7 @@ function _stage_lifecycle_transactions!(
     for position in 1:selected_count
         request = Int(_lifecycle_selected_request(workspace, position))
         _stage_lifecycle_request_relationships!(
-            HostLifecycleExecution(), runtime, plan, workspace, request
+            HostLifecycleExecution(), plan, workspace, request
         ) || return (
             _stamp_host_lifecycle_failure!(
                 runtime, plan, workspace, ProgramStageRelationships

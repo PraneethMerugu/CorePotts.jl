@@ -124,9 +124,11 @@ function update_program_inputs!(
         parameters = replacement_parameters,
         descriptor_state = descriptor_state === nothing ? active.descriptor_state : replacement_state)
     replacement_trackers = _input_tracker_candidate(
-        runtime.program.tracker_plan, active.trackers, source, active.cell_kinds;
-        backend = KernelAbstractions.get_backend(active.ownership),
-        copy_source = descriptor_state !== nothing)
+        runtime.program.tracker_plan,
+        runtime.input_tracker_recipes,
+        active.trackers,
+        source,
+        active.cell_kinds)
     destinations = if device_workspace !== nothing
         (runtime, device_workspace.state, device_workspace.alternate_state)
     else

@@ -228,12 +228,29 @@ function _bind_lifecycle_tracker(
         group.source_handles,
     )
 end
+function _bind_lifecycle_tracker(
+        group::_LifecycleDenseScalarUpdateGroup, source,
+    )
+    return _LifecycleDenseScalarUpdateGroup(
+        group.active_count,
+        map(
+            descriptor -> _bind_lifecycle_tracker(descriptor, source),
+            group.descriptors,
+        ),
+    )
+end
 
-function _bind_lifecycle_tracker_plan(plan::AbstractTrackerPlan, source)
-    return TrackerKernelPlan(map(
+function _bind_lifecycle_tracker_updates(
+        plan::_AcceptedTrackerUpdatePlan, state::TrackerState, source,
+    )
+    descriptors = map(
         descriptor -> _bind_lifecycle_tracker(descriptor, source),
         plan.descriptors,
-    ))
+    )
+    values = map(
+        index -> getfield(state.values, Int(index)), plan.state_indices
+    )
+    return TrackerKernelPlan(descriptors), TrackerState(values)
 end
 
 @inline _lifecycle_tracker_entry_updates_valid(
@@ -268,10 +285,15 @@ end
 end
 
 @inline function _lifecycle_tracker_entry_update_valid(
-        group::_DenseScalarTrackerKernelGroup,
+        group::Union{
+            _DenseScalarTrackerKernelGroup,
+            _LifecycleDenseScalarUpdateGroup,
+        },
         values, target, old_owner,
     )
-    for column in eachindex(group.descriptors)
+    count = group isa _LifecycleDenseScalarUpdateGroup ?
+        Int(group.active_count) : length(group.descriptors)
+    for column in 1:count
         _lifecycle_tracker_entry_update_valid(
             getfield(group.descriptors, column), values, column,
             target, old_owner,
@@ -329,10 +351,15 @@ end
 end
 
 @inline function _lifecycle_tracker_completed_update_valid(
-        group::_DenseScalarTrackerKernelGroup,
+        group::Union{
+            _DenseScalarTrackerKernelGroup,
+            _LifecycleDenseScalarUpdateGroup,
+        },
         values, target, owner,
     )
-    for column in eachindex(group.descriptors)
+    count = group isa _LifecycleDenseScalarUpdateGroup ?
+        Int(group.active_count) : length(group.descriptors)
+    for column in 1:count
         _lifecycle_tracker_completed_update_valid(
             getfield(group.descriptors, column), values, column,
             target, owner,
@@ -571,6 +598,50 @@ function _site_tracker_reads_write(descriptor::_SiteExpressionTracker, target, l
     end
 end
 
+function _refresh_published_site_tracker!(
+        runtime,
+        descriptor::_SiteExpressionTracker,
+        recipe::_SiteTrackerRebuildRecipe,
+        source,
+        published,
+    )
+    program = runtime.program
+    any(
+        target -> _site_tracker_reads_write(
+            descriptor, target,
+            program.descriptor_plan.state_layout, program.stage_plan,
+        ),
+        published,
+    ) || return nothing
+    values = _execute_input_tracker_recipe(recipe, source)
+    copyto!(
+        tracker_values(program.tracker_plan, runtime.trackers, descriptor.quantity),
+        values,
+    )
+    return nothing
+end
+
+function _refresh_published_site_tracker!(
+        runtime,
+        group::DenseScalarTrackerGroup,
+        recipes::AbstractVector,
+        source,
+        published,
+    )
+    for index in eachindex(group.descriptors, recipes)
+        _refresh_published_site_tracker!(
+            runtime,
+            group.descriptors[index],
+            recipes[index],
+            source,
+            published,
+        )
+    end
+    return nothing
+end
+
+_refresh_published_site_tracker!(runtime, descriptor, recipe, source, published) = nothing
+
 function _refresh_published_site_trackers!(runtime, published)
     isempty(published) && return nothing
     program = runtime.program
@@ -579,16 +650,12 @@ function _refresh_published_site_trackers!(runtime, published)
         cell_generations = runtime.cell_generations,
         parameters = runtime.parameters, descriptor_state = runtime.descriptor_state
     )
-    for descriptor in tracker_instances(program.tracker_plan)
-        descriptor isa _SiteExpressionTracker || continue
-        any(
-            target -> _site_tracker_reads_write(
-                descriptor, target,
-                program.descriptor_plan.state_layout, program.stage_plan
-            ), published
-        ) || continue
-        values = _execute_site_tracker_rebuild(descriptor, source, runtime.cell_kinds)
-        copyto!(tracker_values(program.tracker_plan, runtime.trackers, descriptor.quantity), values)
+    descriptors = program.tracker_plan.descriptors
+    recipes = runtime.input_tracker_recipes
+    for index in eachindex(descriptors, recipes)
+        _refresh_published_site_tracker!(
+            runtime, descriptors[index], recipes[index], source, published,
+        )
     end
     return nothing
 end
@@ -616,6 +683,139 @@ function _site_tracker_source_bindings(declaration, source; backend, copy_source
         state_bindings...,
         parameter_bindings...,
     )
+end
+
+function _copyto_tracker_recipe_buffer!(destination, source)
+    copyto!(destination, source)
+    return destination
+end
+
+function _copyto_tracker_recipe_buffer!(destination, source::BlockView)
+    length(destination) == length(source) || throw(DimensionMismatch(
+        "tracker recipe source and destination lengths differ",
+    ))
+    copyto!(
+        destination,
+        1,
+        source.storage,
+        Int(source.offset),
+        length(source),
+    )
+    return destination
+end
+
+function _tracker_recipe_buffer(backend, values)
+    buffer = KernelAbstractions.allocate(
+        backend, eltype(values), size(values)...,
+    )
+    _copyto_tracker_recipe_buffer!(buffer, values)
+    return buffer
+end
+
+function _prepare_input_tracker_recipe(
+        descriptor::_SiteExpressionTracker, source, cell_kinds, backend,
+    )
+    declaration = _site_tracker_rebuild_declaration(
+        descriptor,
+        source.shape,
+        length(cell_kinds),
+        eltype(source.parameters),
+    )
+    ownership = _tracker_recipe_buffer(backend, source.ownership)
+    sources = map(declaration.handles) do handle
+        _tracker_recipe_buffer(
+            backend, state_block(source.descriptor_state, handle).values,
+        )
+    end
+    parameters = _tracker_recipe_buffer(backend, source.parameters)
+    output_values = _tracker_recipe_buffer(
+        backend,
+        fill(zero(eltype(declaration.output)), length(cell_kinds)),
+    )
+    state_bindings = map(declaration.fields, sources) do field, values
+        field => values
+    end
+    parameter_bindings = declaration.parameter_field === nothing ? () : (
+        declaration.parameter_field => _checkerboard_parameter_view(
+            parameters,
+            Val(declaration.parameter_count),
+            Tuple(source.shape),
+        ),
+    )
+    bound = LocalMath.bind(
+        declaration.law,
+        declaration.ownership => ownership,
+        state_bindings...,
+        parameter_bindings...,
+        declaration.output => output_values,
+        declaration.validation_bindings...;
+        backend,
+    )
+    planned = LocalMath.plan(bound; backend)
+    return _SiteTrackerRebuildRecipe(
+        planned,
+        ownership,
+        sources,
+        parameters,
+        declaration.handles,
+        output_values,
+    )
+end
+
+_prepare_input_tracker_recipe(
+    descriptor::AbstractTrackerDescriptor, source, cell_kinds, backend,
+) = nothing
+
+function _prepare_input_tracker_recipe(
+        group::DenseScalarTrackerGroup, source, cell_kinds, backend,
+    )
+    return map(
+        descriptor -> _prepare_input_tracker_recipe(
+            descriptor, source, cell_kinds, backend,
+        ),
+        group.descriptors,
+    )
+end
+
+function _runtime_input_tracker_state(runtime)
+    execution_workspace = runtime.engine_workspace
+    device_workspace = _is_checkerboard_execution_workspace(execution_workspace) ?
+        _checkerboard_core(execution_workspace) : nothing
+    return device_workspace === nothing ? runtime :
+        first(_checkerboard_transaction_banks(
+            device_workspace, device_workspace.execution.committed_mcs,
+        ))
+end
+
+function _prepare_program_input_tracker_recipes!(runtime)
+    active = _runtime_input_tracker_state(runtime)
+    source = tracker_source_view(
+        runtime.program,
+        active.ownership;
+        parameters = active.parameters,
+        descriptor_state = active.descriptor_state,
+    )
+    backend = KernelAbstractions.get_backend(active.ownership)
+    runtime.input_tracker_recipes = map(
+        descriptor -> _prepare_input_tracker_recipe(
+            descriptor, source, active.cell_kinds, backend,
+        ),
+        runtime.program.tracker_plan.descriptors,
+    )
+    return runtime
+end
+
+function _execute_input_tracker_recipe(recipe::_SiteTrackerRebuildRecipe, source)
+    copyto!(recipe.ownership, source.ownership)
+    for (handle, values) in zip(recipe.handles, recipe.sources)
+        _copyto_tracker_recipe_buffer!(
+            values, state_block(source.descriptor_state, handle).values,
+        )
+    end
+    copyto!(recipe.parameters, source.parameters)
+    prepared = LocalMath.prepare(recipe.plan)
+    wait(LocalMath.execute!(prepared))
+    return recipe.values
 end
 
 function _execute_site_tracker_rebuild(

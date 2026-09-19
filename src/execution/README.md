@@ -31,6 +31,27 @@ The principal source owners are:
   remain concrete bounded values, not stored compiler plans;
 - `checkerboard_transaction.jl`: accepted tracker and relationship scratch,
   packed shadow-state settlement, and terminal transaction fragments;
+- `tracker_plan_contracts.jl` and `tracker_source_execution.jl`: authoritative
+  tracker contracts, cold selection of incrementally maintainable lifecycle
+  entries, and binding of only their exact state/source arrays. Dense scalar
+  update counts are values within a bounded capacity class; author quantity
+  identity and reconstruction-only trackers do not enter this hot recipe;
+- `lifecycle_commit_state.jl` and `lifecycle_commit_relationships.jl`: the
+  owner-change transaction over one ownership-transfer recipe and its narrow
+  ownership, cell-kind, tracker, descriptor-state, and status view. Backend
+  structural staging binds its admitted incremental tracker subset before this
+  boundary; host staging retains its authoritative tracker state. Both invoke
+  the same transfer implementation. The enclosing structural-effect recipe owns
+  descriptors plus that transfer contract; its state view adds only the
+  selected-request, placement, partition, generation, and staged fields needed
+  by create, remove, retire, transition, and divide. These signatures expose
+  prepared semantics and mutable state instead of accepting a complete program,
+  lifecycle plan, or workspace.
+  `test_allocation_contracts.jl` statically checks this exact prepared CPU
+  signature and its bound-contribution control, then verifies zero observed heap
+  bytes on separately constructed warmed calls.
+  `benchmark/prepared_update_contract.jl` records their separate construction,
+  first-call, and warm Chairmarks samples without imposing a timing threshold;
 - `checkerboard_law.jl`: composition, storage binding, and preparation of the
   ordered LocalMath laws;
 - `checkerboard_queue.jl` and `checkerboard_runtime.jl`: submission ordering,

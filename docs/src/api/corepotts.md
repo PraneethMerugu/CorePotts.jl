@@ -341,6 +341,13 @@ boundary. Ordinary validation failure preserves the previous inputs and
 maintained values. This is not a rollback guarantee for arbitrary backend-copy
 failures, nor does it establish support for every maintained quantity or device.
 
+Source-dependent maintained quantities reuse the validated LocalMath plan
+owned by the runtime. Current candidate inputs are copied into plan-owned
+staging buffers, results are written to recipe-owned scratch storage, and the
+plan is prepared task-locally before execution. This keeps combined publication
+atomic and preserves the ordinary LocalMath path while avoiding revalidation
+and relowering of an unchanged tracker law on every update.
+
 CorePotts owns publication to the host mirror and both checkerboard execution
 banks. Downstream adapters must use this public entrypoint rather than mutate
 those buffers separately. Inspect the result with `program_snapshot`; use the

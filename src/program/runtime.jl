@@ -26,6 +26,10 @@ mutable struct ProgramRuntime{T <: AbstractFloat, N, P, C, R, TS, D, SB, EW, LW}
     stage_buffers::SB
     engine_workspace::EW
     lifecycle_workspace::LW
+    # Host-only, runtime-owned recipes retain validated tracker rebuild plans.
+    # The field is erased so their cold LocalMath graph does not parameterize
+    # ProgramRuntime or any device-reachable execution signature.
+    input_tracker_recipes::Any
     parameters::Vector{T}
     seed::UInt64
     replica::UInt32
@@ -46,7 +50,7 @@ mutable struct ProgramRuntime{T <: AbstractFloat, N, P, C, R, TS, D, SB, EW, LW}
         ) where {T<:AbstractFloat,N,P,C,R,TS,D,SB,EW,LW}
         token === _PROGRAM_RUNTIME_CONSTRUCTION_TOKEN ||
             error("invalid ProgramRuntime construction token")
-        length(args) == 26 || throw(ArgumentError(
+        length(args) == 27 || throw(ArgumentError(
             "ProgramRuntime construction requires its exact runtime state"))
         _require_packed_runtime_relationships(args[7])
         return new{T,N,P,C,R,TS,D,SB,EW,LW}(args...)
@@ -64,7 +68,7 @@ function _rebuild_program_runtime(
         proposal_contributions = runtime.proposal_contributions,
         parameters = runtime.parameters,
     ) where {T, N}
-    return ProgramRuntime{
+    rebuilt = ProgramRuntime{
         T,
         N,
         typeof(runtime.program),
@@ -89,6 +93,7 @@ function _rebuild_program_runtime(
         runtime.stage_buffers,
         engine_workspace,
         runtime.lifecycle_workspace,
+        nothing,
         parameters,
         runtime.seed,
         runtime.replica,
@@ -104,6 +109,8 @@ function _rebuild_program_runtime(
         runtime.failure_status,
         runtime.last_lifecycle_receipt,
     )
+    _prepare_program_input_tracker_recipes!(rebuilt)
+    return rebuilt
 end
 
 function _validate_cell_stage_capacity(plan, layout, sources, capacity)
@@ -385,6 +392,7 @@ function _materialize_program(
         stage_buffers,
         engine_workspace,
         lifecycle_workspace,
+        nothing,
         runtime_parameters,
         seed,
         replica,
@@ -410,6 +418,8 @@ function _materialize_program(
             runtime.energy_rejections,
             runtime.retired_cells,
         )
+    runtime.engine_workspace isa CheckerboardWorkspace ||
+        _prepare_program_input_tracker_recipes!(runtime)
     return runtime
 end
 

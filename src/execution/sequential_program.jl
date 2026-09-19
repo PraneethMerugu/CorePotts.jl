@@ -600,9 +600,8 @@ function prevalidate_program_step_transaction(
             )
             candidate = _input_tracker_candidate(
                 runtime.program.tracker_plan,
-                destination.trackers, source, destination.cell_kinds;
-                backend = KernelAbstractions.get_backend(destination.ownership),
-                copy_source = true
+                runtime.input_tracker_recipes,
+                destination.trackers, source, destination.cell_kinds
             )
             _require_tracker_copy_compatible(destination.trackers, candidate)
             _require_tracker_copy_compatible(snapshot.trackers, candidate)
@@ -630,6 +629,7 @@ function prevalidate_program_step_transaction(
             )
             candidate = _input_tracker_candidate(
                 runtime.program.tracker_plan,
+                runtime.input_tracker_recipes,
                 staged.trackers, source, staged.cell_kinds
             )
             _require_tracker_copy_compatible(staged.trackers, candidate)

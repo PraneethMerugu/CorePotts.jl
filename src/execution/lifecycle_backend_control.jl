@@ -28,6 +28,16 @@ end
 Adapt.@adapt_structure LifecycleBackendControl
 Adapt.@adapt_structure NoLifecycleBackendControl
 
+"""Backend cadence counters needed to decide whether a lifecycle stage is due."""
+struct _LifecycleCadenceControl{C}
+    counters::C
+end
+
+Adapt.@adapt_structure _LifecycleCadenceControl
+
+@inline _lifecycle_cadence_control(control) =
+    _LifecycleCadenceControl(control.counters)
+
 struct _LifecycleStateDescriptorPlan{R}
     domain_resources::R
 end
@@ -42,11 +52,6 @@ struct _LifecycleStateProgram{N, C, TP, D, L}
     tracker_plan::TP
     descriptor_plan::D
     lifecycle_plan::L
-end
-
-struct _LifecycleStateEvaluatorPlan{E, S}
-    evaluators::E
-    state_rules::S
 end
 
 struct _LifecycleStatePolicyWorkspace{P}
@@ -74,52 +79,31 @@ end
 Adapt.@adapt_structure _LifecycleStateDescriptorPlan
 Adapt.@adapt_structure _LifecycleStateRelationshipPlan
 Adapt.@adapt_structure _LifecycleStateProgram
-Adapt.@adapt_structure _LifecycleStateEvaluatorPlan
 Adapt.@adapt_structure _LifecycleStatePolicyWorkspace
 Adapt.@adapt_structure _LifecycleStateRuntime
 
-struct _LifecycleStructureProgram{N, T}
-    shape::NTuple{N, Int}
-    tracker_plan::T
-end
-
-struct _LifecycleStructureRuntime{P, K, G}
-    program::P
-    cell_kinds::K
-    cell_generations::G
-end
-
-struct _LifecycleStructurePlan{D, O}
-    descriptors::D
-    ownership_rules::O
-end
-
-Adapt.@adapt_structure _LifecycleStructureProgram
-Adapt.@adapt_structure _LifecycleStructureRuntime
-Adapt.@adapt_structure _LifecycleStructurePlan
-
-function _lifecycle_structure_launch_payload(state, tracker_source)
+function _lifecycle_structure_launch_payload(state, workspace, tracker_source)
     lifecycle = state.program.lifecycle_plan
-    runtime = _LifecycleStructureRuntime(
-        _LifecycleStructureProgram(
-            state.program.shape,
-            _bind_lifecycle_tracker_plan(
-                state.program.lifecycle_tracker_plan, tracker_source
-            ),
-        ),
-        state.cell_kinds,
-        state.cell_generations,
+    tracker_plan, trackers = _bind_lifecycle_tracker_updates(
+        state.program.lifecycle_tracker_plan,
+        workspace.staged_trackers,
+        tracker_source,
     )
-    plan = _LifecycleStructurePlan(
+    structure_state = _lifecycle_structure_state(state, workspace, trackers)
+    recipe = _LifecycleStructureRecipe(
         lifecycle.descriptors,
-        lifecycle.ownership_rules,
+        _OwnershipTransferRecipe(
+            state.program.domain,
+            tracker_plan,
+            lifecycle.ownership_rules,
+        ),
     )
     commit_source = _LifecycleTrackerCommitSource(
         tracker_source.ownership,
         tracker_source.domain,
         tracker_source.domain_resources,
     )
-    return runtime, plan, commit_source
+    return recipe, structure_state, commit_source
 end
 
 function _lifecycle_state_launch_payload(state, workspace)
@@ -148,10 +132,8 @@ function _lifecycle_state_launch_payload(state, workspace)
         state.repeat,
         state.mcs,
     )
-    plan = _LifecycleStateEvaluatorPlan(
-        lifecycle.evaluators, lifecycle.state_rules
-    )
-    return runtime, lifecycle.descriptors, plan
+    recipe = _lifecycle_state_recipe(lifecycle)
+    return runtime, recipe, _lifecycle_state_view(workspace)
 end
 
 struct _ProgramStatusSlot{S} <: AbstractVector{ProgramStatus}
@@ -238,6 +220,26 @@ end
 
 @inline _lifecycle_workspace_with_status(workspace::NamedTuple, status) =
     merge(workspace, (; status))
+
+@inline function _lifecycle_workspace_with_status(
+        workspace::_LifecycleStateView, status,
+    )
+    return _LifecycleStateView(
+        workspace.descriptor,
+        workspace.anchor,
+        workspace.planned_site_count,
+        workspace.planned_sites,
+        workspace.partition_labels,
+        workspace.partition_owner,
+        workspace.site_index,
+        workspace.selection,
+        workspace.planned_site_request,
+        workspace.staged_cell_generations,
+        workspace.staged_trackers,
+        workspace.staged_descriptor_state,
+        status,
+    )
+end
 
 @inline function _lifecycle_workspace_with_staged_state(
         workspace::LifecycleWorkspace, state

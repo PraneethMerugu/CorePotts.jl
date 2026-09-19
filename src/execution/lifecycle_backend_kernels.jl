@@ -334,25 +334,24 @@ end
 end
 
 @kernel function _stage_lifecycle_structure_backend_kernel!(
-        runtime, plan, tracker_source, workspace, control, plan_class
+        recipe, state, tracker_source, control, plan_class
     )
     index = @index(Global, Linear)
-    if index == 1 && _lifecycle_backend_open(workspace) &&
+    if index == 1 && _lifecycle_backend_open(state) &&
             _lifecycle_backend_due(control)
-        selected = _lifecycle_selected_count(workspace)
+        selected = _lifecycle_selected_count(state)
         failed = false
         for position in 1:selected
             if !failed
-                request = Int(_lifecycle_selected_request(workspace, position))
-                descriptor = @inbounds plan.descriptors[
-                    Int(workspace.descriptor[request])
+                request = Int(_lifecycle_selected_request(state, position))
+                descriptor = @inbounds recipe.descriptors[
+                    Int(state.descriptor[request])
                 ]
                 _lifecycle_plan_matches(descriptor, plan_class) || continue
                 failed = !_stage_lifecycle_effect_base!(
                     BackendLifecycleExecution(),
-                    runtime,
-                    plan,
-                    workspace,
+                    recipe,
+                    state,
                     request,
                     descriptor,
                     tracker_source,
@@ -364,46 +363,52 @@ end
 end
 
 @kernel function _stage_lifecycle_relationships_backend_kernel!(
-        state, workspace, control, action
+        recipe, state, cadence, action
     )
     index = @index(Global, Linear)
-    if index == 1 && _lifecycle_backend_open(workspace) &&
-            _lifecycle_backend_due(control)
-        selected = _lifecycle_selected_count(workspace)
+    if index == 1 && _lifecycle_backend_open(state) &&
+            _lifecycle_backend_due(cadence)
+        selected = _lifecycle_selected_count(state)
         failed = false
         for position in 1:selected
             if !failed
-                request = Int(_lifecycle_selected_request(workspace, position))
-                failed = !_stage_lifecycle_request_relationships!(
-                    BackendLifecycleExecution(),
-                    state,
-                    state.program.lifecycle_plan,
-                    workspace,
-                    request,
+                request = Int(_lifecycle_selected_request(state, position))
+                descriptor = @inbounds recipe.descriptors[
+                    Int(state.descriptor[request])
+                ]
+                plan_class = _lifecycle_request_plan_class(descriptor)
+                plan_class === nothing && (failed = true; continue)
+                failed = !_apply_lifecycle_pre_relationships!(
+                    BackendLifecycleExecution(), recipe, state,
+                    request, descriptor, plan_class,
                     action,
                 )
+                failed || (failed = !_apply_lifecycle_post_relationships!(
+                    BackendLifecycleExecution(), recipe, state,
+                    request, descriptor, plan_class, action,
+                ))
             end
         end
     end
 end
 
 @kernel function _stage_lifecycle_state_backend_kernel!(
-        runtime, descriptors, plan, workspace, control, plan_class, action
+        runtime, recipe, state, control, plan_class, action
     )
     request = @index(Global, Linear)
-    if request <= length(workspace.active) &&
-            _lifecycle_backend_open(workspace) &&
+    if request <= length(state.descriptor) &&
+            _lifecycle_backend_open(state) &&
             _lifecycle_backend_due(control) &&
-            _lifecycle_request_selected(workspace, request)
-        descriptor = @inbounds descriptors[
-            Int(workspace.descriptor[request])
+            _lifecycle_request_selected(state, request)
+        descriptor = @inbounds recipe.descriptors[
+            Int(state.descriptor[request])
         ]
         if _lifecycle_plan_matches(descriptor, plan_class)
             _apply_lifecycle_effect_state!(
                 BackendLifecycleExecution(),
                 runtime,
-                plan,
-                workspace,
+                recipe,
+                state,
                 request,
                 descriptor,
                 plan_class,

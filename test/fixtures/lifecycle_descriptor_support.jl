@@ -23,6 +23,8 @@ function receipt_descriptor(
         cadence_value::Integer = 1,
         state_rule_offset::Integer = 1,
         state_rule_count::Integer = 0,
+        relationship_rule_offset::Integer = 1,
+        relationship_rule_count::Integer = 0,
         scalar_type::Type{<:AbstractFloat} = Float64,
     )
     T = scalar_type
@@ -60,8 +62,8 @@ function receipt_descriptor(
         Int16(daughter_kind),
         Int32(state_rule_offset),
         Int32(state_rule_count),
-        Int32(1),
-        Int32(0),
+        Int32(relationship_rule_offset),
+        Int32(relationship_rule_count),
         Int32(0),
         Int32(0),
         Int32(0),

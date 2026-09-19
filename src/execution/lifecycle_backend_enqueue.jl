@@ -502,8 +502,8 @@ function enqueue_lifecycle_backend_index!(
             _TransitionLifecyclePlan(),
             _DivideLifecyclePlan(),
         )
-    structure_runtime, structure_plan, tracker_commit_source =
-        _lifecycle_structure_launch_payload(state, tracker_source)
+    structure_recipe, structure_state, tracker_commit_source =
+        _lifecycle_structure_launch_payload(state, workspace, tracker_source)
     for plan_class in effect_classes
         iszero(
             effect_mask & _lifecycle_effect_bit(
@@ -512,10 +512,9 @@ function enqueue_lifecycle_backend_index!(
         ) && continue
         @debug "enqueue lifecycle structural staging" plan_class
         stage_structure(
-            structure_runtime,
-            structure_plan,
+            structure_recipe,
+            structure_state,
             tracker_commit_source,
-            workspace,
             control,
             plan_class;
             ndrange = 1,
@@ -533,6 +532,11 @@ function enqueue_lifecycle_backend_index!(
     _enqueue_lifecycle_failure_stamp!(state, ProgramStageStructure)
     relationship_action_mask =
         state.program.lifecycle_plan.relationship_action_mask
+    relationship_recipe = _lifecycle_relationship_recipe(
+        state.program.lifecycle_plan
+    )
+    relationship_state = _lifecycle_relationship_state(workspace)
+    relationship_cadence = _lifecycle_cadence_control(control)
     for action_value in (
             Val(:remove_incident), Val(:remove_incompatible),
         )
@@ -543,7 +547,9 @@ function enqueue_lifecycle_backend_index!(
         ) && continue
         @debug "enqueue lifecycle relationship staging" action
         stage_relationships(
-            state, workspace, control, action_value; ndrange = 1
+            relationship_recipe, relationship_state, relationship_cadence,
+            action_value;
+            ndrange = 1,
         )
     end
     _enqueue_lifecycle_failure_stamp!(state, ProgramStageRelationships)
@@ -560,7 +566,7 @@ function enqueue_lifecycle_backend_index!(
         Val(:transform_daughters),
         Val(:redraw_daughters),
     )
-    state_runtime, state_descriptors, state_plan =
+    state_runtime, state_recipe, state_view =
         _lifecycle_state_launch_payload(state, workspace)
     for action_value in state_actions
         action = _lifecycle_state_action_value(action_value)
@@ -579,9 +585,8 @@ function enqueue_lifecycle_backend_index!(
             @debug "enqueue lifecycle state staging" plan_class action
             stage_state(
                 state_runtime,
-                state_descriptors,
-                state_plan,
-                workspace,
+                state_recipe,
+                state_view,
                 control,
                 plan_class,
                 action_value;

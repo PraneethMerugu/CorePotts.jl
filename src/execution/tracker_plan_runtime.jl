@@ -262,10 +262,18 @@ end
         old_owner,
         new_owner,
         delta_function,
-    ) where {G <: Union{DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup}}
+    ) where {
+        G <: Union{
+            DenseScalarTrackerGroup,
+            _DenseScalarTrackerKernelGroup,
+            _LifecycleDenseScalarUpdateGroup,
+        },
+    }
     group = first(descriptors)
     group_values = first(values)
-    for index in eachindex(group.descriptors)
+    count = group isa _LifecycleDenseScalarUpdateGroup ?
+        Int(group.active_count) : length(group.descriptors)
+    for index in 1:count
         descriptor = @inbounds group.descriptors[index]
         _tracker_update_bound(descriptor, source) isa OldNewOwnerUpdateBound || continue
         delta = delta_function(
@@ -329,10 +337,18 @@ end
         old_owner,
         new_owner,
         delta_function,
-    ) where {G <: Union{DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup}}
+    ) where {
+        G <: Union{
+            DenseScalarTrackerGroup,
+            _DenseScalarTrackerKernelGroup,
+            _LifecycleDenseScalarUpdateGroup,
+        },
+    }
     group = first(descriptors)
     group_values = first(values)
-    for index in eachindex(group.descriptors)
+    count = group isa _LifecycleDenseScalarUpdateGroup ?
+        Int(group.active_count) : length(group.descriptors)
+    for index in 1:count
         descriptor = @inbounds group.descriptors[index]
         _tracker_update_bound(descriptor, source) isa OldNewOwnerUpdateBound || continue
         delta = delta_function(
@@ -403,6 +419,15 @@ end
 end
 @inline function _finish_tracker_source_change!(group::_DenseScalarTrackerKernelGroup, values, source, target, old_owner, owner, cell_kinds)
     for index in eachindex(group.descriptors)
+        _finish_tracker_source_change!(getfield(group.descriptors, index), view(values, :, index), source, target, old_owner, owner, cell_kinds)
+    end
+    return nothing
+end
+@inline function _finish_tracker_source_change!(
+        group::_LifecycleDenseScalarUpdateGroup,
+        values, source, target, old_owner, owner, cell_kinds,
+    )
+    for index in 1:Int(group.active_count)
         _finish_tracker_source_change!(getfield(group.descriptors, index), view(values, :, index), source, target, old_owner, owner, cell_kinds)
     end
     return nothing
@@ -809,12 +834,21 @@ _tracker_uses_inputs(descriptor::AbstractTrackerDescriptor) =
     tracker_contract(descriptor).source isa SiteExpressionTrackerSource
 _tracker_uses_inputs(group::DenseScalarTrackerGroup) = any(_tracker_uses_inputs, group.descriptors)
 
-_rebuild_input_tracker(descriptor::_SiteExpressionTracker, source, cell_kinds; backend, copy_source) =
-    _execute_site_tracker_rebuild(descriptor, source, cell_kinds; backend, copy_source)
+_rebuild_input_tracker(
+    descriptor::_SiteExpressionTracker,
+    recipe::_SiteTrackerRebuildRecipe,
+    source,
+    cell_kinds,
+) = _execute_input_tracker_recipe(recipe, source)
 
-function _rebuild_input_tracker(group::DenseScalarTrackerGroup, source, cell_kinds; backend, copy_source)
-    columns = map(group.descriptors) do descriptor
-        _rebuild_input_tracker(descriptor, source, cell_kinds; backend, copy_source)
+function _rebuild_input_tracker(
+        group::DenseScalarTrackerGroup,
+        recipes::AbstractVector,
+        source,
+        cell_kinds,
+    )
+    columns = map(group.descriptors, recipes) do descriptor, recipe
+        _rebuild_input_tracker(descriptor, recipe, source, cell_kinds)
     end
     first_values = first(columns)
     values = similar(first_values, eltype(first_values), length(cell_kinds), length(columns))
@@ -824,11 +858,12 @@ function _rebuild_input_tracker(group::DenseScalarTrackerGroup, source, cell_kin
     return values
 end
 
-function _input_tracker_candidate(plan, trackers, source, cell_kinds;
-        backend = KernelAbstractions.CPU(), copy_source = false)
-    return TrackerState(map(plan.descriptors, trackers.values) do descriptor, current
+function _input_tracker_candidate(plan, recipes, trackers, source, cell_kinds)
+    return TrackerState(map(
+            plan.descriptors, recipes, trackers.values,
+        ) do descriptor, recipe, current
         _tracker_uses_inputs(descriptor) || return current
-        replacement = _rebuild_input_tracker(descriptor, source, cell_kinds; backend, copy_source)
+        replacement = _rebuild_input_tracker(descriptor, recipe, source, cell_kinds)
         return _validate_tracker_state(tracker_storage(descriptor), replacement, length(cell_kinds))
     end)
 end
