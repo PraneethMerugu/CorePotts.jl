@@ -105,7 +105,7 @@ end
 
 include("fixtures/lifecycle_descriptor_support.jl")
 
-function receipt_lifecycle_plan()
+function receipt_lifecycle_plan(; placement_site = 36)
     descriptors = CorePotts.LifecycleDescriptor{2, Float64}[
         receipt_descriptor(
             1,
@@ -138,7 +138,7 @@ function receipt_lifecycle_plan()
     evaluators = CorePotts.LifecycleEvaluatorStorage(
         Any[
             CorePotts.StaticEvaluator(CorePotts.LiteralExpression(true)),
-            CorePotts.StaticEvaluator(CorePotts.LiteralExpression(36)),
+            CorePotts.StaticEvaluator(CorePotts.LiteralExpression(placement_site)),
         ],
         Symbol[:lifecycle_trigger, :lifecycle_placement],
     )
@@ -679,7 +679,7 @@ end
         face_kinds = ntuple(_ -> CorePotts.ClosedCartesianFace, 4),
         obstacle_owner_handles = obstacles,
     )
-    plan = receipt_lifecycle_plan()
+    plan = receipt_lifecycle_plan(; placement_site = 35)
     remove_index = findfirst(
         descriptor -> descriptor.effect === CorePotts.RemoveCellLifecycleEffect,
         plan.descriptors,
