@@ -316,6 +316,9 @@ function CompiledPottsProgram(
     attempts_per_site > 0 || throw(ArgumentError(
         "attempts per site must be positive"
     ))
+    _validate_contact_measure_aliases(
+        descriptor_plan.domain_resources, shape, periodic
+    )
     relationship_storage = relationships isa RelationshipStorage ?
                            relationships : RelationshipStorage(relationships)
     checkerboard_plan === nothing && engine isa CheckerboardProgramEngine &&
@@ -353,6 +356,9 @@ function CompiledPottsProgram(
         )
     _validate_descriptor_state_domains(descriptor_plan, stage_plan)
     _validate_tracker_sources(tracker_plan, descriptor_plan, stage_plan, parameter_defaults, shape)
+    _validate_stage_spatial_queries(
+        stage_plan, descriptor_plan.state_layout,
+        descriptor_plan.domain_resources, shape, periodic)
     _validate_stage_state_domains(stage_plan, descriptor_plan.state_layout, descriptor_plan.source_table, kind_count, medium_mask, tracker_plan)
     ownership_targets = lifecycle_plan isa LifecycleExecutionPlan ?
         (ownership_change_handles..., (rule.handle for rule in lifecycle_plan.ownership_rules)...) :

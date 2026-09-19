@@ -61,6 +61,25 @@ import ..CorePotts:
     CellKindLifecycleDomain,
     CellMomentsTracker,
     CellSurfaceTracker,
+    SpatialRelationQueryTracker,
+    SpatialRelationQueryStorage,
+    SpatialRelationQueryState,
+    SpatialOwnerCategory,
+    FiniteCellOwner,
+    MediumDomainOwner,
+    WallDomainOwner,
+    SpatialOwnerFilterKind,
+    StableOwnerIdentityFilter,
+    CellKindOwnerFilter,
+    MediumDomainIdentityFilter,
+    OwnerCategoryFilter,
+    PublishedOwnerPredicateFilter,
+    WallDomainIdentityFilter,
+    SpatialOwnerFilterRecipe,
+    SpatialQueryRead,
+    GlobalSpatialQueryRead,
+    ReturnEmptySpatialMean,
+    ErrorOnEmptySpatialMean,
     ClaimedOwnerExclusiveTrackerConcurrency,
     ClearLifecycleOwnershipState,
     CommutativeIntegerWriteAccess,
@@ -278,6 +297,8 @@ import ..CorePotts:
     relation_count,
     relation_neighbor_site,
     relation_offsets,
+    relation_measure,
+    relation_measures,
     relationship_degree,
     site_owner,
     stage_site,
@@ -344,6 +365,14 @@ public RelationshipRetuneEffect, StageDescriptorGroup, StageExecutionPlan
 public NoWriteAccess, ExclusiveWriteAccess, CommutativeIntegerWriteAccess
 public DeferredRequestWriteAccess, RelationshipStoreSchema
 public OwnershipCountTracker, CellSurfaceTracker, CellMomentsTracker
+public SpatialRelationQueryTracker, SpatialRelationQueryStorage
+public SpatialRelationQueryState
+public SpatialOwnerCategory, FiniteCellOwner, MediumDomainOwner, WallDomainOwner
+public SpatialOwnerFilterKind, StableOwnerIdentityFilter, CellKindOwnerFilter
+public MediumDomainIdentityFilter, OwnerCategoryFilter
+public PublishedOwnerPredicateFilter, WallDomainIdentityFilter
+public SpatialOwnerFilterRecipe, SpatialQueryRead, GlobalSpatialQueryRead
+public ReturnEmptySpatialMean, ErrorOnEmptySpatialMean
 public DenseOwnerScalarStorage, DenseOwnerValueStorage, DenseOwnerMomentsStorage, DenseScalarTrackerGroup
 public OwnershipTrackerSource, OwnershipRelationTrackerSource
 public SiteExpressionTrackerSource, SiteSumTracker, SiteMinimumTracker
@@ -417,6 +446,7 @@ public proposal_source_kind, proposal_source_owner, proposal_source_site
 public proposal_target_kind, proposal_target_owner, proposal_target_site
 public qualified_tracker_operation_call
 public relation_count, relation_neighbor_site, relation_offsets
+public relation_measure, relation_measures
 public relationship_degree, site_owner, stage_site
 public state_block, state_schema_metadata, state_value
 public tracker_contract, tracker_adapt, tracker_checkpoint_policy

@@ -68,6 +68,54 @@ foreign or out-of-range source handle is rejected with the descriptor,
 operation, role, and source-table context instead of becoming an anonymous
 integer provenance value.
 
+### Maintained spatial-relation queries
+
+`HamiltonianDomainResources` owns both the finite relation offsets and one
+nonnegative declared measure per lane. `relation_offsets`, `relation_measures`,
+and `relation_measure` expose host-owned compiler views without making those
+tables a second runtime authority.
+
+Compiler extensions declare a `SpatialRelationQueryTracker` under a
+`QualifiedTrackerKey(Val(:spatial_relation_query), relation_handle)`. CorePotts
+initializes and reconstructs its publication
+from the runtime's authoritative ownership and generation tables, and refreshes
+it after accepted ownership changes. Both engines execute one two-stage
+LocalMath path: materialize generation-qualified site identities, then perform
+failure-atomic exact-replacement keyed reductions for pair incidences and
+directed boundary sites. Checkpoints reconstruct this derived state instead of
+persisting a second authority.
+
+The sole pair publication stores exact scalar records keyed by canonical
+generation-qualified owner pair and runtime lane identity. It therefore
+supports several structurally compatible metric tables without duplicating
+topology or generating a different query kernel for each metric. The current
+LocalMath affine-relation backend admits at most 32 lanes; that is an execution
+backend bound, not a semantic limit of spatial queries. A metric
+must preserve the authoritative relation's realized lane count and lane order;
+only its weights may differ. Directed `(owner, site, other owner)` records make
+boundary-site union exact when one site touches several matching owners.
+Repeated bonds remain repeated, reciprocal lanes must have equal measure, and
+periodic seams follow the compiled boundary axes.
+
+Current-snapshot qualified operations expose `contact_edge_count`,
+`contact_measure`, `boundary_site_count`, `neighbor_cell_count`,
+`neighbor_property_sum`, `neighbor_property_mean`, and
+`global_interface_measure`. Owner-relative queries take only the dynamic owner;
+their filter, metric, property handle, and empty-mean policy are cold-lowered in
+a `SpatialQueryRead`. The global query takes no dynamic operands and uses a
+`GlobalSpatialQueryRead`. Neighbor properties and published predicate masks are
+canonical cell-owned state, so neither an author expression graph nor a second
+query-result cache enters the execution boundary. Hypothetical proposal reads
+are intentionally outside this contract.
+
+Finite cells and the current medium-domain ownership encoding participate.
+Fixed exterior and obstacle identities require the Cartesian domain ownership
+contract and are rejected rather than being inferred from a negative owner.
+
+Potts owns author-facing query lowering and filters; CorePotts owns CPM identity,
+maintenance, and contextual projections; LocalMath remains the sole grouping and
+atomic-publication executor.
+
 ### Scheduled state and relationship publication
 
 History storage has one dense trailing retention axis over its declared source

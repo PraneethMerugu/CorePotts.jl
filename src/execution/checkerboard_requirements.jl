@@ -314,10 +314,11 @@ struct _ExecutableContextualCall{F, A <: Tuple}
     arguments::A
 end
 
-struct _GatheredQualifiedTrackerCall{Q, F, A <: Tuple}
+struct _GatheredQualifiedTrackerCall{Q, F, A <: Tuple, P}
     operation::F
     arguments::A
     source_handle::Int32
+    payload::P
 end
 
 struct _ExecutableProposalTerm{E, R}
@@ -1030,8 +1031,10 @@ function _compile_proposal_expression(
             quantity = only(typeof(operation.quantity).parameters)
             return _GatheredQualifiedTrackerCall{
                 quantity, typeof(operation.operation), typeof(arguments),
+                typeof(operation.payload),
             }(
-                operation.operation, arguments, operation.source_handle
+                operation.operation, arguments, operation.source_handle,
+                operation.payload,
             )
         end
         return _ExecutableContextualCall(operation, arguments)

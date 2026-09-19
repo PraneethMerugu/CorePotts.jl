@@ -584,6 +584,7 @@ function prevalidate_program_step_transaction(
         if inputs_staged
             source = tracker_source_view(
                 runtime.program, destination.ownership;
+                cell_generations = destination.cell_generations,
                 parameters, descriptor_state = snapshot.descriptor_state
             )
             candidate = _input_tracker_candidate(
@@ -613,6 +614,7 @@ function prevalidate_program_step_transaction(
             staged = transaction.workspace
             source = tracker_source_view(
                 runtime.program, staged.ownership;
+                cell_generations = staged.cell_generations,
                 parameters, descriptor_state = staged.descriptor_state
             )
             candidate = _input_tracker_candidate(

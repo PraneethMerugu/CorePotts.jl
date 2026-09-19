@@ -228,7 +228,8 @@ function _contact_hamiltonian_plan()
         [descriptor], (), (),
         (family = :contact_hamiltonian,))
     resources = CorePotts.HamiltonianDomainResources(
-        reshape(Int8[-1, 1], 1, 2), Int32[1], Int32[2], Int32[0])
+        reshape(Int8[-1, 1], 1, 2), Float64[1.0, 1.0],
+        Int32[1], Int32[2], Int32[0])
     return CorePotts.DescriptorExecutionPlan(
         (group,), CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
         CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]), (),

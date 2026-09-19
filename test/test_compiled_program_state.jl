@@ -126,8 +126,10 @@ end
     constraint_instances = typeof(constraint)[constraint]
     source_table = Any[:owned_source]
     domain_offsets = reshape(Int8[1, 0], 2, 1)
+    domain_measures = Float64[1.0]
     domain_resources = CorePotts.HamiltonianDomainResources(
         domain_offsets,
+        domain_measures,
         Int32[1],
         Int32[1],
         Int32[0],
@@ -236,6 +238,7 @@ end
     empty!(constraint_instances)
     empty!(source_table)
     fill!(domain_offsets, Int8(0))
+    fill!(domain_measures, 99.0)
     empty!(marker_layout.entries)
     empty!(stage_instances)
     fill!(lifecycle_forbid_extinction, true)
@@ -250,6 +253,7 @@ end
     @test program.descriptor_plan.source_table == Any[:owned_source]
     @test program.descriptor_plan.domain_resources.contact_offsets ==
           reshape(Int8[1, 0], 2, 1)
+    @test program.descriptor_plan.domain_resources.contact_measures == [1.0]
     @test length(program.descriptor_plan.state_layout.entries) == 1
     @test length(program.stage_plan.accepted_copy[1].instances) == 1
     @test program.lifecycle_plan.forbid_extinction == (false, false)
@@ -259,6 +263,10 @@ end
     tampered = deepcopy(program)
     tampered.parameter_defaults[1] = 7.0
     @test_throws ArgumentError CorePotts.program_execution_report(tampered)
+
+    tampered_measure = deepcopy(program)
+    tampered_measure.descriptor_plan.domain_resources.contact_measures[1] = 7.0
+    @test_throws ArgumentError CorePotts.program_execution_report(tampered_measure)
 
     reusable_layout = CorePotts.StateLayout([marker_schema])
     reusable_handle = only(reusable_layout.entries).handle

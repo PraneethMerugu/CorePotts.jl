@@ -624,8 +624,11 @@ function _checkerboard_color_bindings(
     state_scratch_bindings = map(declaration.state_scratch) do field
         field => LocalMath.Allocate(_checkerboard_storage_zero(field))
     end
-    generation_binding = isempty(declaration.relationship_groups) ? () :
-        (declaration.cell_generations => state.cell_generations,)
+    needs_generations = !isempty(declaration.relationship_groups) ||
+        any(group -> group isa _CheckerboardSpatialRelationQueryGroup,
+            declaration.tracker_groups)
+    generation_binding = needs_generations ?
+        (declaration.cell_generations => state.cell_generations,) : ()
     return (
         declaration.target_options => LocalMath.Allocate(schedule),
         declaration.target => LocalMath.Allocate(zero(Int32)),
@@ -716,6 +719,10 @@ function _prepare_checkerboard_color_laws(
     accepted = _checkerboard_acceptance_declaration(
         scientific, state.program.temperature, forbid, retire,
         state.seed, state.replica, state.repeat)
+    accepted = merge(accepted, (
+        domain_resources = state.program.domain_resources,
+        periodic = state.program.periodic,
+    ))
     declaration = _checkerboard_color_declaration(
         accepted, cell_capacity, state.relationships,
         state.program.tracker_plan, state.trackers)

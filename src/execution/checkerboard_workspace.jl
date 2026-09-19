@@ -155,10 +155,14 @@ function _checkerboard_kernel_program(
         ),
     )
     ownership_change_handles = program.ownership_change_handles
-    tracker_kernel = to === nothing ?
-        tracker_kernel_plan(program.tracker_plan) :
-        adapt_tracker_kernel_plan(to, program.tracker_plan, backend)
-    lifecycle_tracker_kernel = _checkerboard_lifecycle_tracker_plan(program)
+    bound_tracker_plan = _bind_relation_pair_tracker_plan(
+        tracker_kernel_plan(program.tracker_plan),
+        _checkerboard_domain_resources(program), program.shape, program.periodic)
+    tracker_kernel = to === nothing ? bound_tracker_plan :
+        adapt_tracker_kernel_plan(to, bound_tracker_plan, backend)
+    lifecycle_tracker_kernel = _bind_relation_pair_tracker_plan(
+        _checkerboard_lifecycle_tracker_plan(program),
+        _checkerboard_domain_resources(program), program.shape, program.periodic)
     extinction_policies = _checkerboard_compiled_extinction_policies(program)
     relationship_layout = _checkerboard_compiled_relationship_layout(program)
     return CheckerboardKernelProgram(
@@ -198,15 +202,16 @@ _checkerboard_domain_resources(program) =
 
 tracker_source_view(
     program::CheckerboardKernelProgram, ownership;
-    parameters = (), descriptor_state = nothing
+    cell_generations = UInt32[], parameters = (), descriptor_state = nothing
 ) =
     TrackerSourceView(
         ownership,
         program.shape,
         program.periodic,
         program.domain_resources,
-    parameters,
-    descriptor_state,
+        cell_generations,
+        parameters,
+        descriptor_state,
     )
 
 _checkerboard_adapt(to, value) =

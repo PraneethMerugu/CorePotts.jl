@@ -356,6 +356,8 @@ function _validate_tracker_state(
     return state
 end
 
+
+
 @inline function _apply_tracker_delta!(
         values::AbstractVector{T},
         ::Union{DenseOwnerScalarStorage{T}, DenseOwnerValueStorage{T}},
@@ -409,9 +411,10 @@ end
 
 function initialize_tracker_state(
         plan::AbstractTrackerPlan, ownership, cell_kinds, program;
-        parameters = (), descriptor_state = nothing,
+        cell_generations = UInt32[], parameters = (), descriptor_state = nothing,
     )
-    source = tracker_source_view(program, ownership; parameters, descriptor_state)
+    source = tracker_source_view(
+        program, ownership; cell_generations, parameters, descriptor_state)
     return TrackerState(map(
         descriptor -> begin
             value = tracker_rebuild(descriptor, source, cell_kinds)
@@ -500,12 +503,13 @@ function reconstruct_tracker_checkpoint(
         ownership,
         cell_kinds,
         program;
-        parameters = (), descriptor_state = nothing,
+        cell_generations = UInt32[], parameters = (), descriptor_state = nothing,
     )
     length(plan.descriptors) == length(checkpoint.values) || throw(
         ArgumentError("tracker checkpoint and plan are misaligned")
     )
-    source = tracker_source_view(program, ownership; parameters, descriptor_state)
+    source = tracker_source_view(
+        program, ownership; cell_generations, parameters, descriptor_state)
     return TrackerState(map(
         (descriptor, value) -> _reconstruct_tracker_checkpoint(
             descriptor,

@@ -782,12 +782,13 @@ function validate_tracker_state!(
         ownership,
         cell_kinds,
         program;
-        parameters = (), descriptor_state = nothing,
+        cell_generations = UInt32[], parameters = (), descriptor_state = nothing,
     )
     length(plan.descriptors) == length(state.values) || throw(ArgumentError(
         "tracker plan and runtime state are misaligned"
     ))
-    source = tracker_source_view(program, ownership; parameters, descriptor_state)
+    source = tracker_source_view(
+        program, ownership; cell_generations, parameters, descriptor_state)
     for index in eachindex(state.values)
         descriptor = plan.descriptors[index]
         expected = tracker_recompute(descriptor, source, cell_kinds)

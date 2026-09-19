@@ -219,6 +219,7 @@ function _materialize_program(
     end
     trackers = tracker_checkpoint === nothing ? initialize_tracker_state(
         program.tracker_plan, runtime_ownership, runtime_cell_kinds, program;
+        cell_generations = runtime_cell_generations,
         parameters = runtime_parameters, descriptor_state,
     ) : reconstruct_tracker_checkpoint(
         program.tracker_plan,
@@ -226,6 +227,7 @@ function _materialize_program(
         runtime_ownership,
         runtime_cell_kinds,
         program;
+        cell_generations = runtime_cell_generations,
         parameters = runtime_parameters, descriptor_state,
     )
     validate_tracker_state!(
@@ -234,6 +236,7 @@ function _materialize_program(
         runtime_ownership,
         runtime_cell_kinds,
         program;
+        cell_generations = runtime_cell_generations,
         parameters = runtime_parameters, descriptor_state,
     )
     volumes = tracker_values(
@@ -512,6 +515,7 @@ function _materialize_program_state_snapshot(
         state.ownership,
         state.cell_kinds,
         runtime.program;
+        cell_generations = state.cell_generations,
         parameters, descriptor_state = state.descriptor_state,
     )
     relationships = copy(state.relationships)

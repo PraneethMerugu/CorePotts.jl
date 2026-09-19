@@ -590,6 +590,97 @@ function _validate_stage_tracker_anchor(expression::OperationExpression, effect,
     return nothing
 end
 
+_validate_spatial_query_expression(
+    ::AbstractStaticExpression, resources, shape, periodic, plan, layout,
+    effect, source,
+) = nothing
+
+function _validate_spatial_query_expression(
+        expression::OperationExpression,
+        resources,
+        shape,
+        periodic,
+        plan,
+        layout,
+        effect,
+        source,
+    )
+    operation = expression.operation
+    if operation isa QualifiedTrackerOperation &&
+            operation.quantity isa Val{:spatial_relation_query}
+        payload = operation.payload
+        payload isa Union{SpatialQueryRead, GlobalSpatialQueryRead} || throw(
+            ArgumentError(
+                "spatial query at $source requires a cold-lowered query payload"))
+        payload.query_handle == operation.source_handle || throw(ArgumentError(
+            "spatial query at $source must use its qualified relation handle"))
+        if operation.operation isa ResourceOperation{:global_interface_measure}
+            effect isa ModelAssignmentEffect || throw(ArgumentError(
+                "global interface query at $source requires a model assignment"))
+        else
+            effect isa CellAssignmentEffect || throw(ArgumentError(
+                "owner-relative spatial query at $source requires a cell assignment"))
+        end
+        filters = payload isa SpatialQueryRead ? (payload.filter,) :
+            (payload.left, payload.right)
+        for filter in filters
+            filter.kind === PublishedOwnerPredicateFilter || continue
+            entry = state_read_source(plan, layout, filter.predicate_mask)
+            entry.schema.domain === :cell || throw(ArgumentError(
+                "spatial predicate mask at $source must be cell-owned state"))
+            entry.schema.element_type === Bool || throw(ArgumentError(
+                "spatial predicate mask at $source must contain Bool values"))
+        end
+        if operation.operation isa Union{
+                ResourceOperation{:neighbor_property_sum},
+                ResourceOperation{:neighbor_property_mean},
+            }
+            payload isa SpatialQueryRead &&
+                payload.property_handle isa StateHandle || throw(ArgumentError(
+                    "neighbor-property query at $source requires a state handle"))
+            entry = state_read_source(plan, layout, payload.property_handle)
+            entry.schema.domain === :cell || throw(ArgumentError(
+                "neighbor-property query at $source requires cell-owned state"))
+            element_type = entry.schema.element_type
+            isconcretetype(element_type) && isbitstype(element_type) &&
+                element_type <: Number && element_type !== Bool || throw(
+                    ArgumentError(
+                        "neighbor-property query at $source requires a concrete numeric scalar"))
+        end
+        metric_handle = payload.metric_handle
+        if operation.operation isa Union{
+                ResourceOperation{:contact_measure},
+                ResourceOperation{:global_interface_measure},
+            }
+            metric_handle > 0 || throw(ArgumentError(
+                "measured spatial query at $source requires a metric handle"))
+            _validate_spatial_metric_relation(
+                resources, operation.source_handle, metric_handle,
+                shape, periodic)
+        end
+    end
+    foreach(expression.arguments) do argument
+        _validate_spatial_query_expression(
+            argument, resources, shape, periodic, plan, layout, effect, source)
+    end
+    return nothing
+end
+
+function _validate_stage_spatial_queries(
+        plan, layout, resources, shape, periodic)
+    for group in (plan.accepted_copy..., plan.before_lifecycle...,
+            plan.after_lifecycle...), descriptor in group.instances
+        source = "stage source handle $(descriptor.source_handle)"
+        _validate_spatial_query_expression(
+            descriptor.condition.expression, resources, shape, periodic,
+            plan, layout, descriptor.effect, source)
+        _validate_spatial_query_expression(
+            descriptor.value.expression, resources, shape, periodic,
+            plan, layout, descriptor.effect, source)
+    end
+    return nothing
+end
+
 function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources, kind_count, medium_kinds, tracker_plan)
     for group in (plan.accepted_copy..., plan.before_lifecycle..., plan.after_lifecycle...),
             descriptor in group.instances

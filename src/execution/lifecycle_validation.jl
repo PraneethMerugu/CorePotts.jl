@@ -260,6 +260,7 @@ function _stage_lifecycle_transactions!(
     # scientific value is published until every phase validates.
     tracker_source = tracker_source_view(
         runtime.program, workspace.staged_ownership;
+        cell_generations = workspace.staged_cell_generations,
         parameters = runtime.parameters, descriptor_state = workspace.staged_descriptor_state
     )
     site_trackers = try

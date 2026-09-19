@@ -171,7 +171,8 @@ end
     ) where {Quantity}
     arguments = _execute_proposal_arguments(call.arguments, context)
     return qualified_tracker_operation_call(
-        call.operation, arguments, context, Val(Quantity), call.source_handle
+        call.operation, arguments, context, Val(Quantity), call.source_handle,
+        call.payload,
     )
 end
 
