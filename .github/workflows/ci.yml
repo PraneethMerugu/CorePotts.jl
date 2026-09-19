@@ -21,6 +21,7 @@ permissions:
 env:
   JULIA_VERSION: '1.12.6'
   LOCALMATH_REF: ${{ inputs.localmath_ref || '22e7b42905522e53e04b4c0febadb96e30189a80' }}
+  COREPOTTS_TELEMETRY_DIR: corepotts-telemetry
 
 jobs:
   changes:
@@ -74,8 +75,26 @@ jobs:
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
+      - name: Resolve package environment
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: '0'
+        run: julia --startup-file=no .github/scripts/run-phase.jl environment-resolution julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate()'
+      - name: Precompile package environment
+        run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=. --startup-file=no -e 'using Pkg; Pkg.precompile()'
+      - name: Import package
+        run: julia --startup-file=no .github/scripts/run-phase.jl package-import julia --project=. --startup-file=no -e 'using CorePotts'
       - name: Package tests
-        run: julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate(); Pkg.test(; test_args=["--jobs=2"])'
+        shell: bash
+        run: |
+          set -o pipefail
+          julia --startup-file=no .github/scripts/run-phase.jl package-tests julia --project=. --startup-file=no -e 'using Pkg; Pkg.test(; test_args=["--jobs=2"])' 2>&1 | tee "$COREPOTTS_TELEMETRY_DIR/parallel-test-runner.log"
+      - name: Upload package telemetry
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: corepotts-telemetry-package
+          path: ${{ env.COREPOTTS_TELEMETRY_DIR }}
+          if-no-files-found: warn
 
   macos-smoke:
     if: github.event_name == 'pull_request'
@@ -100,8 +119,24 @@ jobs:
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
+      - name: Resolve package environment
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: '0'
+        run: julia --startup-file=no .github/scripts/run-phase.jl environment-resolution julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate()'
+      - name: Precompile package environment
+        run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=. --startup-file=no -e 'using Pkg; Pkg.precompile()'
       - name: Package smoke tests
-        run: julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate(); Pkg.test(; test_args=["--jobs=2", "inventory", "api_boundary", "rng_contract", "scientific_reference"])'
+        shell: bash
+        run: |
+          set -o pipefail
+          julia --startup-file=no .github/scripts/run-phase.jl package-smoke-tests julia --project=. --startup-file=no -e 'using Pkg; Pkg.test(; test_args=["--jobs=2", "inventory", "api_boundary", "rng_contract", "scientific_reference"])' 2>&1 | tee "$COREPOTTS_TELEMETRY_DIR/parallel-test-runner.log"
+      - name: Upload macOS smoke telemetry
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: corepotts-telemetry-macos-smoke
+          path: ${{ env.COREPOTTS_TELEMETRY_DIR }}
+          if-no-files-found: warn
 
   macos-package:
     if: github.event_name != 'pull_request'
@@ -126,8 +161,24 @@ jobs:
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
+      - name: Resolve package environment
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: '0'
+        run: julia --startup-file=no .github/scripts/run-phase.jl environment-resolution julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate()'
+      - name: Precompile package environment
+        run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=. --startup-file=no -e 'using Pkg; Pkg.precompile()'
       - name: Complete macOS package tests
-        run: julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate(); Pkg.test(; test_args=["--jobs=2"])'
+        shell: bash
+        run: |
+          set -o pipefail
+          julia --startup-file=no .github/scripts/run-phase.jl package-tests julia --project=. --startup-file=no -e 'using Pkg; Pkg.test(; test_args=["--jobs=2"])' 2>&1 | tee "$COREPOTTS_TELEMETRY_DIR/parallel-test-runner.log"
+      - name: Upload complete macOS telemetry
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: corepotts-telemetry-macos-package
+          path: ${{ env.COREPOTTS_TELEMETRY_DIR }}
+          if-no-files-found: warn
 
   docs:
     name: docs
@@ -151,8 +202,21 @@ jobs:
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
+      - name: Resolve documentation environment
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: '0'
+        run: julia --startup-file=no .github/scripts/run-phase.jl environment-resolution julia --project=docs --startup-file=no -e 'using Pkg; Pkg.develop([PackageSpec(path=path) for path in ("deps/LocalMath", ".")]); Pkg.instantiate()'
+      - name: Precompile documentation environment
+        run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=docs --startup-file=no -e 'using Pkg; Pkg.precompile()'
       - name: Build documentation
-        run: julia --project=docs --startup-file=no -e 'using Pkg; Pkg.develop([PackageSpec(path=path) for path in ("deps/LocalMath", ".")]); Pkg.instantiate(); include("docs/make.jl")'
+        run: julia --startup-file=no .github/scripts/run-phase.jl documentation julia --project=docs --startup-file=no -e 'include("docs/make.jl")'
+      - name: Upload documentation telemetry
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: corepotts-telemetry-docs
+          path: ${{ env.COREPOTTS_TELEMETRY_DIR }}
+          if-no-files-found: warn
 
   metal:
     needs: changes
@@ -181,5 +245,18 @@ jobs:
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with: {version: '${{ env.JULIA_VERSION }}'}
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
+      - name: Resolve Metal environment
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: '0'
+        run: julia --startup-file=no .github/scripts/run-phase.jl environment-resolution julia --project=test/metal --startup-file=no -e 'using Pkg; Pkg.develop([PackageSpec(path=path) for path in ("deps/LocalMath", ".")]); Pkg.instantiate()'
+      - name: Precompile Metal environment
+        run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=test/metal --startup-file=no -e 'using Pkg; Pkg.precompile()'
       - name: Metal qualification
-        run: julia --project=test/metal --startup-file=no -e 'using Pkg; Pkg.develop([PackageSpec(path=path) for path in ("deps/LocalMath", ".")]); Pkg.instantiate(); include("test/metal/runtests.jl")'
+        run: julia --startup-file=no .github/scripts/run-phase.jl metal-qualification julia --project=test/metal --startup-file=no -e 'include("test/metal/runtests.jl")'
+      - name: Upload Metal telemetry
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: corepotts-telemetry-metal
+          path: ${{ env.COREPOTTS_TELEMETRY_DIR }}
+          if-no-files-found: warn

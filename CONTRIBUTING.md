@@ -313,6 +313,13 @@ compatibility ranges remain broad and these runs do not claim an exact-replay
 dependency profile. Benchmarks remain diagnostic and run when their measured
 path changes.
 
+Hosted jobs upload threshold-free TOML telemetry for environment and execution
+phases. Package jobs additionally retain the raw ParallelTestRunner log and one
+record per fixture with initialization, compilation, execution, allocation, GC,
+RSS, worker-process, and scheduling measurements. These observations support
+performance investigation; they do not decide scientific correctness or gate a
+run by wall-clock duration.
+
 Run real-Metal semantic tests independently from performance measurements:
 
 ```sh
