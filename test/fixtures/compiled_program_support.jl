@@ -27,6 +27,7 @@ function test_program(
         lifecycle_plan = CorePotts.NoLifecycleExecutionPlan(),
         parameter_defaults = Float64[],
         scalar_type = Float64,
+        backend = CorePotts.CPUProgramBackend(),
         domain = nothing,
     )
     T = scalar_type
@@ -54,7 +55,7 @@ function test_program(
         descriptor_plan,
         stage_plan,
         engine,
-        CorePotts.CPUProgramBackend(),
+        backend,
         "core-program-v1-test";
         checkerboard_plan,
         ownership_change_handles,
@@ -250,7 +251,7 @@ end
         target,
         old_owner::Int32,
         new_owner::Int32,
-    ) = CorePotts.CompilerSPI.OwnerScalarDelta(Int32(2))
+    ) = CorePotts.CompilerSPI.OwnerValueDelta(Int32(2))
 
 struct SingleSiteOwnershipProbe{A <: AbstractMatrix{Int32}} <:
        AbstractMatrix{Int32}

@@ -115,6 +115,7 @@ import ..CorePotts:
     CreateCellLifecycleEffect,
     DeferredRequestWriteAccess,
     DenseOwnerScalarStorage,
+    DenseOwnerValueStorage,
     DenseOwnerMomentsStorage,
     DenseScalarTrackerGroup,
     DestinationLifecycleStateRole,
@@ -183,6 +184,9 @@ import ..CorePotts:
     OwnerFootprint,
     OwnershipCountTracker,
     OwnershipTrackerSource,
+    SiteExpressionTrackerSource,
+    SiteSumTracker,
+    SiteMinimumTracker,
     OwnershipRelationTrackerSource,
     ParameterDomainConstraint,
     ParameterExpression,
@@ -232,7 +236,7 @@ import ..CorePotts:
     SiteEnergyDomainPlan,
     SourceLifecycleStateRole,
     OldNewOwnerUpdateBound,
-    OldNewOwnerScalarDelta,
+    OldNewOwnerValueDelta,
     SourceTargetCellsAffectedPlan,
     SpecifiedNormalLifecyclePartition,
     SplitConservativelyLifecycleState,
@@ -260,7 +264,7 @@ import ..CorePotts:
     WorkspaceSchema,
     LatticeLinearTrackerCost,
     OwnerMomentsDelta,
-    OwnerScalarDelta,
+    OwnerValueDelta,
     allocate_auxiliary_state,
     copy_auxiliary_state,
     descriptor_adapt,
@@ -334,7 +338,7 @@ import ..CorePotts:
     tracker_source_view,
     tracker_storage,
     tracker_support,
-    update_program_descriptor_state!,
+    update_program_inputs!,
     validate_parameters
 
 public AbstractCompiledStage, AbstractContextualOperation
@@ -378,14 +382,15 @@ public RelationshipRetuneEffect, StageDescriptorGroup, StageExecutionPlan
 public NoWriteAccess, ExclusiveWriteAccess, CommutativeIntegerWriteAccess
 public DeferredRequestWriteAccess, RelationshipStoreSchema
 public OwnershipCountTracker, CellSurfaceTracker, CellMomentsTracker
-public DenseOwnerScalarStorage, DenseOwnerMomentsStorage, DenseScalarTrackerGroup
+public DenseOwnerScalarStorage, DenseOwnerValueStorage, DenseOwnerMomentsStorage, DenseScalarTrackerGroup
 public OwnershipTrackerSource, OwnershipRelationTrackerSource
+public SiteExpressionTrackerSource, SiteSumTracker, SiteMinimumTracker
 public AcceptedCommitTrackerVisibility
 public ClaimedOwnerExclusiveTrackerConcurrency, OldNewOwnerUpdateBound
 public PersistTrackerCheckpoint, ReconstructTrackerCheckpoint
 public ConstantTrackerCost, DimensionSquaredTrackerCost
 public BoundedNeighborhoodTrackerCost, LatticeLinearTrackerCost
-public OwnerScalarDelta, OldNewOwnerScalarDelta, OwnerMomentsDelta
+public OwnerValueDelta, OldNewOwnerValueDelta, OwnerMomentsDelta
 public TrackerSourceView, TrackerSupport, QualifiedTrackerKey
 public QualifiedTrackerOperation, TrackerContract, TrackerExecutionPlan
 public LifecycleDomainCode, ModelLifecycleDomain, CellKindLifecycleDomain
@@ -457,6 +462,6 @@ public tracker_concurrency, tracker_inspection, tracker_instances
 public tracker_operation_value, tracker_ownership_delta, tracker_quantity
 public tracker_quantities, tracker_rebuild, tracker_recompute
 public tracker_source_view, tracker_storage, tracker_support
-public update_program_descriptor_state!, validate_parameters
+public update_program_inputs!, validate_parameters
 
 end
