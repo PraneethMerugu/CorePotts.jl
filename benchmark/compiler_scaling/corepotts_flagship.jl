@@ -175,10 +175,10 @@ function _method_specialization_count(callable, signature)
     return count(!isnothing, Base.specializations(method))
 end
 
-function _contact_neighbors(categories, endpoints, sites, owners)
+function _contact_neighbors(topology, target, offsets, categories, sites, owners)
     degree = length(categories)
     builder = CorePotts._checkerboard_contact_neighbor_builder(
-        categories, endpoints, sites, owners)
+        topology, target, offsets, categories, sites, owners)
     return ntuple(builder, Val(degree))
 end
 
@@ -197,10 +197,9 @@ function _cartesian_contact_probe(degree::Int)
         topology, offsets)
     categories = ntuple(
         _ -> UInt8(CorePotts.MutableCartesianNeighbor), degree)
-    endpoints = ntuple(
-        _ -> reinterpret(UInt64, Int64(1)), 2degree)
     sites = ntuple(Int32, degree)
     owners = ntuple(_ -> Int32(0), degree)
+    target = CartesianIndex(4, 4)
     geometry_signature = Tuple{typeof(evaluator),CartesianIndex{2}}
     geometry_method = which(
         CorePotts._checkerboard_contact_geometry, geometry_signature)
@@ -214,7 +213,10 @@ function _cartesian_contact_probe(degree::Int)
         CorePotts._checkerboard_contact_geometry, geometry_signature)
     reconstruction = _typed_ir_metrics(
         _contact_neighbors,
-        Tuple{typeof(categories),typeof(endpoints),typeof(sites),typeof(owners)},
+        Tuple{
+            typeof(topology),typeof(target),typeof(offsets),
+            typeof(categories),typeof(sites),typeof(owners),
+        },
     )
     return Dict{String,Any}(
         "degree" => degree,
@@ -225,8 +227,7 @@ function _cartesian_contact_probe(degree::Int)
         "neighbor_reconstruction" => reconstruction,
         "geometry_payload_bytes" =>
             sizeof(NTuple{degree,Int32}) * 3 +
-            sizeof(NTuple{degree,UInt8}) +
-            sizeof(NTuple{2degree,UInt64}),
+            sizeof(NTuple{degree,UInt8}),
     )
 end
 

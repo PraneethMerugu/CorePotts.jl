@@ -43,17 +43,43 @@ const C = CorePotts
     end
 end
 
-@testset "checkerboard endpoint words preserve signed virtual coordinates" begin
-    coordinates = (
-        typemin(Int64), Int64(-127), Int64(-1), Int64(0),
-        Int64(typemax(Int32)) + Int64(127), typemax(Int64),
+@testset "checkerboard contacts reconstruct authoritative endpoints" begin
+    topology = C.CartesianContactTopology(
+        (3, 2),
+        (
+            C.FixedExteriorCartesianFace, C.ClosedCartesianFace,
+            C.PeriodicCartesianFace, C.PeriodicCartesianFace,
+        ),
+        (Int32(1), Int32(0), Int32(0), Int32(0)),
     )
-    words = map(C._checkerboard_endpoint_word, coordinates)
-    @test map(C._checkerboard_endpoint_coordinate, words) == coordinates
-    @test C._CheckerboardEndpointCoordinate{2,typeof(words)}(words, 1)(1) ==
-        typemin(Int64)
-    @test C._CheckerboardEndpointCoordinate{2,typeof(words)}(words, 3)(2) ==
-        typemax(Int64)
+    target = CartesianIndex(1, 1)
+    offsets = (
+        (Int8(-1), Int8(0)),
+        (Int8(-1), Int8(-1)),
+        (Int8(0), Int8(-1)),
+    )
+    geometry = ntuple(Val(3)) do lane
+        C.realize_cartesian_contact_geometry(
+            topology, target, offsets[lane], lane, C.OwnerRelationAccess)
+    end
+    # The middle lane crosses a fixed face and a periodic alias. The last lane
+    # is represented as an obstacle after owner resolution; neither later
+    # semantic classification changes the geometric endpoint.
+    categories = (
+        UInt8(geometry[1].category),
+        UInt8(geometry[2].category),
+        UInt8(C.FixedObstacleCartesianNeighbor),
+    )
+    sites = (geometry[1].site, geometry[2].site, Int32(1))
+    owners = (geometry[1].owner, geometry[2].owner, Int32(-1))
+    builder = C._checkerboard_contact_neighbor_builder(
+        topology, target, offsets, categories, sites, owners)
+    neighbors = ntuple(builder, Val(3))
+    @test map(neighbor -> neighbor.endpoint, neighbors) ==
+        map(neighbor -> neighbor.endpoint, geometry)
+    @test neighbors[2].endpoint == (Int64(0), Int64(2))
+    @test neighbors[3].category === C.FixedObstacleCartesianNeighbor
+    @test neighbors[3].endpoint == (Int64(1), Int64(2))
 end
 
 function checkerboard_fixed_owner_oracle_plan(contact_offsets)
