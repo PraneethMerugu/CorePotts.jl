@@ -129,7 +129,9 @@ function _test_lifecycle_adaptation_independence(to)
     sibling = C.adapt_program_runtime(to, adapted)
     C.advance_mcs!(source)
     settled = C.program_snapshot(source)
-    @test all(==(Int32(-1)), settled.ownership) # removal replaces the cell with medium kind 1
+    # Removal uses the descriptor's declared default domain owner. Owner code
+    # zero is semantically distinct from an auxiliary medium owner such as -1.
+    @test all(iszero, settled.ownership)
     @test all(iszero, settled.cell_kinds)
     @test length(C.lifecycle_events(C.program_lifecycle_receipt(source))) == 1
     _test_adaptation_publication(adapted, before, Float32[], ())

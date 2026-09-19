@@ -55,10 +55,13 @@ function history_lifecycle_program(engine, invalid_sample; expression = nothing)
         C.StablePriorityLifecycleConflicts, 1, 1, 1, 0, falses(3)
     )
     offsets = Int8[1 -1 0 0; 0 0 1 -1]
+    domain = C._standard_cartesian_ownership_domain(
+        (6, 6), (true, true), 3, 1, Bool[true, false, false]
+    )
     checkerboard_plan = engine isa C.CheckerboardProgramEngine ?
-        C.CheckerboardPlan((6, 6), (true, true), offsets) : C.NoCheckerboardPlan()
+        C.CheckerboardPlan(domain, offsets) : C.NoCheckerboardPlan()
     program = C.CompiledPottsProgram(
-        (6, 6), (true, true), offsets, 3, 1, C.CompiledScalar(0.0f0), 1,
+        domain, offsets, 3, C.CompiledScalar(0.0f0), 1,
         Float32[], (), C.TrackerExecutionPlan((C.OwnershipCountTracker(),), "retained-cell-count"),
         descriptors, stages, engine, C.CPUProgramBackend(), "retained-cell-lifecycle";
         lifecycle_plan = lifecycle, checkerboard_plan,

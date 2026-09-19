@@ -179,7 +179,7 @@ function _stage_lifecycle_effect_base!(
             workspace,
             tracker_source,
             linear,
-            -Int32(descriptor.replacement_medium),
+            descriptor.replacement_owner,
         ) || return false
     end
     return true

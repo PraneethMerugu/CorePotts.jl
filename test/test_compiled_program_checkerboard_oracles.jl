@@ -5,7 +5,8 @@ function _reference_checkerboard_proposal(state, color, attempt_round, item)
     first_index = Int(plan.color_offsets[color])
     target_linear = Int32(plan.sites[first_index + item - 1])
     semantic_id = Int32(
-        (attempt_round - 1) * length(state.ownership) + target_linear
+        (attempt_round - 1) * length(plan.sites) +
+            (first_index + item - 1)
     )
     direction_address = CorePotts.RNGAddress(
         stream = CorePotts.ProposalDirectionStream,
@@ -25,18 +26,21 @@ function _reference_checkerboard_proposal(state, color, attempt_round, item)
         )
     ) + 1
     target = CartesianIndices(state.ownership)[Int(target_linear)]
-    coordinates = ntuple(Val(2)) do axis
-        raw = target[axis] + Int(state.program.proposal_offsets[axis, direction])
-        if state.program.periodic[axis]
-            return mod1(raw, size(state.ownership, axis))
-        end
-        return 1 <= raw <= size(state.ownership, axis) ? raw : 0
+    offset = ntuple(Val(2)) do axis
+        Int8(state.program.proposal_offsets[axis, direction])
     end
-    source = any(iszero, coordinates) ? nothing : CartesianIndex(coordinates)
-    source_linear = source === nothing ? Int32(0) :
-        Int32(LinearIndices(state.ownership)[source])
-    old_owner = state.ownership[target]
-    new_owner = source === nothing ? old_owner : state.ownership[source]
+    source_linear = CorePotts.cartesian_lattice_neighbor_site(
+        CorePotts.cartesian_face_topology(state.program.domain), target, offset)
+    if !iszero(source_linear) &&
+            !state.program.domain.mutable_mask[source_linear]
+        source_linear = Int32(0)
+    end
+    source = iszero(source_linear) ? nothing :
+        CartesianIndices(state.ownership)[Int(source_linear)]
+    old_owner = CorePotts.owner_at(
+        state.program.domain, state.ownership, target_linear)
+    new_owner = source === nothing ? old_owner : CorePotts.owner_at(
+        state.program.domain, state.ownership, source_linear)
     actionable = source !== nothing && old_owner != new_owner
     priority = if actionable
         priority_address = CorePotts.RNGAddress(
@@ -535,6 +539,64 @@ end
     @test (relationship.endpoint_a[edge], relationship.endpoint_b[edge]) ==
         (Int32(1), Int32(2))
     @test relationship.payload[1][edge] == 4.0
+
+    # Domain owners have kinds but are not finite lifecycle endpoints. Both
+    # execution processes must reject them rather than treating the owner
+    # directory as a relationship-generation directory.
+    medium = CorePotts.DomainOwnerMetadata(
+        0, CorePotts.MediumDomainOwnerCategory, 1)
+    wall = CorePotts.DomainOwnerMetadata(
+        9, CorePotts.WallDomainOwnerCategory, 1)
+    domain = CorePotts.CartesianOwnershipDomain((6, 6), medium, [wall])
+    domain_owner_effect = CorePotts.RelationshipCreateEffect(
+        1,
+        CorePotts.StaticEvaluator(CorePotts.LiteralExpression(Int32(-1))),
+        effect.endpoint_b,
+        effect.payload,
+    )
+    domain_owner_descriptor = CorePotts.CompiledStageDescriptor(
+        descriptor.condition,
+        descriptor.value,
+        domain_owner_effect,
+        descriptor.stage,
+        descriptor.access,
+        descriptor.support,
+        descriptor.source_handle,
+        descriptor.buffer_slot,
+    )
+    domain_owner_stage_plan = CorePotts.StageExecutionPlan(
+        (CorePotts.StageDescriptorGroup([domain_owner_descriptor]),),
+        (),
+        (),
+        1,
+        0,
+        "domain-owner-relationship-rejection-v1",
+    )
+    for engine in (
+            CorePotts.SequentialProgramEngine(),
+            CorePotts.CheckerboardProgramEngine(),
+        )
+        domain_owner_program = test_program(
+            engine;
+            relationships = relationship_schemas,
+            descriptor_plan = relationship_descriptor_plan(
+                (:domain_owner_relationship,),
+                "domain-owner-relationship-descriptor-plan-v1",
+            ),
+            stage_plan = domain_owner_stage_plan,
+            domain,
+        )
+        domain_owner_runtime = CorePotts.initialize_program(
+            domain_owner_program,
+            initial,
+            Float64[],
+            UInt64(0xacce),
+            UInt32(1),
+        )
+        CorePotts.advance_mcs!(domain_owner_runtime)
+        @test domain_owner_runtime.accepted > 0
+        @test !any(only(domain_owner_runtime.relationships).active)
+    end
 
     ordered_descriptor(payload, source_handle, buffer_slot) =
         CorePotts.CompiledStageDescriptor(

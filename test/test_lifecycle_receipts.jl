@@ -105,7 +105,7 @@ end
 
 include("fixtures/lifecycle_descriptor_support.jl")
 
-function receipt_lifecycle_plan()
+function receipt_lifecycle_plan(; placement_site = 36)
     descriptors = CorePotts.LifecycleDescriptor{2, Float64}[
         receipt_descriptor(
             1,
@@ -138,7 +138,7 @@ function receipt_lifecycle_plan()
     evaluators = CorePotts.LifecycleEvaluatorStorage(
         Any[
             CorePotts.StaticEvaluator(CorePotts.LiteralExpression(true)),
-            CorePotts.StaticEvaluator(CorePotts.LiteralExpression(36)),
+            CorePotts.StaticEvaluator(CorePotts.LiteralExpression(placement_site)),
         ],
         Symbol[:lifecycle_trigger, :lifecycle_placement],
     )
@@ -161,6 +161,55 @@ function receipt_lifecycle_plan()
         0,
         falses(8),
     )
+end
+
+@testset "remove-cell settlement names one declared medium owner" begin
+    default_medium = CorePotts.DomainOwnerMetadata(
+        0, CorePotts.MediumDomainOwnerCategory, 1
+    )
+    same_kind_medium = CorePotts.DomainOwnerMetadata(
+        9, CorePotts.MediumDomainOwnerCategory, 1
+    )
+    wall = CorePotts.DomainOwnerMetadata(
+        10, CorePotts.WallDomainOwnerCategory, 1
+    )
+    domain = CorePotts.CartesianOwnershipDomain(
+        (6, 6), default_medium, [same_kind_medium, wall]
+    )
+    plan = receipt_lifecycle_plan()
+    @test only(filter(
+        descriptor -> descriptor.effect === CorePotts.RemoveCellLifecycleEffect,
+        plan.descriptors,
+    )).replacement_owner == 0
+    @test CorePotts.validate_lifecycle_domain_owners(domain, plan) === plan
+
+    explicit_plan = receipt_lifecycle_plan()
+    remove_index = findfirst(
+        descriptor -> descriptor.effect === CorePotts.RemoveCellLifecycleEffect,
+        explicit_plan.descriptors,
+    )
+    explicit_plan.descriptors[remove_index] = receipt_descriptor(
+        2, CorePotts.RemoveCellLifecycleEffect;
+        domain_kind = 2,
+        replacement_owner = CorePotts.domain_owner_code(
+            domain, same_kind_medium
+        ),
+    )
+    @test CorePotts.domain_owner_code(domain, same_kind_medium) == -1
+    @test explicit_plan.descriptors[remove_index].replacement_owner == -1
+    @test CorePotts.validate_lifecycle_domain_owners(
+        domain, explicit_plan
+    ) === explicit_plan
+
+    for invalid_owner in (Int32(1), Int32(-2), Int32(-3))
+        explicit_plan.descriptors[remove_index] = receipt_descriptor(
+            2, CorePotts.RemoveCellLifecycleEffect;
+            domain_kind = 2, replacement_owner = invalid_owner,
+        )
+        @test_throws ArgumentError CorePotts.validate_lifecycle_domain_owners(
+            domain, explicit_plan
+        )
+    end
 end
 
 function retirement_lifecycle_plan()
@@ -584,7 +633,7 @@ end
     end
 end
 
-function receipt_program(plan)
+function receipt_program(plan; domain = nothing)
     offsets = zeros(Int8, 2, 1)
     tracker_plan = CorePotts.TrackerExecutionPlan(
         (
@@ -593,12 +642,15 @@ function receipt_program(plan)
         ),
         "receipt-ownership-count-and-moments-v1",
     )
+    domain === nothing && (domain =
+        CorePotts._standard_cartesian_ownership_domain(
+            (6, 6), (false, false), 8, 1,
+            Bool[true, false, false, false, false, false, false, false]
+        ))
     return CorePotts.CompiledPottsProgram(
-        (6, 6),
-        (false, false),
+        domain,
         offsets,
         8,
-        1,
         CorePotts.CompiledScalar(0.0),
         1,
         Float64[],
@@ -611,6 +663,71 @@ function receipt_program(plan)
         "lifecycle-receipt-real-transaction-v1";
         lifecycle_plan = plan,
     )
+end
+
+@testset "remove-cell settlement preserves the selected medium owner" begin
+    default_medium = CorePotts.DomainOwnerMetadata(
+        0, CorePotts.MediumDomainOwnerCategory, 1
+    )
+    reservoir = CorePotts.DomainOwnerMetadata(
+        9, CorePotts.MediumDomainOwnerCategory, 1
+    )
+    obstacles = zeros(Int32, 6, 6)
+    obstacles[6, 6] = 1
+    domain = CorePotts.CartesianOwnershipDomain(
+        (6, 6), default_medium, [reservoir];
+        face_kinds = ntuple(_ -> CorePotts.ClosedCartesianFace, 4),
+        obstacle_owner_handles = obstacles,
+    )
+    plan = receipt_lifecycle_plan(; placement_site = 35)
+    remove_index = findfirst(
+        descriptor -> descriptor.effect === CorePotts.RemoveCellLifecycleEffect,
+        plan.descriptors,
+    )
+    selected_owner = CorePotts.domain_owner_code(domain, reservoir)
+    plan.descriptors[remove_index] = receipt_descriptor(
+        2, CorePotts.RemoveCellLifecycleEffect;
+        domain_kind = 2, replacement_owner = selected_owner,
+    )
+    program = receipt_program(plan; domain)
+    ownership = zeros(Int32, 6, 6)
+    ownership[1, 1] = 1
+    runtime = CorePotts.initialize_program(
+        program,
+        CorePotts.ProgramInitialState(
+            ownership, Int16[2]; scalar_type = Float64,
+            cell_generations = UInt32[1],
+        ),
+        Float64[], UInt64(0x5153), UInt32(1),
+    )
+    CorePotts.advance_mcs!(runtime)
+    @test !CorePotts.program_failed(runtime)
+    @test runtime.ownership[1, 1] == selected_owner == -1
+    @test CorePotts.program_tracker_value(
+        runtime, Val(:cell_volume), Int32(1)
+    ) == 0
+    @test runtime.accepted + runtime.rejected + runtime.null_attempts == 35
+
+    restored = CorePotts.restore_program_checkpoint(
+        program, CorePotts.program_checkpoint(runtime)
+    )
+    @test restored.ownership == runtime.ownership
+    @test restored.ownership[1, 1] == selected_owner
+    @test CorePotts.program_tracker_value(
+        restored, Val(:cell_volume), Int32(1)
+    ) == 0
+
+    counters = (restored.accepted, restored.rejected, restored.null_attempts)
+    before_obstacle = copy(restored.ownership)
+    @test !CorePotts._stage_owner_change!(
+        CorePotts.HostLifecycleExecution(), restored, plan,
+        restored.lifecycle_workspace, nothing, 36, Int32(0),
+    )
+    @test restored.ownership == before_obstacle
+    @test (restored.accepted, restored.rejected, restored.null_attempts) == counters
+    @test CorePotts.lifecycle_workspace_status(
+        restored.lifecycle_workspace
+    ).detail == CorePotts.LifecycleDetailImmutableDomainSite
 end
 
 @testset "request geometry reads only its own staged tracker state" begin

@@ -36,10 +36,9 @@ struct _LifecycleStateRelationshipPlan{R}
     relationship_rules::R
 end
 
-struct _LifecycleStateProgram{N, TP, D, L}
+struct _LifecycleStateProgram{N, C, TP, D, L}
     shape::NTuple{N, Int}
-    periodic::NTuple{N, Bool}
-    medium_kind::Int16
+    domain::C
     tracker_plan::TP
     descriptor_plan::D
     lifecycle_plan::L
@@ -82,9 +81,8 @@ Adapt.@adapt_structure _LifecycleStateRuntime
 function _lifecycle_state_launch_payload(state, workspace)
     lifecycle = state.program.lifecycle_plan
     program = _LifecycleStateProgram(
-        state.program.shape,
-        state.program.periodic,
-        state.program.medium_kind,
+        state.program.domain.shape,
+        state.program.domain,
         state.program.tracker_plan,
         _LifecycleStateDescriptorPlan(
             state.program.domain_resources

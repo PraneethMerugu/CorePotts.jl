@@ -70,6 +70,11 @@ Every checkpoint records a canonical model and schema fingerprint. The minimum s
 accepts an explicitly supplied problem or model, validates its fingerprint and compatibility, and
 then restores the checkpoint state.
 
+For a compiled Cartesian program, that executable identity includes the complete ownership-domain
+contract: face laws, qualified domain owners, obstacle ownership and the authoritative mutable-site
+set. A matching author/compiler source fingerprint does not permit exact resume across different
+domain realizations.
+
 A checkpoint MAY additionally contain a versioned declarative reconstruction payload when every
 model component, extension identity, topology, schedule, policy, and parameter has a qualified
 semantic serialization. Such a payload permits standalone reconstruction only under its declared
