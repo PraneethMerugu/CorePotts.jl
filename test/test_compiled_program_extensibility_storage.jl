@@ -162,7 +162,7 @@ end
     @test allequal(typeof(report) for report in reports)
     runtimes = map(programs, states) do program, descriptor_state
         initial = CorePotts.ProgramInitialState(
-            zeros(Int32, program.shape),
+            zeros(Int32, program.domain.shape),
             Int16[];
             scalar_type = Float64,
             descriptor_state,
@@ -192,7 +192,7 @@ end
 
     runtimes = map(programs) do program
         initial = CorePotts.ProgramInitialState(
-            zeros(Int32, program.shape),
+            zeros(Int32, program.domain.shape),
             Int16[];
             scalar_type = Float64,
             relationships = fill(nothing, length(program.relationships)),

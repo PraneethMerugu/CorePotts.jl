@@ -481,7 +481,7 @@ function program_execution_report(program::CompiledPottsProgram)
         engine = nameof(typeof(program.engine)),
         backend = program_backend_name(program.backend),
         scalar_type = eltype(program.parameter_defaults),
-        shape = program.shape,
+        shape = program.domain.shape,
         attempts_per_site = program.attempts_per_site,
         trackers = tracker_plan_report(program.tracker_plan),
         rng = :Philox4x64x10V3,

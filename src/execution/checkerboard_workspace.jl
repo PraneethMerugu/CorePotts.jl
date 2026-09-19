@@ -157,20 +157,21 @@ function _checkerboard_kernel_program(
     ownership_change_handles = program.ownership_change_handles
     bound_tracker_plan = _bind_relation_pair_tracker_plan(
         tracker_kernel_plan(program.tracker_plan),
-        _checkerboard_domain_resources(program), program.shape, program.periodic)
+        _checkerboard_domain_resources(program), program.domain.shape,
+        cartesian_periodic_axes(program.domain))
     tracker_kernel = to === nothing ? bound_tracker_plan :
         adapt_tracker_kernel_plan(to, bound_tracker_plan, backend)
     lifecycle_tracker_kernel = _bind_relation_pair_tracker_plan(
         _checkerboard_lifecycle_tracker_plan(program),
-        _checkerboard_domain_resources(program), program.shape, program.periodic)
+        _checkerboard_domain_resources(program), program.domain.shape,
+        cartesian_periodic_axes(program.domain))
     extinction_policies = _checkerboard_compiled_extinction_policies(program)
     relationship_layout = _checkerboard_compiled_relationship_layout(program)
     return CheckerboardKernelProgram(
-        program.shape,
-        program.periodic,
+        program.domain.shape,
+        to === nothing ? program.domain : Adapt.adapt(to, program.domain),
         to === nothing ? program.proposal_offsets :
             Adapt.adapt(to, program.proposal_offsets),
-        program.medium_kind,
         program.temperature,
         program.attempts_per_site,
         to === nothing ? program.relationships :
@@ -206,8 +207,7 @@ tracker_source_view(
 ) =
     TrackerSourceView(
         ownership,
-        program.shape,
-        program.periodic,
+        program.domain,
         program.domain_resources,
         cell_generations,
         parameters,

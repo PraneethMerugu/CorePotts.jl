@@ -35,11 +35,14 @@ function cell_stage_lifecycle_runtime(
     stages = CorePotts.StageExecutionPlan((), (CorePotts.StageDescriptorGroup([before]),), (CorePotts.StageDescriptorGroup([after]),), 0, 0, "cell-lifecycle-boundaries")
     lifecycle = cell_stage_lifecycle_plan(handle; action = birth_action, effect = second_effect, cell_capacity)
     offsets = Int8[1 -1 0 0; 0 0 1 -1]
-    checkerboard = engine isa CorePotts.CheckerboardProgramEngine ? CorePotts.CheckerboardPlan((6, 6), (true, true), offsets) : CorePotts.NoCheckerboardPlan()
+    domain = CorePotts._standard_cartesian_ownership_domain(
+        (6, 6), (true, true), 3, 1, Bool[true, false, false]
+    )
+    checkerboard = engine isa CorePotts.CheckerboardProgramEngine ? CorePotts.CheckerboardPlan(domain, offsets) : CorePotts.NoCheckerboardPlan()
     tracker_plan === nothing && (tracker_plan = CorePotts.TrackerExecutionPlan(
         (CorePotts.OwnershipCountTracker(),), "cell-lifecycle-count"))
     program = CorePotts.CompiledPottsProgram(
-        (6, 6), (true, true), offsets, 3, 1, CorePotts.CompiledScalar(3.0f0), 1,
+        domain, offsets, 3, CorePotts.CompiledScalar(3.0f0), 1,
         Float32[], (), tracker_plan,
         descriptor_plan, stages, engine, CorePotts.CPUProgramBackend(), "cell-stage-lifecycle";
         lifecycle_plan = lifecycle, checkerboard_plan = checkerboard,

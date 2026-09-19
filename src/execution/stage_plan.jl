@@ -591,15 +591,14 @@ function _validate_stage_tracker_anchor(expression::OperationExpression, effect,
 end
 
 _validate_spatial_query_expression(
-    ::AbstractStaticExpression, resources, shape, periodic, plan, layout,
+    ::AbstractStaticExpression, resources, domain, plan, layout,
     effect, source,
 ) = nothing
 
 function _validate_spatial_query_expression(
         expression::OperationExpression,
         resources,
-        shape,
-        periodic,
+        domain,
         plan,
         layout,
         effect,
@@ -656,32 +655,34 @@ function _validate_spatial_query_expression(
                 "measured spatial query at $source requires a metric handle"))
             _validate_spatial_metric_relation(
                 resources, operation.source_handle, metric_handle,
-                shape, periodic)
+                domain.shape, cartesian_periodic_axes(domain))
         end
     end
     foreach(expression.arguments) do argument
         _validate_spatial_query_expression(
-            argument, resources, shape, periodic, plan, layout, effect, source)
+            argument, resources, domain, plan, layout, effect, source)
     end
     return nothing
 end
 
-function _validate_stage_spatial_queries(
-        plan, layout, resources, shape, periodic)
+function _validate_stage_spatial_queries(plan, layout, resources, domain)
     for group in (plan.accepted_copy..., plan.before_lifecycle...,
             plan.after_lifecycle...), descriptor in group.instances
         source = "stage source handle $(descriptor.source_handle)"
         _validate_spatial_query_expression(
-            descriptor.condition.expression, resources, shape, periodic,
+            descriptor.condition.expression, resources, domain,
             plan, layout, descriptor.effect, source)
         _validate_spatial_query_expression(
-            descriptor.value.expression, resources, shape, periodic,
+            descriptor.value.expression, resources, domain,
             plan, layout, descriptor.effect, source)
     end
     return nothing
 end
 
-function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources, kind_count, medium_kinds, tracker_plan)
+function _validate_stage_state_domains(
+        plan::StageExecutionPlan, layout, sources, kind_count,
+        domain_kind_mask, tracker_plan,
+    )
     for group in (plan.accepted_copy..., plan.before_lifecycle..., plan.after_lifecycle...),
             descriptor in group.instances
         source = _descriptor_source(
@@ -709,7 +710,7 @@ function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources
             end
         end
         if effect isa CellAssignmentEffect
-            effect.domain_kind <= kind_count && !medium_kinds[effect.domain_kind] ||
+            effect.domain_kind <= kind_count && !domain_kind_mask[effect.domain_kind] ||
                 throw(ArgumentError("cell-stage at $source requires a declared finite-cell kind"))
             expression_handles = (expression_state_handles(descriptor.condition.expression)...,
                 expression_state_handles(descriptor.value.expression)...)

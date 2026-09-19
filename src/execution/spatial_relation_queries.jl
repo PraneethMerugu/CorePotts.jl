@@ -698,8 +698,10 @@ function _execute_spatial_relation_query_rebuild(
     )
     length(source.cell_generations) == length(cell_kinds) || throw(ArgumentError(
         "relation-pair reconstruction requires the complete cell-generation table"))
+    shape = source.domain.shape
+    periodic = cartesian_periodic_axes(source.domain)
     declaration = _spatial_relation_query_declaration(
-        descriptor, source.domain_resources, source.shape, source.periodic,
+        descriptor, source.domain_resources, shape, periodic,
         length(cell_kinds),
     )
     prepared = LocalMath.prepare(
@@ -735,18 +737,19 @@ tracker_recompute(
     generations = Adapt.adapt(Array, source.cell_generations)
     length(generations) == length(cell_kinds) || throw(ArgumentError(
         "relation-pair recomputation requires the complete cell-generation table"))
+    shape = source.domain.shape
+    periodic = cartesian_periodic_axes(source.domain)
     offsets = _contact_relation_lanes(
         source.domain_resources, descriptor.relation_handle,
-        source.shape, source.periodic)
+        shape, periodic)
     measures = _contact_relation_measures(
         source.domain_resources, descriptor.relation_handle)
     _validate_contact_pair_relation(
-        offsets, measures, source.shape, source.periodic)
+        offsets, measures, shape, periodic)
     totals = Dict{_ContactIncidenceKey, Int32}()
     owner_pairs = Set{_ContactPairKey}()
     contact_sites = Set{_ContactSiteKey}()
     indices = CartesianIndices(ownership)
-    linear_indices = LinearIndices(ownership)
     relation_start, _ = _contact_domain_columns(
         source.domain_resources, descriptor.relation_handle)
     for linear in eachindex(ownership)
@@ -754,14 +757,14 @@ tracker_recompute(
         generation = owner > 0 ? @inbounds(generations[Int(owner)]) : UInt32(0)
         site = indices[linear]
         for lane in eachindex(offsets)
-            neighbor = relation_neighbor_index(
-                source.shape, source.periodic, site,
-                source.domain_resources.contact_offsets,
-                Int(relation_start) + lane - 1,
-            )
-            neighbor === nothing && continue
-            neighbor_linear = linear_indices[neighbor]
-            other = @inbounds ownership[neighbor]
+            offset = ntuple(length(shape)) do axis
+                @inbounds source.domain_resources.contact_offsets[
+                    axis, Int(relation_start) + lane - 1]
+            end
+            neighbor_linear = cartesian_lattice_neighbor_site(
+                cartesian_face_topology(source.domain), site, offset)
+            iszero(neighbor_linear) && continue
+            other = @inbounds ownership[neighbor_linear]
             other_generation = other > 0 ?
                 @inbounds(generations[Int(other)]) : UInt32(0)
             owner == other && generation == other_generation && continue
@@ -841,10 +844,10 @@ function _checkerboard_tracker_group_bindings(
 end
 
 """Non-owning settled owner data required by one spatial-query filter."""
-struct _SpatialOwnerMatchView{G, K, M}
+struct _SpatialOwnerMatchView{G, K, D, M}
     cell_generations::G
     cell_kinds::K
-    medium_kind::Int16
+    domain::D
     predicate_values::M
 end
 
@@ -856,7 +859,7 @@ end
     _SpatialOwnerMatchView(
     runtime.cell_generations,
     runtime.cell_kinds,
-    runtime.program.medium_kind,
+    runtime.program.domain,
     _spatial_predicate_values(runtime, filter.predicate_mask),
 )
 
@@ -877,8 +880,7 @@ end
 
 @inline function _spatial_owner_kind(view::_SpatialOwnerMatchView, owner::Int32)
     owner > 0 && return @inbounds view.cell_kinds[Int(owner)]
-    owner == 0 && return view.medium_kind
-    return Int16(-owner)
+    return _domain_owner_metadata(view.domain, owner).kind
 end
 
 @inline function _spatial_owner_matches(
@@ -893,9 +895,12 @@ end
     kind === CellKindOwnerFilter && return owner > 0 &&
         _spatial_owner_kind(view, owner) == filter.kind_id
     kind === MediumDomainIdentityFilter && return owner <= 0 &&
-        owner == filter.identity_owner
+        _domain_owner_metadata(view.domain, owner).category ===
+            MediumDomainOwnerCategory && owner == filter.identity_owner
     kind === OwnerCategoryFilter && return filter.category === FiniteCellOwner ?
-        owner > 0 : filter.category === MediumDomainOwner && owner <= 0
+        owner > 0 : filter.category === MediumDomainOwner && owner <= 0 &&
+            _domain_owner_metadata(view.domain, owner).category ===
+                MediumDomainOwnerCategory
     if kind === PublishedOwnerPredicateFilter
         owner > 0 || return false
         mask = view.predicate_values

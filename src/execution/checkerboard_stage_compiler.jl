@@ -12,16 +12,13 @@ struct _CheckerboardHistorySourceDomain end
 struct _CheckerboardRelationshipRequestDomain end
 struct _CheckerboardRelationshipCellDomain end
 
-struct _GatheredSiteStageContext{P, H, V, Z, O, K, S, B, C, R, G}
+struct _GatheredSiteStageContext{P, H, V, Z, OK, D, C, R, G}
     parameters::P
     handles::H
     values::V
     zeros::Z
-    ownership::O
-    kinds::K
-    shape::S
-    periodic::B
-    medium_kind::Int16
+    owner_kinds::OK
+    topology::D
     contact_offsets::C
     contact_starts::R
     contact_counts::R
@@ -215,11 +212,11 @@ end
     ::IterationStageSite,
     context::_GatheredSiteStageContext
 ) =
-    _checkerboard_cartesian_site(context.shape, context.item)
+    _checkerboard_cartesian_site(context.topology.shape, context.item)
 @inline stage_site(::ModelStageSite, ::_GatheredModelStageContext) = 1
 @inline stage_site(::ModelStageSite, ::_GatheredSiteStageContext) = 1
 @inline _execute_proposal_scalar(::_ExecutableProposalContext{:energy_anchor_site}, context::_GatheredSiteStageContext) =
-    _stage_linear_index(context.shape, stage_site(IterationStageSite(), context))
+_stage_linear_index(context.topology.shape, stage_site(IterationStageSite(), context))
 
 @inline _stage_linear_index(shape, site::Int32) = site
 @inline _stage_linear_index(shape, site::Integer) = Int32(site)
@@ -249,7 +246,7 @@ end
         context::_GatheredSiteStageContext,
         ::_ExecutableStateReference{Index}, site
     ) where {Index}
-    endpoint = _stage_linear_index(context.shape, site)
+    endpoint = _stage_linear_index(context.topology.shape, site)
     return _gathered_stage_read_value(
         getfield(context.values, Index), endpoint,
         getfield(context.zeros, Index)
@@ -267,22 +264,19 @@ end
 end
 
 @inline function site_owner(context::_GatheredSiteStageContext, site)
-    endpoint = _stage_linear_index(context.shape, site)
-    return _gathered_stage_read_value(
-        context.ownership, endpoint, Int32(0)
-    )
+    endpoint = _stage_linear_index(context.topology.shape, site)
+    record = _gathered_stage_read_value(
+        context.owner_kinds, endpoint, (Int32(0), Int16(0)))
+    return record[1]
 end
 
 @inline function owner_kind(context::_GatheredSiteStageContext, owner::Integer)
     key = Int32(owner)
-    key == 0 && return context.medium_kind
-    key < 0 && return Int16(-key)
-    for lane in 1:length(context.ownership)
-        owner_sample = @inbounds context.ownership[lane]
-        kind_sample = @inbounds context.kinds[lane]
-        owner_sample.present && kind_sample.present &&
-            something(owner_sample.value) == key &&
-            return something(kind_sample.value)
+    for lane in 1:length(context.owner_kinds)
+        sample = @inbounds context.owner_kinds[lane]
+        sample.present || continue
+        owner, kind = something(sample.value)
+        owner == key && return kind
     end
     return Int16(0)
 end
@@ -307,23 +301,17 @@ end
     count = Int(@inbounds context.contact_counts[handle])
     1 <= direction <= count && start > 0 || return nothing
     offset = @inbounds context.contact_offsets[start + direction - 1]
-    coordinates = ntuple(Val(N)) do axis
-        raw = center[axis] + offset[axis]
-        context.periodic[axis] ? mod1(raw, context.shape[axis]) :
-            (1 <= raw <= context.shape[axis] ? raw : 0)
-    end
-    any(iszero, coordinates) && return nothing
-    return CartesianIndex(coordinates)
+    linear = cartesian_lattice_neighbor_site(context.topology, center, offset)
+    return iszero(linear) ? nothing :
+        CartesianIndices(context.topology.shape)[Int(linear)]
 end
 
-struct _CompiledSiteStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z, S, B, O, R}
+struct _CompiledSiteStageEvaluator{HasParameters, Evaluation, T, C, V, H, Z, D, O, R}
     condition::C
     value::V
     handles::H
     zeros::Z
-    shape::S
-    periodic::B
-    medium_kind::Int16
+    topology::D
     contact_offsets::O
     contact_starts::R
     contact_counts::R
@@ -398,14 +386,12 @@ end
     ) where {HasParameters, Evaluation, T}
     count = length(evaluator.handles)
     values = _stage_read_prefix(reads, evaluator.handles)
-    ownership = getfield(reads, count + 1)
-    kinds = getfield(reads, count + 2)
+    owner_kinds = getfield(reads, count + 1)
     science_parameters = HasParameters ?
-        something(getfield(reads, count + 3)[1].value) : ()
+        something(getfield(reads, count + 2)[1].value) : ()
     context = _gathered_site_stage_context(
         science_parameters, evaluator.handles, values,
-        evaluator.zeros, ownership, kinds, evaluator.shape,
-        evaluator.periodic, evaluator.medium_kind,
+        evaluator.zeros, owner_kinds, evaluator.topology,
         evaluator.contact_offsets, evaluator.contact_starts,
         evaluator.contact_counts, item,
         _scheduled_rng_context(
@@ -1146,7 +1132,7 @@ end
 
 function _compile_site_assignment_law(
         descriptor::CompiledStageDescriptor,
-        source_table, shape, periodic, medium_kind,
+        source_table, domain::CartesianOwnershipDomain,
         resources, ownership, cell_kinds, status, gate, state_layout, stage_plan,
         trajectory_key::NTuple{2, UInt64}, boundary::UInt16,
         ::Type{T}; publication_result = nothing
@@ -1163,10 +1149,10 @@ function _compile_site_assignment_law(
         context = :site_assignment_lowering,
     )
     condition, value = _compiled_stage_expressions(descriptor, handles, source)
+    shape = domain.shape
     dimensions = length(shape)
     offsets = _stage_offsets(descriptor, dimensions)
     lattice = LocalMath.Space(_CheckerboardStageSiteDomain, Tuple(shape))
-    cells = LocalMath.Space(_CheckerboardStageCellDomain, length(cell_kinds))
     status_space = LocalMath.Space(_CheckerboardStageStatusDomain, 1)
     fields = _stage_state_fields(lattice, handles, T; layout = state_layout, stage_plan)
     first(fields).space == lattice || throw(ArgumentError("site assignment target requires site-owned storage"))
@@ -1174,14 +1160,10 @@ function _compile_site_assignment_law(
     identity = LocalMath.IdentityRelation(lattice)
     affine = LocalMath.AffineRelation(lattice => lattice; offsets)
     relation = LocalMath.BoundaryRelation(
-        affine, LocalMath.PeriodicBoundary(Tuple(periodic))
+        affine, LocalMath.PeriodicBoundary(cartesian_periodic_axes(domain))
     )
-    ownership_field = LocalMath.Field(lattice, Int32)
-    cell_kind_field = LocalMath.Field(cells, Int16)
-    owner_relation = LocalMath.compose(
-        relation,
-        LocalMath.IndexRelation(ownership_field => cells; optional = true)
-    )
+    site_owner_kind_field = LocalMath.Field(
+        lattice, Tuple{Int32,Int16})
     parameter_count = _stage_parameter_count(descriptor)
     parameter_field = iszero(parameter_count) ? nothing :
         LocalMath.Field(lattice, NTuple{parameter_count, T})
@@ -1203,24 +1185,19 @@ function _compile_site_assignment_law(
                 ), handles
             )
         ),
-        typeof(Tuple(shape)), typeof(Tuple(periodic)),
+        typeof(cartesian_face_topology(domain)),
         typeof(contact_offsets), typeof(contact_starts),
     }(
         condition, value, handles,
         map(handle -> _state_value_zero(_stage_handle_element_type(handle, T)), handles),
-        Tuple(shape), Tuple(periodic), Int16(medium_kind),
+        cartesian_face_topology(domain),
         contact_offsets, contact_starts, contact_counts,
         descriptor.source_handle, trajectory_key, boundary
     )
     core_reads = merge(
         _stage_access_tuple(fields, relation, model_relation), (
-            ownership = LocalMath.Access(
-                ownership_field, relation; required = false
-            ),
-            kinds = LocalMath.Access(
-                cell_kind_field, owner_relation;
-                required = false
-            ),
+            owner_kinds = LocalMath.Access(
+                site_owner_kind_field, relation; required = false),
         )
     )
     parameter_reads = parameter_field === nothing ? NamedTuple() : (
@@ -1297,7 +1274,7 @@ function _compile_site_assignment_law(
     end
     return (;
         evaluation, publication, fields, handles, parameter_field, scratch,
-        ownership_field, cell_kind_field, status_field,
+        site_owner_kind_field, status_field,
         initial_gate, refreshed_gate, model_relation,
     )
 end
@@ -1734,7 +1711,7 @@ function _compile_relationship_stage_group(
             _CheckerboardRelationshipRequestDomain, request_count
         )
         lattice = LocalMath.Space(
-            _CheckerboardStageSiteDomain, Tuple(program.shape)
+_CheckerboardStageSiteDomain, Tuple(program.domain.shape)
         )
         cells = LocalMath.Space(
             _CheckerboardRelationshipCellDomain, owner_capacity
@@ -1766,7 +1743,7 @@ function _compile_relationship_stage_group(
             lattice, inventory.handles, T
         )
         volume = LocalMath.Field(cells, Int32)
-        moments = LocalMath.Field(cells, NTuple{length(program.shape), T})
+        moments = LocalMath.Field(cells, NTuple{length(program.domain.shape), T})
         parameter_width = max(inventory.parameter_count, 1)
         parameter_field = LocalMath.Field(
             request_space, NTuple{parameter_width, T}
@@ -1975,15 +1952,16 @@ function _site_stage_bindings(
         declaration, bank, gate
     )
     bindings = (
-        _stage_model_read_bindings(declaration.model_relation, bank, bank.program.shape)...,
+        _stage_model_read_bindings(declaration.model_relation, bank, bank.program.domain.shape)...,
         _stage_state_bindings(
             declaration.fields, declaration.handles, bank
         )...,
-        declaration.ownership_field => bank.ownership,
-        declaration.cell_kind_field => bank.cell_kinds,
+        declaration.site_owner_kind_field => SiteOwnerKindView(
+            bank.program.domain, bank.ownership, bank.cell_kinds
+        ),
         _checkerboard_parameter_binding(
             declaration.parameter_field, bank,
-            bank.program.shape
+            bank.program.domain.shape
         )...,
         declaration.scratch => LocalMath.Allocate(
             _checkerboard_storage_zero(declaration.scratch)
@@ -2304,8 +2282,7 @@ function _compile_checkerboard_stage_boundary(
     gates = map(_checkerboard_open_gate, banks)
     T = eltype(state.parameters)
     trajectory_key = _trajectory_key(state.seed, state.replica, state.repeat)
-    shape = Tuple(state.program.shape)
-    periodic = Tuple(state.program.periodic)
+    shape = Tuple(state.program.domain.shape)
     resources = state.program.domain_resources
     source_trackers = filter(tracker -> tracker isa _SiteExpressionTracker, tracker_instances(state.program.tracker_plan))
     publication_results = map(descriptors) do descriptor
@@ -2369,8 +2346,8 @@ function _compile_checkerboard_stage_boundary(
         declaration = if effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect}
             merge(
                 _compile_site_assignment_law(
-                    descriptor, workspace.source_table, shape, periodic,
-                    state.program.medium_kind, resources, state.ownership,
+                    descriptor, workspace.source_table, state.program.domain,
+                    resources, state.ownership,
                     state.cell_kinds, state.program_status, external_gate,
                     state_layout, stage_plan, trajectory_key, boundary, T;
                     publication_result = result_field

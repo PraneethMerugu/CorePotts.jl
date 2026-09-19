@@ -5,21 +5,26 @@
 @inline _proposal_science_parameters(science) = science.parameters
 @inline _proposal_science_scalar_type(science) =
     eltype(_proposal_science_parameters(science))
-@inline _proposal_science_shape(science) = science.program.shape
-@inline _proposal_science_periodic(science) = science.program.periodic
-@inline _proposal_science_medium_kind(science) = science.program.medium_kind
+@inline _proposal_science_shape(science) = science.program.domain.shape
+@inline _proposal_science_domain(science) = science.program.domain
+@inline _proposal_science_periodic(science) =
+    cartesian_periodic_axes(_proposal_science_domain(science))
 
 @inline _proposal_science_site_owner(science, site) =
-    @inbounds science.ownership[site]
+    owner_at(_proposal_science_domain(science), science.ownership, site)
 
 @inline function _proposal_science_owner_kind(science, owner::Int32)
-    owner > 0 && return @inbounds science.cell_kinds[Int(owner)]
-    owner == 0 && return _proposal_science_medium_kind(science)
-    return Int16(-owner)
+    return owner_kind(
+        _proposal_science_domain(science),
+        science.cell_kinds,
+        owner,
+    )
 end
 
-@inline _proposal_science_owner_generation(science, owner::Int32) =
-    @inbounds science.cell_generations[Int(owner)]
+@inline _proposal_science_owner_generation(science, owner::Int32) = owner_generation(
+    science.cell_generations,
+    owner,
+)
 
 @inline function _proposal_science_neighbor(
         science,
@@ -27,12 +32,13 @@ end
         offsets,
         direction::Integer,
     ) where {N}
-    return relation_neighbor_index(
-        _proposal_science_shape(science),
-        _proposal_science_periodic(science),
+    return realize_cartesian_neighbor(
+        _proposal_science_domain(science),
+        science.ownership,
         site,
         offsets,
         direction,
+        OwnerRelationAccess,
     )
 end
 
@@ -42,13 +48,16 @@ end
         offsets,
         direction::Integer,
     ) where {N}
-    return reverse_relation_neighbor_index(
-        _proposal_science_shape(science),
-        _proposal_science_periodic(science),
-        site,
-        offsets,
-        direction,
+    offset = ntuple(
+        axis -> -Int(@inbounds offsets[axis, direction]), N
     )
+    neighbor = realize_cartesian_neighbor(
+        _proposal_science_domain(science), science.ownership, site, offset,
+        MutableSiteRelationAccess,
+    )
+    return neighbor.category === MutableCartesianNeighbor ?
+        CartesianIndices(_proposal_science_shape(science))[Int(neighbor.site)] :
+        nothing
 end
 
 @inline _proposal_science_linear_site(science, site) =

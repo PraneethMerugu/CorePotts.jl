@@ -73,9 +73,16 @@ Base.@noinline function _stage_owner_change!(
         linear,
         new_owner,
     )
+    @inbounds(runtime.program.domain.mutable_mask[linear]) != 0 ||
+        return _set_lifecycle_status!(
+            workspace,
+            ProgramStatusInvariant;
+            anchor = Int32(linear),
+            detail = LifecycleDetailImmutableDomainSite,
+        )
     old_owner = @inbounds workspace.staged_ownership[linear]
     old_owner == new_owner && return true
-    site = CartesianIndices(runtime.program.shape)[linear]
+    site = CartesianIndices(runtime.program.domain.shape)[linear]
     if !_commit_lifecycle_tracker_updates!(
             mode,
             workspace,

@@ -68,6 +68,71 @@
     @test CorePotts.program_checkpoint(restored).checksum == checkpoint.checksum
 end
 
+
+@testset "mutable-domain recipients exclude fixed obstacles on both engines" begin
+    base = CorePotts._standard_cartesian_ownership_domain(
+        (6, 6), (true, true), 2, 1, Bool[true, false]
+    )
+    obstacles = zeros(Int32, 6, 6)
+    for site in CartesianIndices(obstacles)
+        isodd(sum(Tuple(site))) && (obstacles[site] = Int32(1))
+    end
+    domain = CorePotts.CartesianOwnershipDomain(
+        base.shape, base.default_owner, base.domain_owners;
+        face_kinds = base.face_kinds,
+        face_owner_handles = base.face_owner_handles,
+        obstacle_owner_handles = obstacles,
+    )
+    ownership = zeros(Int32, 6, 6)
+    ownership[2, 2] = 1
+    initial = CorePotts.ProgramInitialState(
+        ownership, Int16[2]; scalar_type = Float64
+    )
+
+    sequential_program = test_program(
+        CorePotts.SequentialProgramEngine(); domain
+    )
+    sequential = CorePotts.initialize_program(
+        sequential_program, initial, Float64[], UInt64(0xc10), UInt32(1)
+    )
+    for attempt in 1:128
+        address = CorePotts._program_address(
+            CorePotts.ProposalRecipientStream,
+            1,
+            CorePotts._CORE_RNG_OPERATIONS.proposal_recipient,
+            attempt,
+        )
+        draw = Int(CorePotts.bounded_uint(
+            CorePotts.Philox4x64x10V3(),
+            CorePotts._trajectory_key(
+                sequential.seed, sequential.replica, sequential.repeat
+            ),
+            address,
+            UInt32(length(domain.mutable_sites)),
+        )) + 1
+        @test CorePotts._sequential_recipient_site(sequential, attempt) ==
+            domain.mutable_sites[draw]
+        @test domain.mutable_mask[
+            CorePotts._sequential_recipient_site(sequential, attempt)
+        ] == 1
+    end
+
+    checkerboard_program = test_program(
+        CorePotts.CheckerboardProgramEngine(); domain
+    )
+    checkerboard = CorePotts.initialize_program(
+        checkerboard_program, initial, Float64[], UInt64(0xc10), UInt32(1)
+    )
+    for runtime in (sequential, checkerboard)
+        CorePotts.advance_mcs!(runtime)
+        @test runtime.accepted + runtime.rejected + runtime.null_attempts ==
+            length(domain.mutable_sites)
+        for site in eachindex(obstacles)
+            iszero(obstacles[site]) || @test runtime.ownership[site] == -1
+        end
+    end
+end
+
 @testset "all engines admit positive repeated attempt budgets" begin
     for engine in (
             CorePotts.SequentialProgramEngine(),
