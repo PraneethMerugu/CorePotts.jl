@@ -143,8 +143,10 @@ end
     tracker = extension.TripleOccupancyTracker()
     contract = CorePotts.CompilerSPI.tracker_contract(tracker)
     @test contract.quantity == Val(:triple_occupancy)
-    domain = CorePotts._standard_cartesian_ownership_domain(
-        (2, 2), (false, false), 2, 1, Bool[true, false]
+    domain = CorePotts.CompilerSPI.CartesianOwnershipDomain(
+        (2, 2), CorePotts.CompilerSPI.DomainOwnerMetadata(
+            0, CorePotts.CompilerSPI.MediumDomainOwnerCategory, 1,
+        ), CorePotts.CompilerSPI.DomainOwnerMetadata[],
     )
     source = CorePotts.CompilerSPI.TrackerSourceView(
         reshape(Int32[1, 0, 2, 1], 2, 2), domain,
