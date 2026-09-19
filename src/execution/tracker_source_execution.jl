@@ -647,6 +647,7 @@ function _refresh_published_site_trackers!(runtime, published)
     program = runtime.program
     source = tracker_source_view(
         program, runtime.ownership;
+        cell_generations = runtime.cell_generations,
         parameters = runtime.parameters, descriptor_state = runtime.descriptor_state
     )
     descriptors = program.tracker_plan.descriptors
@@ -675,7 +676,7 @@ function _site_tracker_source_bindings(declaration, source; backend, copy_source
             copyto!(values, source.parameters)
         end
         (declaration.parameter_field => _checkerboard_parameter_view(values,
-            Val(declaration.parameter_count), Tuple(source.shape)),)
+            Val(declaration.parameter_count), Tuple(source.domain.shape)),)
     end
     return (
         declaration.ownership => source.ownership,
@@ -821,7 +822,9 @@ function _execute_site_tracker_rebuild(
         descriptor, source, cell_kinds;
         backend = KernelAbstractions.CPU(), copy_source = false
     )
-    declaration = _site_tracker_rebuild_declaration(descriptor, source.shape, length(cell_kinds), eltype(source.parameters))
+    declaration = _site_tracker_rebuild_declaration(
+        descriptor, source.domain.shape, length(cell_kinds), eltype(source.parameters)
+    )
     prepared = LocalMath.prepare(
         declaration.law,
         _site_tracker_source_bindings(declaration, source; backend, copy_source)...,
@@ -893,6 +896,7 @@ function _prepare_lifecycle_site_trackers(bank, open, backend, lease_capacity, l
     workspace = bank.lifecycle_workspace
     source = tracker_source_view(
         bank.program, workspace.staged_ownership;
+        cell_generations = workspace.staged_cell_generations,
         parameters = bank.parameters, descriptor_state = workspace.staged_descriptor_state
     )
     descriptors = filter(
@@ -902,10 +906,54 @@ function _prepare_lifecycle_site_trackers(bank, open, backend, lease_capacity, l
     return map(descriptors) do descriptor
         gate_space = LocalMath.Space(1)
         external = LocalMath.Field(gate_space, Bool)
+        if descriptor isa Union{
+                SpatialRelationQueryTracker, _BoundSpatialRelationQueryTracker,
+            }
+            imported = LocalMath.Field(gate_space, Bool)
+            gate = LocalMath.Field(gate_space, Bool)
+            ownership = LocalMath.Field(
+                LocalMath.Space(_ContactSite, Tuple(source.shape)), Int32)
+            generations = LocalMath.Field(
+                LocalMath.Space(length(workspace.staged_cell_kinds)), UInt32)
+            declaration = _spatial_relation_query_declaration(
+                descriptor, source.domain_resources, Tuple(source.shape),
+                Tuple(source.periodic), length(workspace.staged_cell_kinds);
+                ownership_field = ownership,
+                generation_field = generations,
+                gate,
+            )
+            destination = tracker_values(
+                bank.program.tracker_plan, workspace.staged_trackers,
+                descriptor.quantity)
+            snapshot = LocalMath.prepare(
+                LocalMath.LocalLaw(_stage_gate_snapshot(
+                    external, imported, :lifecycle_relation_pair_gate)),
+                external => open,
+                imported => LocalMath.Allocate(false);
+                backend, lease_capacity,
+            )
+            reconstruction = LocalMath.prepare(
+                LocalMath.sequence(
+                    LocalMath.LocalLaw(_stage_gate_snapshot(
+                        imported, gate, :lifecycle_relation_pair_rebuild_gate)),
+                    declaration.law,
+                ),
+                imported => LocalMath.storage(snapshot, imported),
+                gate => LocalMath.Allocate(false),
+                ownership => workspace.staged_ownership,
+                generations => workspace.staged_cell_generations,
+                declaration.identities => LocalMath.Allocate(
+                    (UInt32(0), Int32(0), UInt32(0))),
+                declaration.pairs => destination.pairs,
+                declaration.contacts => destination.contacts;
+                backend, lease_capacity,
+            )
+            return (; snapshot, reconstruction)
+        end
         imported = LocalMath.Field(gate_space, Bool)
         gate = LocalMath.Field(gate_space, Bool)
         declaration = _site_tracker_rebuild_declaration(
-            descriptor, source.shape,
+            descriptor, source.domain.shape,
             length(workspace.staged_cell_kinds), eltype(source.parameters); gate
         )
         domain = declaration.ownership.space

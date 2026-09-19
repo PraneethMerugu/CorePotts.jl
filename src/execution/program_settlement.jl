@@ -120,6 +120,7 @@ function update_program_inputs!(
     active = device_workspace === nothing ? runtime :
         first(_checkerboard_transaction_banks(device_workspace, device_workspace.execution.committed_mcs))
     source = tracker_source_view(runtime.program, active.ownership;
+        cell_generations = active.cell_generations,
         parameters = replacement_parameters,
         descriptor_state = descriptor_state === nothing ? active.descriptor_state : replacement_state)
     replacement_trackers = _input_tracker_candidate(

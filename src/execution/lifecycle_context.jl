@@ -322,13 +322,13 @@ end
     workspace = view.workspace
     descriptor = view.descriptor
     request = Int(view.request)
-    owner = @inbounds runtime.ownership[linear]
+    owner = owner_at(runtime.program.domain, runtime.ownership, linear)
     if descriptor.effect === CreateCellLifecycleEffect
         @inbounds(workspace.planned_site_request[linear]) == request &&
             return _lifecycle_request_allocation(workspace, request)
     elseif descriptor.effect === RemoveCellLifecycleEffect
         anchor = @inbounds workspace.anchor[request]
-        owner == anchor && return -Int32(descriptor.replacement_medium)
+        owner == anchor && return descriptor.replacement_owner
     elseif descriptor.effect === DivideCellLifecycleEffect
         anchor = @inbounds workspace.anchor[request]
         if owner == anchor &&
@@ -378,7 +378,7 @@ end
     descriptor = view.descriptor
     if descriptor.effect === CreateCellLifecycleEffect
         linear = Int(@inbounds workspace.planned_sites[position, request])
-        old_owner = @inbounds runtime.ownership[linear]
+        old_owner = owner_at(runtime.program.domain, runtime.ownership, linear)
         new_owner = _lifecycle_request_allocation(workspace, request)
         return linear, old_owner, new_owner, old_owner != new_owner
     end
@@ -386,9 +386,9 @@ end
     record = @inbounds _lifecycle_site_records(workspace, anchor)[position]
     linear = Int(record.site)
     offset = Int(_lifecycle_site_position(workspace, linear))
-    old_owner = @inbounds runtime.ownership[linear]
+    old_owner = owner_at(runtime.program.domain, runtime.ownership, linear)
     if descriptor.effect === RemoveCellLifecycleEffect
-        new_owner = -Int32(descriptor.replacement_medium)
+        new_owner = descriptor.replacement_owner
         return linear, old_owner, new_owner, old_owner != new_owner
     end
     changed = descriptor.effect === DivideCellLifecycleEffect &&
@@ -403,14 +403,18 @@ end
 @inline function _lifecycle_site_changed(
         view::_LifecycleRequestView, linear::Int
     )
-    return @inbounds(view.runtime.ownership[linear]) !=
+    return owner_at(
+               view.runtime.program.domain, view.runtime.ownership, linear
+           ) !=
            _lifecycle_planned_owner(view, linear)
 end
 
 @inline function _lifecycle_planned_kind(
         view::_LifecycleRequestView, cell::Int32
     )
-    cell > 0 || return view.runtime.program.medium_kind
+    cell > 0 || return _domain_owner_metadata(
+        view.runtime.program.domain, cell
+    ).kind
     descriptor = view.descriptor
     workspace = view.workspace
     request = Int(view.request)
@@ -435,7 +439,7 @@ end
 
 @inline _owner_kind(view::_LifecycleRequestView, owner::Int32) =
     owner > 0 ? _lifecycle_planned_kind(view, owner) :
-    owner == 0 ? view.runtime.program.medium_kind : Int16(-owner)
+    _domain_owner_metadata(view.runtime.program.domain, owner).kind
 
 function _lifecycle_planned_volume(view::_LifecycleRequestView, cell::Int32)
     cell > 0 || return Int32(0)
@@ -460,8 +464,8 @@ function _lifecycle_planned_surface(
     )
     cell > 0 || return Int32(0)
     resources = view.runtime.program.domain_resources
-    shape = view.runtime.program.shape
-    periodic = view.runtime.program.periodic
+    domain = view.runtime.program.domain
+    shape = view.runtime.program.domain.shape
     for dimension in eachindex(shape)
         if shape[dimension] <= 0
             _set_lifecycle_status!(
@@ -497,64 +501,77 @@ function _lifecycle_planned_surface(
         cell,
     )
     indices = CartesianIndices(view.runtime.ownership)
-    linear_indices = LinearIndices(view.runtime.ownership)
     for position in 1:_lifecycle_request_change_count(view)
         linear, old_owner, new_owner, changed =
             _lifecycle_request_change(view, position)
         changed || continue
         site = indices[linear]
         for direction in 1:count
-            neighbor = relation_neighbor_index(
-                shape,
-                periodic,
+            neighbor = realize_cartesian_neighbor(
+                domain,
+                view.runtime.ownership,
                 site,
                 resources.contact_offsets,
                 start + direction - 1,
+                OwnerRelationAccess,
             )
-            neighbor === nothing && continue
-            neighbor == site && continue
+            neighbor.category === AbsentCartesianNeighbor && continue
+            neighbor.category === MutableCartesianNeighbor &&
+                neighbor.site == linear && continue
             duplicate = false
             for prior in 1:(direction - 1)
-                prior_neighbor = relation_neighbor_index(
-                    shape,
-                    periodic,
+                prior_neighbor = realize_cartesian_neighbor(
+                    domain,
+                    view.runtime.ownership,
                     site,
                     resources.contact_offsets,
                     start + prior - 1,
+                    OwnerRelationAccess,
                 )
-                if prior_neighbor == neighbor
+                if _cartesian_neighbor_duplicate_key(prior_neighbor) ==
+                        _cartesian_neighbor_duplicate_key(neighbor)
                     duplicate = true
                     break
                 end
             end
             duplicate && continue
-            neighbor_linear = linear_indices[neighbor]
-            old_neighbor = @inbounds view.runtime.ownership[neighbor_linear]
-            new_neighbor = _lifecycle_planned_owner(view, neighbor_linear)
+            mutable_neighbor = neighbor.category === MutableCartesianNeighbor
+            neighbor_linear = mutable_neighbor ? Int(neighbor.site) : 0
+            old_neighbor = neighbor.owner
+            new_neighbor = mutable_neighbor ?
+                _lifecycle_planned_owner(view, neighbor_linear) : old_neighbor
             before = old_owner == cell && old_neighbor != cell
             after = new_owner == cell && new_neighbor != cell
             result += Int32(after) - Int32(before)
 
+            mutable_neighbor || continue
             _lifecycle_site_changed(view, neighbor_linear) && continue
+            neighbor_site = indices[neighbor_linear]
             for reverse_direction in 1:count
-                reverse_neighbor = relation_neighbor_index(
-                    shape,
-                    periodic,
-                    neighbor,
-                    resources.contact_offsets,
-                    start + reverse_direction - 1,
+                reverse_offset = ntuple(
+                    axis -> -Int(@inbounds resources.contact_offsets[
+                        axis, start + reverse_direction - 1
+                    ]), length(shape)
                 )
-                reverse_neighbor == site || continue
+                reverse_neighbor = realize_cartesian_neighbor(
+                    domain, view.runtime.ownership, neighbor_site,
+                    reverse_offset, MutableSiteRelationAccess,
+                )
+                reverse_neighbor.category === MutableCartesianNeighbor &&
+                    reverse_neighbor.site == linear || continue
                 reverse_duplicate = false
                 for prior in 1:(reverse_direction - 1)
-                    prior_neighbor = relation_neighbor_index(
-                        shape,
-                        periodic,
-                        neighbor,
-                        resources.contact_offsets,
-                        start + prior - 1,
+                    prior_offset = ntuple(
+                        axis -> -Int(@inbounds resources.contact_offsets[
+                            axis, start + prior - 1
+                        ]), length(shape)
                     )
-                    if prior_neighbor == reverse_neighbor
+                    prior_neighbor = realize_cartesian_neighbor(
+                        domain, view.runtime.ownership, neighbor_site,
+                        prior_offset, MutableSiteRelationAccess,
+                    )
+                    if _cartesian_neighbor_duplicate_key(prior_neighbor) ==
+                            _cartesian_neighbor_duplicate_key(reverse_neighbor)
                         reverse_duplicate = true
                         break
                     end
@@ -603,7 +620,7 @@ function _lifecycle_planned_shape_statistics(
         view::_LifecycleRequestView, cell::Int32
     )
     T = eltype(view.runtime.parameters)
-    N = length(view.runtime.program.shape)
+    N = length(view.runtime.program.domain.shape)
     trackers = _lifecycle_request_owns_cell(view, cell) ?
         view.workspace.staged_trackers : view.runtime.trackers
     plan = view.runtime.program.tracker_plan
@@ -632,7 +649,7 @@ end
     statistics = _lifecycle_planned_shape_statistics(view, cell)
     statistics === nothing && return zero(T)
     covariance = statistics[3]
-    return _covariance_length(Val(length(view.runtime.program.shape)), covariance, T)
+    return _covariance_length(Val(length(view.runtime.program.domain.shape)), covariance, T)
 end
 
 @inline function _compiled_qualified_tracker_operation(
@@ -685,7 +702,9 @@ end
     owner = runtime isa _LifecycleRequestView ?
         _lifecycle_planned_owner(
             runtime, LinearIndices(runtime.runtime.ownership)[last(arguments)]
-        ) : @inbounds(runtime.ownership[last(arguments)])
+        ) : owner_at(
+            runtime.program.domain, runtime.ownership, last(arguments)
+        )
     return _owner_kind(runtime, owner) == kind
 end
 

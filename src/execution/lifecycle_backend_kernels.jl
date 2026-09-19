@@ -481,6 +481,8 @@ end
     site = @index(Global, Linear)
     if site <= length(ownership) && _lifecycle_backend_open(workspace) &&
             _lifecycle_backend_due(control)
+        # The buffer is normalized before launch, so fixed obstacles carry
+        # nonpositive domain-owner codes and require no finite-slot check.
         owner = @inbounds ownership[site]
         if owner > capacity
             @inbounds control.candidate_status[site] =

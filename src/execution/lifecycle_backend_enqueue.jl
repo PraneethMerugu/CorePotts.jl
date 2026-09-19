@@ -166,9 +166,8 @@ end
     )
     program = state.program
     lifecycle_program = (
-        shape = program.shape,
-        periodic = program.periodic,
-        medium_kind = program.medium_kind,
+        shape = program.domain.shape,
+        domain = program.domain,
         tracker_plan = program.tracker_plan,
         domain_resources = program.domain_resources,
         lifecycle_plan = program.lifecycle_plan,
@@ -293,6 +292,7 @@ function enqueue_lifecycle_backend_index!(
     workspace = state.lifecycle_workspace
     tracker_source = tracker_source_view(
         state.program, workspace.staged_ownership;
+        cell_generations = workspace.staged_cell_generations,
         parameters = state.parameters, descriptor_state = workspace.staged_descriptor_state
     )
     backend = KernelAbstractions.get_backend(state.ownership)

@@ -252,8 +252,8 @@ function _attempt_selected!(
         scripted_draw::T,
     ) where {T, N}
     program = runtime.program
-    old_owner = @inbounds runtime.ownership[target]
-    new_owner = @inbounds runtime.ownership[source]
+    old_owner = owner_at(program.domain, runtime.ownership, target)
+    new_owner = owner_at(program.domain, runtime.ownership, source)
     old_owner == new_owner && (runtime.null_attempts += 1; return false)
     if !_extinction_copy_admitted(runtime, old_owner, new_owner)
         runtime.constraint_rejections += 1
@@ -348,15 +348,26 @@ function _attempt!(
     )
 end
 
+@inline function _sequential_recipient_site(
+        runtime::ProgramRuntime, attempt::Integer,
+    )
+    mutable_sites = runtime.program.domain.mutable_sites
+    site_count = length(mutable_sites)
+    index = _program_bounded(
+        runtime, ProposalRecipientStream,
+        _CORE_RNG_OPERATIONS.proposal_recipient, attempt, site_count,
+    )
+    return @inbounds mutable_sites[index]
+end
+
 function _advance_sequential!(runtime::ProgramRuntime)
-    site_count = length(runtime.ownership)
+    mutable_sites = runtime.program.domain.mutable_sites
+    site_count = length(mutable_sites)
     attempts = site_count * Int(runtime.program.attempts_per_site)
     indices = CartesianIndices(runtime.ownership)
     for attempt in 1:attempts
-        target_linear = _program_bounded(
-            runtime, ProposalRecipientStream, _CORE_RNG_OPERATIONS.proposal_recipient, attempt, site_count
-        )
-        _attempt!(runtime, indices[target_linear], attempt, 0)
+        target = _sequential_recipient_site(runtime, attempt)
+        _attempt!(runtime, indices[Int(target)], attempt, 0)
         program_failed(runtime) && return nothing
     end
     return nothing
@@ -584,6 +595,7 @@ function prevalidate_program_step_transaction(
         if inputs_staged
             source = tracker_source_view(
                 runtime.program, destination.ownership;
+                cell_generations = destination.cell_generations,
                 parameters, descriptor_state = snapshot.descriptor_state
             )
             candidate = _input_tracker_candidate(
@@ -612,6 +624,7 @@ function prevalidate_program_step_transaction(
             staged = transaction.workspace
             source = tracker_source_view(
                 runtime.program, staged.ownership;
+                cell_generations = staged.cell_generations,
                 parameters, descriptor_state = staged.descriptor_state
             )
             candidate = _input_tracker_candidate(

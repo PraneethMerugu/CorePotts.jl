@@ -67,11 +67,10 @@ struct _CheckerboardRelationshipLayout{S,B}
     banks::B
 end
 
-struct CheckerboardKernelProgram{T, N, O, R, TP, LT, DR, L, H, C, E, RL}
+struct CheckerboardKernelProgram{T, N, CD, O, R, TP, LT, DR, L, H, C, E, RL}
     shape::NTuple{N, Int}
-    periodic::NTuple{N, Bool}
+    domain::CD
     proposal_offsets::O
-    medium_kind::Int16
     temperature::CompiledScalar{T}
     attempts_per_site::Int32
     relationships::R
@@ -126,7 +125,7 @@ function _checkerboard_logical_topology_epoch(
     io = IOBuffer()
     write(io, "corepotts/checkerboard-logical-topology/v1")
     foreach(value -> write(io, Int64(value)), plan.shape)
-    foreach(value -> write(io, UInt8(value)), plan.periodic)
+    write(io, plan.domain_identity)
     write(io, Int64(plan.color_count))
     write(io, Int64(plan.maximum_color_size))
     write(io, Int64(length(plan.sites)))
@@ -607,7 +606,28 @@ function _program_state_copy_schema(state)
         _program_state_copy_leaf(:parameters, state.parameters),
     ]
     for (index, tracker) in enumerate(state.trackers.values)
-        if tracker isa CellMomentsState
+        if tracker isa SpatialRelationQueryState
+            record_components = StructArrays.components(tracker.pairs.records)
+            key_components = StructArrays.components(record_components.key)
+            for (component, values) in enumerate(key_components)
+                push!(leaves, _program_state_copy_leaf(
+                    Symbol(:tracker_, index, :_key_, component), values))
+            end
+            push!(leaves, _program_state_copy_leaf(
+                Symbol(:tracker_, index, :_incidence), record_components.value))
+            push!(leaves, _program_state_copy_leaf(
+                Symbol(:tracker_, index, :_pair_count), tracker.pairs.count))
+            contact_components = StructArrays.components(tracker.contacts.records)
+            for (component, values) in enumerate(
+                    StructArrays.components(contact_components.key))
+                push!(leaves, _program_state_copy_leaf(
+                    Symbol(:tracker_, index, :_contact_key_, component), values))
+            end
+            push!(leaves, _program_state_copy_leaf(
+                Symbol(:tracker_, index, :_contact_value), contact_components.value))
+            push!(leaves, _program_state_copy_leaf(
+                Symbol(:tracker_, index, :_contact_count), tracker.contacts.count))
+        elseif tracker isa CellMomentsState
             push!(leaves,
                 _program_state_copy_leaf(
                     Symbol(:tracker_, index, :_first), tracker.first
@@ -818,7 +838,7 @@ function _validate_checkerboard_stage_program_preparation(
     )
     _validate_checkerboard_identity_order(host_plan)
     host_plan.shape == plan.shape &&
-        host_plan.periodic == plan.periodic &&
+        host_plan.domain_identity == plan.domain_identity &&
         host_plan.color_count == plan.color_count &&
         host_plan.maximum_color_size == plan.maximum_color_size ||
         throw(ArgumentError(plan_mismatch))
@@ -833,7 +853,7 @@ function _validate_checkerboard_stage_program_preparation(
     ))
     maximum_semantic_id = _checked_checkerboard_capacity_mul(
         Int(state.program.attempts_per_site),
-        length(state.ownership),
+        length(host_plan.sites),
         :maximum_semantic_identity,
     )
     maximum_semantic_id <= typemax(Int32) || throw(ArgumentError(

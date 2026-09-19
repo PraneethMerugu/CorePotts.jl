@@ -92,7 +92,8 @@ function _apply_lifecycle_request_effect!(
         request, descriptor, plan_class,
     ) || return -1
     tracker_source = tracker_source_view(
-        runtime.program, workspace.staged_ownership
+        runtime.program, workspace.staged_ownership;
+        cell_generations = workspace.staged_cell_generations,
     )
     structure_recipe = _lifecycle_structure_recipe(runtime, plan)
     structure_state = _lifecycle_structure_state(mode, runtime, workspace)

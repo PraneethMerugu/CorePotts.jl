@@ -349,11 +349,15 @@ struct ContextOperation{Identity} <: AbstractContextualOperation end
 struct ResourceOperation{Identity} <: AbstractContextualOperation end
 
 """Concrete callable plus one qualified value-level tracker binding."""
-struct QualifiedTrackerOperation{O, Q <: Val} <: AbstractContextualOperation
+struct QualifiedTrackerOperation{O, Q <: Val, P} <: AbstractContextualOperation
     operation::O
     quantity::Q
     source_handle::Int32
+    payload::P
 end
+
+QualifiedTrackerOperation(operation, quantity::Q, source_handle::Integer) where {Q <: Val} =
+    QualifiedTrackerOperation(operation, quantity, Int32(source_handle), nothing)
 
 function context_value end
 function apply_resource_operation end
@@ -423,6 +427,13 @@ for (identity, contexts) in (
         ),
         :cell_site_sum => (AbstractCellStageEvaluationContext,),
         :cell_site_minimum => (AbstractCellStageEvaluationContext,),
+        :contact_edge_count => (AbstractCellStageEvaluationContext,),
+        :contact_measure => (AbstractCellStageEvaluationContext,),
+        :boundary_site_count => (AbstractCellStageEvaluationContext,),
+        :neighbor_cell_count => (AbstractCellStageEvaluationContext,),
+        :neighbor_property_sum => (AbstractCellStageEvaluationContext,),
+        :neighbor_property_mean => (AbstractCellStageEvaluationContext,),
+        :global_interface_measure => (AbstractSiteStageEvaluationContext,),
         :cell_surface => (
             AbstractLifecycleTriggerEvaluationContext,
             AbstractLifecyclePartitionEvaluationContext,
@@ -713,6 +724,7 @@ end
     context,
     operation.quantity,
     operation.source_handle,
+    operation.payload,
 )
 
 operation_context_supported(

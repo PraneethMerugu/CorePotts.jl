@@ -171,12 +171,13 @@ end
     ) where {Quantity}
     arguments = _execute_proposal_arguments(call.arguments, context)
     return qualified_tracker_operation_call(
-        call.operation, arguments, context, Val(Quantity), call.source_handle
+        call.operation, arguments, context, Val(Quantity), call.source_handle,
+        call.payload,
     )
 end
 
 Base.@kwdef struct _GatheredProposalContext{
-        I, T, P, V, S, O, K, RS, RO, RK, R, TV, TC, TD, TCD, MF, MS, MD, RR,
+        I, T, P, V, CN, S, O, K, RS, RO, RK, R, TV, TC, TD, TCD, MF, MS, MD, RR,
     }
     source::I
     target::I
@@ -193,6 +194,7 @@ Base.@kwdef struct _GatheredProposalContext{
     scalar_zero::T
     parameters::P
     state_values::V
+    contact_neighbors::CN
     contact_sites::S
     contact_owners::O
     contact_kinds::K
@@ -218,11 +220,6 @@ struct _GatheredAnchorEnergyContext{C, I}
 end
 _GatheredAnchorEnergyContext(proposal, after::Bool, anchor) =
     _GatheredAnchorEnergyContext(proposal, after, anchor, Int32(0))
-
-struct _GatheredContactAnchor
-    first::Int32
-    second::Int32
-end
 
 @inline _gathered_contact_lookup(
     site::Int32, ::Tuple{}, ::Tuple{}, fallback,
@@ -268,6 +265,44 @@ end
     )
 end
 
+@inline function _gathered_neighbor_kind(
+        endpoint::CartesianNeighbor, ::Tuple{}, ::Tuple{}, fallback::Int16,
+    )
+    return fallback
+end
+@inline function _gathered_neighbor_kind(
+        endpoint::CartesianNeighbor, neighbors::Tuple, kinds::Tuple,
+        fallback::Int16,
+    )
+    _semantic_contact_endpoint(endpoint) ==
+        _semantic_contact_endpoint(first(neighbors)) && return first(kinds)
+    return _gathered_neighbor_kind(
+        endpoint, Base.tail(neighbors), Base.tail(kinds), fallback
+    )
+end
+
+@inline function _gathered_site_owner(
+        context::_GatheredAnchorEnergyContext, endpoint::CartesianNeighbor,
+    )
+    proposal = context.proposal
+    endpoint.category === MutableCartesianNeighbor &&
+        endpoint.site == proposal.target_linear &&
+        return context.after ? proposal.new_owner : proposal.old_owner
+    return endpoint.owner
+end
+
+@inline function _gathered_site_kind(
+        context::_GatheredAnchorEnergyContext, endpoint::CartesianNeighbor,
+    )
+    proposal = context.proposal
+    endpoint.category === MutableCartesianNeighbor &&
+        endpoint.site == proposal.target_linear &&
+        return context.after ? proposal.new_kind : proposal.old_kind
+    return _gathered_neighbor_kind(
+        endpoint, proposal.contact_neighbors, proposal.contact_kinds, Int16(0)
+    )
+end
+
 @inline _gathered_proposal(context::_GatheredAnchorEnergyContext) =
     context.proposal
 
@@ -277,8 +312,9 @@ end
     value = Int32(owner)
     value == context.old_owner && return context.old_kind
     value == context.new_owner && return context.new_kind
-    value < 0 && return Int16(-value)
-    return Int16(0)
+    return _gathered_contact_lookup(
+        value, context.contact_owners, context.contact_kinds, Int16(0)
+    )
 end
 @inline owner_kind(
     context::_GatheredAnchorEnergyContext, owner::Integer,
@@ -1129,24 +1165,34 @@ end
     accepted = Int32(0)
     while lane < count
         slot = start + lane
-        neighbor = @inbounds context.contact_sites[Int(slot)]
-        if neighbor > 0
+        neighbor = @inbounds context.contact_neighbors[Int(slot)]
+        if neighbor.category in (
+                MutableCartesianNeighbor,
+                FixedExteriorCartesianNeighbor,
+                FixedObstacleCartesianNeighbor,
+            )
             duplicate = false
             prior = Int32(0)
             while prior < lane
-                duplicate |= @inbounds(
-                    context.contact_sites[Int(start + prior)]
-                ) == neighbor
+                prior_neighbor = @inbounds context.contact_neighbors[
+                    Int(start + prior)
+                ]
+                duplicate |= _semantic_contact_endpoint(prior_neighbor) ==
+                    _semantic_contact_endpoint(neighbor)
                 prior += Int32(1)
             end
             if !duplicate
                 accepted += Int32(1)
                 accepted <= term.role.affected.maximum || return
                 ProposalEvaluation(T(NaN), zero(T), zero(T), zero(T), true)
-                target = context.target_linear
-                anchor = target <= neighbor ?
-                    _GatheredContactAnchor(target, neighbor) :
-                    _GatheredContactAnchor(neighbor, target)
+                target = CartesianNeighbor(
+                    MutableCartesianNeighbor,
+                    context.target_linear,
+                    context.old_owner,
+                    Int32(0),
+                    map(Int64, Tuple(context.target)),
+                )
+                anchor = _canonical_contact(target, neighbor)
                 before = _gathered_anchor_energy(
                     term.evaluator, context, anchor, false, true, T
                 )

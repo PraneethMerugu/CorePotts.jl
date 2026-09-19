@@ -163,7 +163,7 @@ function _stage_lifecycle_effect_base!(
             owner_change_state,
             tracker_source,
             linear,
-            -Int32(descriptor.replacement_medium),
+            descriptor.replacement_owner,
         ) || return false
     end
     return true

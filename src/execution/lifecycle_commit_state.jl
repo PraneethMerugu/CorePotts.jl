@@ -4,8 +4,8 @@
 # full-reconstruction contracts wait for the completed structural transaction.
 
 """Prepared semantics for one staged ownership transfer."""
-struct _OwnershipTransferRecipe{N, T, O}
-    shape::NTuple{N, Int}
+struct _OwnershipTransferRecipe{D, T, O}
+    domain::D
     tracker_plan::T
     ownership_rules::O
 end
@@ -14,7 +14,7 @@ Adapt.@adapt_structure _OwnershipTransferRecipe
 
 @inline function _ownership_transfer_recipe(runtime, plan)
     return _OwnershipTransferRecipe(
-        runtime.program.shape,
+        runtime.program.domain,
         runtime.program.tracker_plan,
         plan.ownership_rules,
     )
@@ -441,9 +441,16 @@ Base.@noinline function _stage_owner_change!(
         linear,
         new_owner,
     )
+    @inbounds(recipe.domain.mutable_mask[linear]) != 0 ||
+        return _set_lifecycle_status!(
+            state,
+            ProgramStatusInvariant;
+            anchor = Int32(linear),
+            detail = LifecycleDetailImmutableDomainSite,
+        )
     old_owner = @inbounds state.staged_ownership[linear]
     old_owner == new_owner && return true
-    site = CartesianIndices(recipe.shape)[linear]
+    site = CartesianIndices(recipe.domain.shape)[linear]
     if !_commit_lifecycle_tracker_updates!(
             mode,
             state,

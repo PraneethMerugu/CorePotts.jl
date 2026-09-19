@@ -4,6 +4,7 @@ function receipt_descriptor(
         domain_kind::Integer = 0,
         trigger_evaluator::Integer = 1,
         destination_kind::Integer = 0,
+        replacement_owner::Integer = 0,
         parent_kind::Integer = 0,
         daughter_kind::Integer = 0,
         placement::CorePotts.LifecyclePlacementCode =
@@ -42,7 +43,7 @@ function receipt_descriptor(
         Int32(0),
         on_inadmissible,
         Int16(destination_kind),
-        Int16(1),
+        Int32(replacement_owner),
         placement,
         Int32(placement_evaluator),
         Int32(1),

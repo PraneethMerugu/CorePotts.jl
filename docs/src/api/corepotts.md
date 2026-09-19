@@ -24,6 +24,37 @@ compiler extensions describe validated scientific/compiler meaning, while
 backend extensions provide execution, storage, and settlement behavior for an
 admitted device profile.
 
+### Cartesian ownership domains
+
+`CompilerSPI.CartesianOwnershipDomain` is the single runtime authority for a
+Cartesian program's shape, per-face boundary law, non-finite owners, fixed
+obstacles, and mutable recipient population. Positive owner codes address
+finite-cell slots, zero names the declared default domain owner, and negative
+codes are handles into the domain-owned non-finite owner directory. Stable
+owner equality is the pair `(category, identity)`, represented by `OwnerKey`;
+kind is scientific metadata and is not an identity substitute.
+
+Each face is explicitly periodic, closed, or fixed to one declared domain
+owner. An explicit Boolean `obstacle_mask` distinguishes a fixed obstacle owned
+by the default owner (handle zero) from a mutable site. `owner_at` applies this
+authority uniformly, while the domain's validated mutable-site set supplies the
+exact sequential and checkerboard recipient population and MCS budget. Fixed
+exterior and obstacle owners participate in owner/contact reads, but they are
+absent from proposal, lifecycle, relationship-endpoint, and write targets.
+
+Compiler clients lower these facts as runtime data, and Core validates and owns
+their realization. Device geometry receives compact face and owner-directory
+payloads; it does not specialize on the completed model's claim graph.
+Sequential and checkerboard execution share the same Cartesian realization and
+owner laws, including periodic alias canonicalization and multi-face
+incompatibility rejection.
+
+Exact-continuation checkpoints bind the complete validated executable identity,
+including face laws, domain-owner metadata, obstacle ownership and the resulting
+mutable-site set. A compiler-supplied source fingerprint is not sufficient by
+itself: restoring into a program with a different Cartesian domain rejects
+before any destination-domain realization can alter the saved logical state.
+
 ```@example core_boundary
 using CorePotts
 runtime_api = Set((
@@ -67,6 +98,54 @@ Descriptor sources are checked while constructing the compiler plan. A
 foreign or out-of-range source handle is rejected with the descriptor,
 operation, role, and source-table context instead of becoming an anonymous
 integer provenance value.
+
+### Maintained spatial-relation queries
+
+`HamiltonianDomainResources` owns both the finite relation offsets and one
+nonnegative declared measure per lane. `relation_offsets`, `relation_measures`,
+and `relation_measure` expose host-owned compiler views without making those
+tables a second runtime authority.
+
+Compiler extensions declare a `SpatialRelationQueryTracker` under a
+`QualifiedTrackerKey(Val(:spatial_relation_query), relation_handle)`. CorePotts
+initializes and reconstructs its publication
+from the runtime's authoritative ownership and generation tables, and refreshes
+it after accepted ownership changes. Both engines execute one two-stage
+LocalMath path: materialize generation-qualified site identities, then perform
+failure-atomic exact-replacement keyed reductions for pair incidences and
+directed boundary sites. Checkpoints reconstruct this derived state instead of
+persisting a second authority.
+
+The sole pair publication stores exact scalar records keyed by canonical
+generation-qualified owner pair and runtime lane identity. It therefore
+supports several structurally compatible metric tables without duplicating
+topology or generating a different query kernel for each metric. The current
+LocalMath affine-relation backend admits at most 32 lanes; that is an execution
+backend bound, not a semantic limit of spatial queries. A metric
+must preserve the authoritative relation's realized lane count and lane order;
+only its weights may differ. Directed `(owner, site, other owner)` records make
+boundary-site union exact when one site touches several matching owners.
+Repeated bonds remain repeated, reciprocal lanes must have equal measure, and
+periodic seams follow the compiled boundary axes.
+
+Current-snapshot qualified operations expose `contact_edge_count`,
+`contact_measure`, `boundary_site_count`, `neighbor_cell_count`,
+`neighbor_property_sum`, `neighbor_property_mean`, and
+`global_interface_measure`. Owner-relative queries take only the dynamic owner;
+their filter, metric, property handle, and empty-mean policy are cold-lowered in
+a `SpatialQueryRead`. The global query takes no dynamic operands and uses a
+`GlobalSpatialQueryRead`. Neighbor properties and published predicate masks are
+canonical cell-owned state, so neither an author expression graph nor a second
+query-result cache enters the execution boundary. Hypothetical proposal reads
+are intentionally outside this contract.
+
+Finite cells and the current medium-domain ownership encoding participate.
+Fixed exterior and obstacle identities require the Cartesian domain ownership
+contract and are rejected rather than being inferred from a negative owner.
+
+Potts owns author-facing query lowering and filters; CorePotts owns CPM identity,
+maintenance, and contextual projections; LocalMath remains the sole grouping and
+atomic-publication executor.
 
 ### Scheduled state and relationship publication
 

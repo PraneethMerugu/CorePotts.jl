@@ -19,12 +19,13 @@ end
         parameters = has_parameters ?
             (parameters = _required_science_read((2.5, 7.5)),) : NamedTuple()
         contact_values = (
+            (UInt8(CorePotts.MutableCartesianNeighbor),),
             (Int32(2),), (Int32(3),), (Int16(4),),
             (Int32(5),), (Int32(6),), (Int16(7),),
         )
         contact = has_contact ? NamedTuple{
                 (
-                    :sites, :owners, :kinds,
+                    :categories, :sites, :owners, :kinds,
                     :reverse_sites, :reverse_owners, :reverse_kinds,
                 ),
             }(
@@ -60,10 +61,29 @@ end
         ) ==
             (has_parameters ? (2.5, 7.5) : ())
         contact_offset = CorePotts._checkerboard_read_offset(offsets, Val(:contact))
+        topology = CorePotts.CartesianContactTopology(
+            (3, 1),
+            ntuple(_ -> CorePotts.ClosedCartesianFace, 4),
+            ntuple(_ -> Int32(0), 4),
+        )
+        contact_offsets = ((Int8(1), Int8(0)),)
+        target = CartesianIndex(1, 1)
+        expected_contact = if has_contact
+            neighbor = CorePotts.CartesianNeighbor(
+                CorePotts.MutableCartesianNeighbor,
+                Int32(2), Int32(3), Int32(1), (Int64(2), Int64(1)),
+            )
+            ((neighbor,), contact_values[2:end]...)
+        else
+            ((), (), (), (), (), (), ())
+        end
         @test CorePotts._checkerboard_scientific_contact(
-            reads, Val(Int(has_contact)), contact_offset
-        ) ==
-            (has_contact ? contact_values : ((), (), (), (), (), ()))
+            reads,
+            has_contact ? topology : nothing,
+            target,
+            has_contact ? contact_offsets : (),
+            Val(Int(has_contact)), contact_offset,
+        ) == expected_contact
         tracker_offset = CorePotts._checkerboard_read_offset(offsets, Val(:trackers))
         @test @inferred(
             CorePotts._checkerboard_scientific_tracker_values(

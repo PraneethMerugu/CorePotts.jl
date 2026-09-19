@@ -20,6 +20,44 @@ import ..CorePotts: AbstractCellStageEvaluationContext, CellAssignmentEffect, Bo
 public AbstractCellStageEvaluationContext, CellAssignmentEffect, BoundCellStateValueOperation, stage_cell
 import ..CorePotts: history_source, history_sample_handle, state_read_source, expression_state_handles
 public history_source, history_sample_handle, state_read_source, expression_state_handles
+import ..CorePotts:
+    CartesianOwnershipDomain,
+    DomainOwnerMetadata,
+    OwnerMetadata,
+    OwnerKey,
+    OwnerDirectoryLayout,
+    OwnerCategory,
+    FiniteCellOwnerCategory,
+    MediumDomainOwnerCategory,
+    WallDomainOwnerCategory,
+    CartesianFaceKind,
+    PeriodicCartesianFace,
+    ClosedCartesianFace,
+    FixedExteriorCartesianFace,
+    owner_metadata,
+    owner_key,
+    owner_identity,
+    owner_category,
+    owner_kind,
+    owner_generation,
+    owner_directory_index,
+    owner_directory_count,
+    owner_directory_layout,
+    owner_at,
+    domain_owner_handle,
+    domain_owner_code,
+    cartesian_domain_report
+import ..CorePotts: cartesian_domain
+public CartesianOwnershipDomain, DomainOwnerMetadata, OwnerMetadata, OwnerKey
+public OwnerDirectoryLayout
+public OwnerCategory, FiniteCellOwnerCategory, MediumDomainOwnerCategory
+public WallDomainOwnerCategory, CartesianFaceKind, PeriodicCartesianFace
+public ClosedCartesianFace, FixedExteriorCartesianFace
+public owner_metadata, owner_key, owner_identity, owner_category, owner_kind
+public owner_generation, owner_directory_index, owner_directory_count
+public owner_directory_layout
+public owner_at, domain_owner_handle, domain_owner_code, cartesian_domain_report
+public cartesian_domain
 
 import ..CorePotts:
     AbstractCompiledStage,
@@ -61,6 +99,25 @@ import ..CorePotts:
     CellKindLifecycleDomain,
     CellMomentsTracker,
     CellSurfaceTracker,
+    SpatialRelationQueryTracker,
+    SpatialRelationQueryStorage,
+    SpatialRelationQueryState,
+    SpatialOwnerCategory,
+    FiniteCellOwner,
+    MediumDomainOwner,
+    WallDomainOwner,
+    SpatialOwnerFilterKind,
+    StableOwnerIdentityFilter,
+    CellKindOwnerFilter,
+    MediumDomainIdentityFilter,
+    OwnerCategoryFilter,
+    PublishedOwnerPredicateFilter,
+    WallDomainIdentityFilter,
+    SpatialOwnerFilterRecipe,
+    SpatialQueryRead,
+    GlobalSpatialQueryRead,
+    ReturnEmptySpatialMean,
+    ErrorOnEmptySpatialMean,
     ClaimedOwnerExclusiveTrackerConcurrency,
     ClearLifecycleOwnershipState,
     CommutativeIntegerWriteAccess,
@@ -278,6 +335,8 @@ import ..CorePotts:
     relation_count,
     relation_neighbor_site,
     relation_offsets,
+    relation_measure,
+    relation_measures,
     relationship_degree,
     site_owner,
     stage_site,
@@ -344,6 +403,14 @@ public RelationshipRetuneEffect, StageDescriptorGroup, StageExecutionPlan
 public NoWriteAccess, ExclusiveWriteAccess, CommutativeIntegerWriteAccess
 public DeferredRequestWriteAccess, RelationshipStoreSchema
 public OwnershipCountTracker, CellSurfaceTracker, CellMomentsTracker
+public SpatialRelationQueryTracker, SpatialRelationQueryStorage
+public SpatialRelationQueryState
+public SpatialOwnerCategory, FiniteCellOwner, MediumDomainOwner, WallDomainOwner
+public SpatialOwnerFilterKind, StableOwnerIdentityFilter, CellKindOwnerFilter
+public MediumDomainIdentityFilter, OwnerCategoryFilter
+public PublishedOwnerPredicateFilter, WallDomainIdentityFilter
+public SpatialOwnerFilterRecipe, SpatialQueryRead, GlobalSpatialQueryRead
+public ReturnEmptySpatialMean, ErrorOnEmptySpatialMean
 public DenseOwnerScalarStorage, DenseOwnerValueStorage, DenseOwnerMomentsStorage, DenseScalarTrackerGroup
 public OwnershipTrackerSource, OwnershipRelationTrackerSource
 public SiteExpressionTrackerSource, SiteSumTracker, SiteMinimumTracker
@@ -417,6 +484,7 @@ public proposal_source_kind, proposal_source_owner, proposal_source_site
 public proposal_target_kind, proposal_target_owner, proposal_target_site
 public qualified_tracker_operation_call
 public relation_count, relation_neighbor_site, relation_offsets
+public relation_measure, relation_measures
 public relationship_degree, site_owner, stage_site
 public state_block, state_schema_metadata, state_value
 public tracker_contract, tracker_adapt, tracker_checkpoint_policy
