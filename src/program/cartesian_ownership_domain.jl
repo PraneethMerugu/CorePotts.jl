@@ -856,13 +856,12 @@ end
     offset::NTuple{N,<:Integer},
 ) where {N} = _cartesian_lattice_neighbor_site(topology, site, offset)
 
-@inline function realize_cartesian_contact_geometry(
+@inline function _resolve_cartesian_contact_faces(
         topology::CartesianContactTopology{N},
         site::CartesianIndex{N},
         offset::NTuple{N, <:Integer},
-        lane::Integer,
-        access::CartesianRelationAccess,
-    ) where {N}
+        ::Val{Classify},
+    ) where {N,Classify}
     origin = Tuple(site)
     resolved = map(+, origin, map(Int, offset))
     fixed_handle = Int32(0)
@@ -878,16 +877,39 @@ end
             resolved = Base.setindex(
                 resolved, mod1(value, topology.shape[axis]), axis
             )
-        elseif kind === ClosedCartesianFace
+        elseif Classify && kind === ClosedCartesianFace
             invalid |= fixed_present
             closed = true
-        else
+        elseif Classify
             handle = @inbounds topology.face_owner_handles[face]
             invalid |= closed || (fixed_present && fixed_handle != handle)
             fixed_handle = handle
             fixed_present = true
         end
     end
+    return Classify ?
+        (resolved, fixed_handle, fixed_present, closed, invalid) : resolved
+end
+
+@inline function cartesian_contact_endpoint(
+        topology::CartesianContactTopology{N},
+        site::CartesianIndex{N},
+        offset::NTuple{N, <:Integer},
+    ) where {N}
+    resolved = _resolve_cartesian_contact_faces(
+        topology, site, offset, Val(false))
+    return map(Int64, resolved)
+end
+
+@inline function realize_cartesian_contact_geometry(
+        topology::CartesianContactTopology{N},
+        site::CartesianIndex{N},
+        offset::NTuple{N, <:Integer},
+        lane::Integer,
+        access::CartesianRelationAccess,
+    ) where {N}
+    resolved, fixed_handle, fixed_present, closed, invalid =
+        _resolve_cartesian_contact_faces(topology, site, offset, Val(true))
     endpoint = map(Int64, resolved)
     access === MutableSiteRelationAccess &&
         (closed || fixed_present || invalid) && return CartesianNeighbor(

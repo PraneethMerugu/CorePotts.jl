@@ -301,13 +301,6 @@ struct _CheckerboardContactGeometryEvaluator{Degree,N,T,O}
     offsets::O
 end
 
-# LocalMath global fields admit UInt64 scalar words but not Int64 endpoint
-# tuples. Preserve the signed coordinate bits exactly: a fixed endpoint may be
-# as far as an Int8 relation offset beyond an Int32-bounded lattice face, so an
-# Int32 payload would not cover every admitted domain.
-@inline _checkerboard_endpoint_word(value::Int64) = reinterpret(UInt64, value)
-@inline _checkerboard_endpoint_coordinate(word::UInt64) = reinterpret(Int64, word)
-
 function _CheckerboardContactGeometryEvaluator(topology, offsets)
     return _CheckerboardContactGeometryEvaluator{
         length(offsets), length(topology.shape), typeof(topology), typeof(offsets),
@@ -346,9 +339,6 @@ end
     categories = Expr(:tuple,
         [:(UInt8(@inbounds $(contacts[lane]).category))
             for lane in 1:Degree]...)
-    endpoints = Expr(:tuple, [:(_checkerboard_endpoint_word(
-            @inbounds $(contacts[lane]).endpoint[$axis]))
-        for lane in 1:Degree for axis in 1:N]...)
     return quote
         $(assignments...)
         (
@@ -356,7 +346,6 @@ end
             reverse_contact_routes = $(Expr(:tuple, reverse...)),
             geometry_categories = $categories,
             fixed_owners = $(tuple_field(:owner, contacts)),
-            endpoints = $endpoints,
         )
     end
 end
@@ -365,13 +354,12 @@ end
         item::Int32, reads, parameters,
     )::NamedTuple{
         (:contact_routes, :reverse_contact_routes, :geometry_categories,
-            :fixed_owners, :endpoints),
+            :fixed_owners),
         Tuple{
             LocalMath.UniqueValue{NTuple{Degree,Int32}},
             LocalMath.UniqueValue{NTuple{Degree,Int32}},
             LocalMath.UniqueValue{NTuple{Degree,UInt8}},
             LocalMath.UniqueValue{NTuple{Degree,Int32}},
-            LocalMath.UniqueValue{NTuple{Degree * N,UInt64}},
         },
     } where {Degree,N,T,O}
     target_linear = something(@inbounds getfield(reads, 1)[1].value)
@@ -386,7 +374,6 @@ end
         geometry_categories =
             LocalMath.UniqueValue(geometry.geometry_categories),
         fixed_owners = LocalMath.UniqueValue(geometry.fixed_owners),
-        endpoints = LocalMath.UniqueValue(geometry.endpoints),
     )
 end
 
@@ -600,13 +587,16 @@ end
 end
 
 struct _CheckerboardProposalContextPlan{
-        N, Handles, Ranges, TrackerDescriptors, BoundedTrackerDescriptors, MomentDescriptor,
+        N, Handles, Ranges, ContactTopology, ContactOffsets,
+        TrackerDescriptors, BoundedTrackerDescriptors, MomentDescriptor,
         RelationshipSchemas, ReadLayout,
     }
     shape::NTuple{N, Int}
     trajectory_key::NTuple{2, UInt64}
     state_handles::Handles
     contact_ranges::Ranges
+    contact_topology::ContactTopology
+    contact_offsets::ContactOffsets
     tracker_descriptors::TrackerDescriptors
     bounded_tracker_descriptors::BoundedTrackerDescriptors
     moment_descriptor::MomentDescriptor
@@ -1243,38 +1233,30 @@ end
     return InvalidCartesianNeighbor
 end
 
-struct _CheckerboardEndpointCoordinate{N,E}
-    endpoints::E
-    lane::Int
-end
-
-@inline function (coordinate::_CheckerboardEndpointCoordinate{N})(axis::Int) where {N}
-    return _checkerboard_endpoint_coordinate(
-        @inbounds coordinate.endpoints[(coordinate.lane - 1) * N + axis])
-end
-
-struct _CheckerboardContactNeighborBuilder{N,C,E,S,O}
+struct _CheckerboardContactNeighborBuilder{T,P,F,C,S,O}
+    topology::T
+    target::P
+    offsets::F
     categories::C
-    endpoints::E
     sites::S
     owners::O
 end
 
 @inline function _checkerboard_contact_neighbor_builder(
-        categories::NTuple{Degree,UInt8}, endpoints::NTuple{Count,UInt64},
+        topology, target, offsets,
+        categories::NTuple{Degree,UInt8},
         sites::NTuple{Degree,Int32}, owners::NTuple{Degree,Int32},
-    ) where {Degree,Count}
-    Count % Degree == 0 || error("contact endpoint payload has invalid width")
-    N = Count ÷ Degree
+    ) where {Degree}
     return _CheckerboardContactNeighborBuilder{
-        N,typeof(categories),typeof(endpoints),typeof(sites),typeof(owners)}(
-            categories, endpoints, sites, owners)
+        typeof(topology),typeof(target),typeof(offsets),typeof(categories),
+        typeof(sites),typeof(owners)}(
+            topology, target, offsets, categories, sites, owners)
 end
 
-@inline function (builder::_CheckerboardContactNeighborBuilder{N})(lane::Int) where {N}
-    endpoint = ntuple(
-        _CheckerboardEndpointCoordinate{N,typeof(builder.endpoints)}(
-            builder.endpoints, lane), Val(N))
+@inline function (builder::_CheckerboardContactNeighborBuilder)(lane::Int)
+    endpoint = cartesian_contact_endpoint(
+        builder.topology, builder.target,
+        @inbounds(builder.offsets[lane]))
     return CartesianNeighbor(
         _checkerboard_neighbor_category(
             @inbounds builder.categories[lane]),
@@ -1283,26 +1265,26 @@ end
 end
 
 @inline function _checkerboard_scientific_contact(
-        reads, ::Val{Degree}, ::Val{Offset},
+        reads, topology, target, offsets,
+        ::Val{Degree}, ::Val{Offset},
     ) where {Degree, Offset}
     iszero(Degree) && return ((), (), (), (), (), (), ())
     categories = something(
         @inbounds getfield(reads, 1 + Offset)[1].value)
-    endpoints = something(@inbounds getfield(reads, 2 + Offset)[1].value)
-    sites = something(@inbounds getfield(reads, 3 + Offset)[1].value)
-    owners = something(@inbounds getfield(reads, 4 + Offset)[1].value)
+    sites = something(@inbounds getfield(reads, 2 + Offset)[1].value)
+    owners = something(@inbounds getfield(reads, 3 + Offset)[1].value)
     neighbors = ntuple(
         _checkerboard_contact_neighbor_builder(
-            categories, endpoints, sites, owners),
+            topology, target, offsets, categories, sites, owners),
         Val(Degree))
     return (
         neighbors,
         sites,
         owners,
+        something(@inbounds getfield(reads, 4 + Offset)[1].value),
         something(@inbounds getfield(reads, 5 + Offset)[1].value),
         something(@inbounds getfield(reads, 6 + Offset)[1].value),
         something(@inbounds getfield(reads, 7 + Offset)[1].value),
-        something(@inbounds getfield(reads, 8 + Offset)[1].value),
     )
 end
 
@@ -1327,7 +1309,7 @@ end
     contact_neighbors, contact_sites, contact_owners, contact_kinds,
         reverse_contact_sites, reverse_contact_owners, reverse_contact_kinds =
         _checkerboard_scientific_contact(
-        reads, Val(Degree),
+        reads, plan.contact_topology, target, plan.contact_offsets, Val(Degree),
         _checkerboard_read_offset(offsets, Val(:contact))
     )
     tracker_values = _checkerboard_scientific_tracker_values(
@@ -1583,9 +1565,6 @@ function _checkerboard_scientific_declaration(
             topology.source_space, NTuple{contact_degree,UInt8})
         fixed_owners = LocalMath.Field(
             topology.source_space, NTuple{contact_degree,Int32})
-        contact_endpoints = LocalMath.Field(
-            topology.source_space,
-            NTuple{contact_degree * N,UInt64})
         geometry_stage = LocalMath.Stage(
             topology.source_space,
             (target = LocalMath.Access(
@@ -1599,8 +1578,6 @@ function _checkerboard_scientific_declaration(
                     geometry_categories, :geometry_categories),
                 _checkerboard_scratch_publication(
                     fixed_owners, :fixed_owners),
-                _checkerboard_scratch_publication(
-                    contact_endpoints, :endpoints),
             ),
             LocalMath.Evaluator(_CheckerboardContactGeometryEvaluator(
                 contact_topology, contact_offsets
@@ -1737,11 +1714,10 @@ function _checkerboard_scientific_declaration(
             reverse_owners = reverse_contact_owners,
             reverse_kinds = reverse_contact_kinds,
             categories = contact_categories,
-            endpoints = contact_endpoints,
             kind_selection,
             geometry_fields = (
                 contact_routes, reverse_contact_routes,
-                geometry_categories, fixed_owners, contact_endpoints,
+                geometry_categories, fixed_owners,
                 contact_kind_routes, reverse_contact_kind_routes,
             ),
             law = LocalMath.sequence(
@@ -1834,9 +1810,6 @@ function _checkerboard_scientific_declaration(
             contact_categories = LocalMath.Access(
                 contact.categories, topology.identity; required = true
             ),
-            contact_endpoints = LocalMath.Access(
-                contact.endpoints, topology.identity; required = true
-            ),
             contact_sites = LocalMath.Access(
                 contact.sites, topology.identity; required = true
             ),
@@ -1916,6 +1889,8 @@ function _checkerboard_scientific_declaration(
         _trajectory_key(seed, replica, repeat),
         state_handles,
         contact_ranges,
+        contact_degree == 0 ? nothing : cartesian_contact_topology(domain),
+        contact_offsets,
         tracker_descriptors,
         bounded_tracker_descriptors,
         moment_descriptor,
