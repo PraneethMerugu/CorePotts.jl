@@ -15,6 +15,7 @@ StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
 
 [compat]
 Adapt = "4.7"
+AllocCheck = "0.2"
 Atomix = "1.1"
 Aqua = "0.8"
 ExplicitImports = "1"
@@ -38,6 +39,7 @@ Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 CorePottsMetalExt = "Metal"
 
 [extras]
+AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 ParallelTestRunner = "d3525ed8-44d0-4b2c-a655-542cee43accc"
@@ -46,4 +48,4 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "ExplicitImports", "ParallelTestRunner", "Statistics", "TOML", "Test"]
+test = ["AllocCheck", "Aqua", "ExplicitImports", "ParallelTestRunner", "Statistics", "TOML", "Test"]

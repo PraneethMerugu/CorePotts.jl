@@ -9,6 +9,8 @@ function cell_stage_lifecycle_runtime(
         initial_generations = ones(UInt32, length(initial_kinds)),
         ownership = nothing,
         descriptor_factory = cell_stage_descriptor,
+        tracker_plan = nothing,
+        domain_resources = CorePotts.HamiltonianDomainResources(0, 0),
     )
     schema = CorePotts.StateBlockSchema(
         CorePotts.QualifiedResourceIdentity((), :cell_lifecycle_signal), v"1.0.0", :cell,
@@ -26,17 +28,22 @@ function cell_stage_lifecycle_runtime(
     descriptor_plan = CorePotts.DescriptorExecutionPlan(
         (CorePotts.ProposalDescriptorGroup([reject], (), (), :unsplit),), layout,
         CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]), (), Any[:remove_cell, :create_cell, :before_cell, :after_cell],
-        1, "cell-lifecycle-descriptors", CorePotts.HamiltonianDomainResources(0, 0),
+        1, "cell-lifecycle-descriptors", domain_resources,
     )
     before = descriptor_factory(handle, handle, 1; increment = 1.0f0, source_handle = 3)
     after = descriptor_factory(handle, handle, 2; increment = 1.0f0, source_handle = 4)
     stages = CorePotts.StageExecutionPlan((), (CorePotts.StageDescriptorGroup([before]),), (CorePotts.StageDescriptorGroup([after]),), 0, 0, "cell-lifecycle-boundaries")
     lifecycle = cell_stage_lifecycle_plan(handle; action = birth_action, effect = second_effect, cell_capacity)
     offsets = Int8[1 -1 0 0; 0 0 1 -1]
-    checkerboard = engine isa CorePotts.CheckerboardProgramEngine ? CorePotts.CheckerboardPlan((6, 6), (true, true), offsets) : CorePotts.NoCheckerboardPlan()
+    domain = CorePotts._standard_cartesian_ownership_domain(
+        (6, 6), (true, true), 3, 1, Bool[true, false, false]
+    )
+    checkerboard = engine isa CorePotts.CheckerboardProgramEngine ? CorePotts.CheckerboardPlan(domain, offsets) : CorePotts.NoCheckerboardPlan()
+    tracker_plan === nothing && (tracker_plan = CorePotts.TrackerExecutionPlan(
+        (CorePotts.OwnershipCountTracker(),), "cell-lifecycle-count"))
     program = CorePotts.CompiledPottsProgram(
-        (6, 6), (true, true), offsets, 3, 1, CorePotts.CompiledScalar(3.0f0), 1,
-        Float32[], (), CorePotts.TrackerExecutionPlan((CorePotts.OwnershipCountTracker(),), "cell-lifecycle-count"),
+        domain, offsets, 3, CorePotts.CompiledScalar(3.0f0), 1,
+        Float32[], (), tracker_plan,
         descriptor_plan, stages, engine, CorePotts.CPUProgramBackend(), "cell-stage-lifecycle";
         lifecycle_plan = lifecycle, checkerboard_plan = checkerboard,
     )

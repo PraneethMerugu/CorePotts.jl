@@ -289,7 +289,7 @@ function _physical_descriptor(index, request)
         request.priority,
         CorePotts.FilterLifecycleInadmissible,
         Int16(2),
-        Int16(1),
+        Int32(0),
         CorePotts.NoLifecyclePlacement,
         Int32(0),
         Int32(1),

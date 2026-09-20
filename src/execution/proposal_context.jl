@@ -6,9 +6,14 @@
         offsets::AbstractMatrix{Int8},
         direction::Int,
     ) where {N}
-    return relation_neighbor_index(
-        program.shape, program.periodic, index, offsets, direction
-    )
+    offset = ntuple(N) do axis
+        @inbounds offsets[axis, direction]
+    end
+    site = cartesian_lattice_neighbor_site(
+        cartesian_face_topology(program.domain), index, offset)
+    iszero(site) && return nothing
+    @inbounds program.domain.mutable_mask[site] || return nothing
+    return CartesianIndices(program.domain.shape)[Int(site)]
 end
 
 @inline _owner_kind(runtime, owner::Int32) =
@@ -76,6 +81,7 @@ function _cell_center(
         runtime.program.tracker_plan,
         runtime.trackers,
         runtime.ownership,
+        runtime.program.domain,
         cell,
         replaced_site,
         replacement_owner,
@@ -98,6 +104,7 @@ end
         plan,
         trackers,
         ownership,
+        domain,
         cell::Int32,
         replaced_site,
         replacement_owner::Int32,
@@ -105,7 +112,7 @@ end
     moments = tracker_values(plan, trackers, Val(:cell_moments))
     count = Int(tracker_value(plan, trackers, Val(:cell_volume), cell))
     old_owner = replaced_site === nothing ? Int32(-1) :
-                @inbounds(ownership[replaced_site])
+                owner_at(domain, ownership, replaced_site)
     changed = replaced_site !== nothing && old_owner != replacement_owner
     changed && cell == old_owner && (count -= 1)
     changed && cell == replacement_owner && (count += 1)
@@ -125,6 +132,7 @@ function _cell_shape_statistics(
         runtime.program.tracker_plan,
         runtime.trackers,
         runtime.ownership,
+        runtime.program.domain,
         cell,
         replaced_site,
         replacement_owner,
@@ -254,7 +262,9 @@ function _commit_copy!(
         new_owner::Int32,
         context,
     ) where {T, N}
-    source = tracker_source_view(runtime.program, runtime.ownership)
+    source = tracker_source_view(runtime.program, runtime.ownership;
+        cell_generations = runtime.cell_generations,
+        parameters = runtime.parameters, descriptor_state = runtime.descriptor_state)
     commit_tracker_updates!(
         runtime.trackers,
         runtime.program.tracker_plan,
@@ -262,6 +272,7 @@ function _commit_copy!(
         target,
         old_owner,
         new_owner,
+        _tracker_source_entry_delta,
     )
     @inbounds runtime.ownership[target] = new_owner
     old_owner == new_owner || _clear_ownership_changed_state!(
@@ -270,6 +281,12 @@ function _commit_copy!(
         target,
     )
     _apply_accepted_copy_stage!(runtime, context)
+    # Accepted RHS values were evaluated against entry state. Derived sums
+    # consume the completed clear/assignment result within the unpublished MCS.
+    _finish_tracker_source_change!(runtime.program.tracker_plan.descriptors,
+        runtime.trackers.values, source, target, old_owner, new_owner, runtime.cell_kinds
+    )
+    _rebuild_reconstruction_trackers!(runtime.program.tracker_plan, runtime.trackers, source, runtime.cell_kinds)
     return nothing
 end
 
@@ -361,14 +378,16 @@ end
         end
     end
     iszero(column) && return typemin(Int32)
-    neighbor = _neighbor_index(
-        context.runtime.program,
+    neighbor = realize_cartesian_neighbor(
+        context.runtime.program.domain,
+        context.runtime.ownership,
         context.target,
         resources.contact_offsets,
         Int(column),
+        OwnerRelationAccess,
     )
-    neighbor === nothing && return Int32(0)
-    return @inbounds context.runtime.ownership[neighbor]
+    neighbor.category === AbsentCartesianNeighbor && return Int32(0)
+    return neighbor.owner
 end
 
 @inline function _compiled_context_value(
@@ -491,8 +510,11 @@ end
                 Int(start + direction - Int32(1)),
             )
             present = neighbor !== nothing
-            owner = present ? @inbounds(context.runtime.ownership[neighbor]) :
-                Int32(0)
+            owner = present ? owner_at(
+                context.runtime.program.domain,
+                context.runtime.ownership,
+                neighbor,
+            ) : Int32(0)
             value = owner > 0 ? @inbounds(values[Int(owner)]) : zero(eltype(values))
             (; present = present && owner > 0, value)
         end

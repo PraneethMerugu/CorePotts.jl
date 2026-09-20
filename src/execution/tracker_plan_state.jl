@@ -1,10 +1,78 @@
+# Keep the site-expression evaluator as one compiler unit. Ownership changes
+# consume it during validation, application, and completed-source publication;
+# duplicating the expression tree into each device caller overwhelms LLVM's
+# late inliner for otherwise small tracker programs.
+Base.@noinline function _site_tracker_contribution(descriptor::_SiteExpressionTracker, source, site)
+    T = _site_tracker_value_type(descriptor)
+    # Source validation admits only parameters, pure operations, and state reads
+    # bound to this lattice site. Evaluate those reads from their authoritative
+    # source directly; dependency discovery is a cold compiler responsibility.
+    context = _SiteStageEvaluationContext(source, site, nothing)
+    value = convert(T, _compiled_evaluate_expression(descriptor.expression, context))
+    _state_value_isfinite(value) || throw(ArgumentError(
+            "site expression tracker $(descriptor.quantity) produced a nonfinite contribution"
+    ))
+    return value
+end
+
+tracker_rebuild(descriptor::SiteMinimumTracker, source::TrackerSourceView, cell_kinds) =
+    _execute_site_tracker_rebuild(descriptor, source, cell_kinds)
+
+function tracker_recompute(descriptor::SiteMinimumTracker, source::TrackerSourceView, cell_kinds)
+    # Independent owner-major oracle, without production routing or reduction.
+    return map(eachindex(cell_kinds)) do owner
+        value = descriptor.empty
+        present = false
+        for site in CartesianIndices(source.ownership)
+            source.ownership[site] == owner || continue
+            contribution = _site_tracker_contribution(descriptor, source, site)
+            value = present ? min(value, contribution) : contribution
+            present = true
+        end
+        value
+    end
+end
+
+@inline _source_dependent_tracker_ownership_delta(::SiteMinimumTracker, source::TrackerSourceView, target, old_owner::Int32, new_owner::Int32) =
+    throw(ArgumentError("site minimum hypothetical ownership reads require a bounded proposal reconstruction law and are not admitted"))
+
+function tracker_rebuild(descriptor::SiteSumTracker{T}, source::TrackerSourceView, cell_kinds) where {T}
+    return _execute_site_tracker_rebuild(descriptor, source, cell_kinds)
+end
+
+function tracker_recompute(descriptor::SiteSumTracker{T}, source::TrackerSourceView, cell_kinds) where {T}
+    # The independent owner-major traversal shares only expression semantics,
+    # not the incremental ownership update or its recipient routing.
+    return map(eachindex(cell_kinds)) do owner
+        total = zero(T)
+        for site in CartesianIndices(source.ownership)
+            source.ownership[site] == owner || continue
+            total = _checked_tracker_add(total, _site_tracker_contribution(descriptor, source, site))
+        end
+        total
+    end
+end
+
+@inline _source_dependent_tracker_ownership_delta(descriptor::SiteSumTracker, source::TrackerSourceView,
+    target, old_owner::Int32, new_owner::Int32
+) = OwnerValueDelta(_site_tracker_contribution(descriptor, source, target))
+
+@inline _tracker_source_entry_delta(descriptor, source, target, old_owner, new_owner) =
+    _source_dependent_tracker_ownership_delta(descriptor, source, target, old_owner, new_owner)
+@inline function _tracker_source_entry_delta(descriptor::SiteSumTracker{T}, source,
+        target, old_owner, new_owner) where {T}
+    amount = old_owner > 0 ? _site_tracker_contribution(descriptor, source, target) : zero(T)
+    return OldNewOwnerValueDelta(-amount, zero(T))
+end
+
 function tracker_rebuild(
         ::OwnershipCountTracker,
         source::TrackerSourceView,
         cell_kinds,
     )
     values = zeros(Int32, length(cell_kinds))
-    for owner in source.ownership
+    for site in source.domain.mutable_sites
+        owner = owner_at(source.domain, source.ownership, site)
         owner > 0 && (values[Int(owner)] += Int32(1))
     end
     return values
@@ -12,7 +80,7 @@ end
 
 @inline function _surface_neighbor(
         descriptor::CellSurfaceTracker,
-        source::TrackerSourceView,
+        source::AbstractTrackerCommitSource,
         site,
         direction::Int,
     )
@@ -20,24 +88,31 @@ end
         source.domain_resources, descriptor.relation_handle
     )
     1 <= direction <= count || throw(BoundsError(1:count, direction))
-    return relation_neighbor_index(
-        source.shape,
-        source.periodic,
+    return realize_cartesian_neighbor(
+        source.domain,
+        source.ownership,
         site,
         source.domain_resources.contact_offsets,
         start + direction - 1,
+        OwnerRelationAccess,
     )
 end
 
+@inline _cartesian_neighbor_duplicate_key(neighbor::CartesianNeighbor) = (
+    UInt8(neighbor.category), neighbor.endpoint
+)
+
 @inline function _surface_neighbor_is_duplicate(
         descriptor::CellSurfaceTracker,
-        source::TrackerSourceView,
+        source::AbstractTrackerCommitSource,
         site,
         neighbor,
         direction::Int,
     )
     for prior in 1:(direction - 1)
-        _surface_neighbor(descriptor, source, site, prior) == neighbor &&
+        _cartesian_neighbor_duplicate_key(
+            _surface_neighbor(descriptor, source, site, prior)
+        ) == _cartesian_neighbor_duplicate_key(neighbor) &&
             return true
     end
     return false
@@ -50,18 +125,19 @@ function tracker_rebuild(
     )
     values = zeros(Int32, length(cell_kinds))
     indices = CartesianIndices(source.ownership)
-    for linear_index in eachindex(source.ownership)
-        owner = @inbounds source.ownership[linear_index]
+    for linear_index in source.domain.mutable_sites
+        owner = owner_at(source.domain, source.ownership, linear_index)
         owner > 0 || continue
         site = indices[linear_index]
         for direction in 1:Int(descriptor.maximum_neighbors)
             neighbor = _surface_neighbor(descriptor, source, site, direction)
-            neighbor === nothing && continue
-            neighbor == site && continue
+            neighbor.category === AbsentCartesianNeighbor && continue
+            neighbor.category === MutableCartesianNeighbor &&
+                neighbor.site == linear_index && continue
             _surface_neighbor_is_duplicate(
                 descriptor, source, site, neighbor, direction
             ) && continue
-            @inbounds(source.ownership[neighbor]) == owner && continue
+            neighbor.owner == owner && continue
             @inbounds values[Int(owner)] += Int32(1)
         end
     end
@@ -79,8 +155,10 @@ function tracker_rebuild(
     ))
     first = zeros(T, N, length(cell_kinds))
     second = zeros(T, N * N, length(cell_kinds))
-    for site in CartesianIndices(ownership)
-        owner = @inbounds ownership[site]
+    indices = CartesianIndices(ownership)
+    for linear in source.domain.mutable_sites
+        site = indices[Int(linear)]
+        owner = owner_at(source.domain, ownership, linear)
         owner > 0 || continue
         coordinates = ntuple(
             dimension -> T(site[dimension]) - T(0.5), N
@@ -104,8 +182,8 @@ function tracker_recompute(
     )
     ownership = source.ownership
     expected = fill(Int32(0), length(cell_kinds))
-    for linear_index in eachindex(ownership)
-        owner = @inbounds ownership[linear_index]
+    for linear_index in source.domain.mutable_sites
+        owner = owner_at(source.domain, ownership, linear_index)
         owner > 0 || continue
         expected[Int(owner)] += Int32(1)
     end
@@ -125,36 +203,42 @@ function tracker_recompute(
     count == Int(descriptor.maximum_neighbors) || throw(ArgumentError(
         "surface tracker relation degree differs from its compiled bound"
     ))
-    for site in CartesianIndices(source.ownership)
-        owner = @inbounds source.ownership[site]
+    indices = CartesianIndices(source.ownership)
+    for linear in source.domain.mutable_sites
+        site = indices[Int(linear)]
+        owner = owner_at(source.domain, source.ownership, linear)
         owner > 0 || continue
         boundary = Int32(0)
         for direction in 1:count
-            neighbor = relation_neighbor_index(
-                source.shape,
-                source.periodic,
+            neighbor = realize_cartesian_neighbor(
+                source.domain,
+                source.ownership,
                 site,
                 source.domain_resources.contact_offsets,
                 start + direction - 1,
+                OwnerRelationAccess,
             )
-            neighbor === nothing && continue
-            neighbor == site && continue
+            neighbor.category === AbsentCartesianNeighbor && continue
+            neighbor.category === MutableCartesianNeighbor &&
+                neighbor.site == linear && continue
             duplicate = false
             for prior in 1:(direction - 1)
-                prior_neighbor = relation_neighbor_index(
-                    source.shape,
-                    source.periodic,
+                prior_neighbor = realize_cartesian_neighbor(
+                    source.domain,
+                    source.ownership,
                     site,
                     source.domain_resources.contact_offsets,
                     start + prior - 1,
+                    OwnerRelationAccess,
                 )
-                if prior_neighbor == neighbor
+                if _cartesian_neighbor_duplicate_key(prior_neighbor) ==
+                        _cartesian_neighbor_duplicate_key(neighbor)
                     duplicate = true
                     break
                 end
             end
             duplicate && continue
-            boundary += Int32(@inbounds(source.ownership[neighbor]) != owner)
+            boundary += Int32(neighbor.owner != owner)
         end
         @inbounds expected[Int(owner)] += boundary
     end
@@ -173,8 +257,8 @@ function tracker_recompute(
     expected_first = fill(zero(T), N, length(cell_kinds))
     expected_second = fill(zero(T), N * N, length(cell_kinds))
     indices = CartesianIndices(ownership)
-    for linear_index in eachindex(ownership)
-        owner = @inbounds ownership[linear_index]
+    for linear_index in source.domain.mutable_sites
+        owner = owner_at(source.domain, ownership, linear_index)
         owner > 0 || continue
         site = indices[linear_index]
         coordinates = map(dimension -> T(site[dimension]) - T(0.5), 1:N)
@@ -195,7 +279,7 @@ end
     target,
     old_owner::Int32,
     new_owner::Int32,
-) = OwnerScalarDelta(Int32(1))
+) = OwnerValueDelta(Int32(1))
 
 @inline function tracker_ownership_delta(
         ::CellMomentsTracker{N, T},
@@ -217,33 +301,37 @@ end
 
 @inline function _source_dependent_tracker_ownership_delta(
         descriptor::CellSurfaceTracker,
-        source::TrackerSourceView,
+        source::AbstractTrackerCommitSource,
         target,
         old_owner::Int32,
         new_owner::Int32,
     )
-    old_owner == new_owner && return OldNewOwnerScalarDelta(Int32(0), Int32(0))
+    old_owner == new_owner && return OldNewOwnerValueDelta(Int32(0), Int32(0))
     old_amount = Int32(0)
     new_amount = Int32(0)
+    target_linear = _cartesian_linear_site(
+        source.domain.shape, Tuple(target)
+    )
     for direction in 1:Int(descriptor.maximum_neighbors)
         neighbor = _surface_neighbor(descriptor, source, target, direction)
-        neighbor === nothing && continue
-        neighbor == target && continue
+        neighbor.category === AbsentCartesianNeighbor && continue
+        neighbor.category === MutableCartesianNeighbor &&
+            neighbor.site == target_linear && continue
         _surface_neighbor_is_duplicate(
             descriptor, source, target, neighbor, direction
         ) && continue
-        neighbor_owner = @inbounds source.ownership[neighbor]
+        neighbor_owner = neighbor.owner
         old_owner > 0 && (old_amount += neighbor_owner == old_owner ?
             Int32(1) : Int32(-1))
         new_owner > 0 && (new_amount += neighbor_owner == new_owner ?
             Int32(-1) : Int32(1))
     end
-    return OldNewOwnerScalarDelta(old_amount, new_amount)
+    return OldNewOwnerValueDelta(old_amount, new_amount)
 end
 
 @inline _source_dependent_tracker_ownership_delta(
     descriptor::AbstractTrackerDescriptor,
-    source::TrackerSourceView,
+    source::AbstractTrackerCommitSource,
     target,
     old_owner::Int32,
     new_owner::Int32,
@@ -254,6 +342,15 @@ function _validate_tracker_state(
     ) where {T}
     values isa AbstractVector{T} && length(values) == cell_count || throw(
         ArgumentError("tracker rebuild violates its dense scalar storage contract")
+    )
+    return values
+end
+
+function _validate_tracker_state(
+        ::DenseOwnerValueStorage{T}, values, cell_count
+    ) where {T}
+    values isa AbstractVector{T} && length(values) == cell_count || throw(
+        ArgumentError("tracker rebuild violates its dense value storage contract")
     )
     return values
 end
@@ -280,10 +377,12 @@ function _validate_tracker_state(
     return state
 end
 
+
+
 @inline function _apply_tracker_delta!(
         values::AbstractVector{T},
-        ::DenseOwnerScalarStorage{T},
-        delta::OwnerScalarDelta{T},
+        ::Union{DenseOwnerScalarStorage{T}, DenseOwnerValueStorage{T}},
+        delta::OwnerValueDelta{T},
         old_owner::Int32,
         new_owner::Int32,
     ) where {T}
@@ -295,8 +394,8 @@ end
 
 @inline function _apply_tracker_delta!(
         values::AbstractVector{T},
-        ::DenseOwnerScalarStorage{T},
-        delta::OldNewOwnerScalarDelta{T},
+        ::Union{DenseOwnerScalarStorage{T}, DenseOwnerValueStorage{T}},
+        delta::OldNewOwnerValueDelta{T},
         old_owner::Int32,
         new_owner::Int32,
     ) where {T}
@@ -332,9 +431,11 @@ end
 end
 
 function initialize_tracker_state(
-        plan::AbstractTrackerPlan, ownership, cell_kinds, program
+        plan::AbstractTrackerPlan, ownership, cell_kinds, program;
+        cell_generations = UInt32[], parameters = (), descriptor_state = nothing,
     )
-    source = tracker_source_view(program, ownership)
+    source = tracker_source_view(
+        program, ownership; cell_generations, parameters, descriptor_state)
     return TrackerState(map(
         descriptor -> begin
             value = tracker_rebuild(descriptor, source, cell_kinds)
@@ -422,12 +523,14 @@ function reconstruct_tracker_checkpoint(
         checkpoint::TrackerCheckpointState,
         ownership,
         cell_kinds,
-        program,
+        program;
+        cell_generations = UInt32[], parameters = (), descriptor_state = nothing,
     )
     length(plan.descriptors) == length(checkpoint.values) || throw(
         ArgumentError("tracker checkpoint and plan are misaligned")
     )
-    source = tracker_source_view(program, ownership)
+    source = tracker_source_view(
+        program, ownership; cell_generations, parameters, descriptor_state)
     return TrackerState(map(
         (descriptor, value) -> _reconstruct_tracker_checkpoint(
             descriptor,

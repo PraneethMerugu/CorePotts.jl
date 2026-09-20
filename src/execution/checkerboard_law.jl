@@ -34,7 +34,7 @@ function _checkerboard_color_declaration(
         accepted, relationships, accepted.relationship_bank_fields,
         terminal_gate)
     tracker_groups = _checkerboard_tracker_groups(
-        accepted, tracker_plan, tracker_state, terminal_gate,
+        merge(accepted, (; ownership_scratch, state_scratch, history_clear_groups)), tracker_plan, tracker_state, terminal_gate,
         owner_capacity)
 
     gate_identity = LocalMath.IdentityRelation(gate_space)
@@ -288,9 +288,9 @@ function _checkerboard_color_declaration(
         LocalMath.LocalLaw(gate_stage(
             terminal_gate, :checkerboard_selection_terminal_gate)),
         relationship_laws...,
-        tracker_laws...,
         state_initialization_laws...,
         state_laws...,
+        tracker_laws...,
         report_initialization_law,
     )
     law = LocalMath.sequence(
@@ -372,6 +372,10 @@ function _checkerboard_parameter_binding(
 end
 
 _checkerboard_storage_zero(::Type{T}) where {T} = _state_value_zero(T)
+_checkerboard_storage_zero(::Type{CartesianNeighbor{N}}) where {N} =
+    CartesianNeighbor(
+        AbsentCartesianNeighbor, Int32(0), Int32(0), Int32(0),
+        ntuple(_ -> Int64(0), N))
 @generated function _checkerboard_storage_zero(::Type{T}) where {T<:Tuple}
     types = fieldtypes(T)
     return Expr(:tuple, (
@@ -381,9 +385,20 @@ end
 _checkerboard_storage_zero(field::LocalMath.Field) =
     _checkerboard_storage_zero(eltype(field))
 
-_checkerboard_contact_bindings(::Nothing) = ()
-function _checkerboard_contact_bindings(contact)
+function _checkerboard_mutable_mask_projection(state)
+    projection = similar(
+        state.ownership, Bool, size(state.program.domain.mutable_mask))
+    copyto!(projection, state.program.domain.mutable_mask)
+    return projection
+end
+
+_checkerboard_contact_bindings(::Nothing, state) = ()
+function _checkerboard_contact_bindings(contact, state)
     return (
+        map(field -> field => LocalMath.Allocate(
+                _checkerboard_storage_zero(field)), contact.geometry_fields)...,
+        contact.categories => LocalMath.Allocate(
+            _checkerboard_storage_zero(contact.categories)),
         contact.owners => LocalMath.Allocate(_checkerboard_storage_zero(contact.owners)),
         contact.sites => LocalMath.Allocate(_checkerboard_storage_zero(contact.sites)),
         contact.kinds => LocalMath.Allocate(_checkerboard_storage_zero(contact.kinds)),
@@ -527,7 +542,7 @@ function _checkerboard_tracker_group_bindings(groups::Tuple, state)
     return (
         source_bindings...,
         scratch_bindings...,
-        group.validation_bindings...,
+        group.bindings...,
         _checkerboard_tracker_group_bindings(Base.tail(groups), state)...,
     )
 end
@@ -595,7 +610,9 @@ function _checkerboard_color_bindings(
         fill!(endpoints, Int32(1))
         (declaration.model_state_relation => endpoints,)
     end
-    contact_bindings = _checkerboard_contact_bindings(declaration.contact)
+    contact_bindings = _checkerboard_contact_bindings(
+        declaration.contact, state
+    )
     tracker_source_bindings = Tuple(pair for pair in
         _checkerboard_tracker_source_bindings(
             declaration.tracker_source_fields, declaration.tracker_keys, state)
@@ -624,8 +641,11 @@ function _checkerboard_color_bindings(
     state_scratch_bindings = map(declaration.state_scratch) do field
         field => LocalMath.Allocate(_checkerboard_storage_zero(field))
     end
-    generation_binding = isempty(declaration.relationship_groups) ? () :
-        (declaration.cell_generations => state.cell_generations,)
+    needs_generations = !isempty(declaration.relationship_groups) ||
+        any(group -> group isa _CheckerboardSpatialRelationQueryGroup,
+            declaration.tracker_groups)
+    generation_binding = needs_generations ?
+        (declaration.cell_generations => state.cell_generations,) : ()
     return (
         declaration.target_options => LocalMath.Allocate(schedule),
         declaration.target => LocalMath.Allocate(zero(Int32)),
@@ -633,13 +653,23 @@ function _checkerboard_color_bindings(
         declaration.semantic => workspace.semantic_ids,
         declaration.priority => workspace.priorities,
         declaration.ownership => state.ownership,
+        declaration.obstacle_owner_handles =>
+            state.program.domain.obstacle_owner_handles,
+        # LocalMath requires distinct semantic Fields to have distinct physical
+        # storage. This read-only execution projection remains derived from the
+        # domain's sole mutable-mask authority.
+        declaration.mutable_mask => _checkerboard_mutable_mask_projection(state),
+        declaration.owner_directory_kinds => OwnerDirectoryKindView(
+            state.cell_kinds, state.program.domain.default_owner,
+            state.program.domain.domain_owners),
         declaration.owners => owners,
-        declaration.actionable => LocalMath.Allocate(false),
-        declaration.cell_kinds => state.cell_kinds,
-        declaration.cell_volumes => volumes,
-        generation_binding...,
+        declaration.kind_routes => LocalMath.Allocate(
+            _checkerboard_storage_zero(declaration.kind_routes)),
         declaration.kinds => LocalMath.Allocate(
             _checkerboard_storage_zero(declaration.kinds)),
+        declaration.actionable => LocalMath.Allocate(false),
+        declaration.cell_volumes => volumes,
+        generation_binding...,
         declaration.volumes => LocalMath.Allocate(
             _checkerboard_storage_zero(declaration.volumes)),
         parameter_binding...,
@@ -706,7 +736,7 @@ function _prepare_checkerboard_color_laws(
     cell_capacity = length(state.cell_kinds)
     forbid, retire = state.program.extinction_policies
     scientific = _checkerboard_scientific_declaration(
-        checkerboard, proposal_offsets,
+        state.program.domain, checkerboard, proposal_offsets,
         state.seed, state.replica, state.repeat,
         descriptor_plan, stage_plan, state.program.tracker_plan,
         ownership_change_handles,
@@ -716,6 +746,10 @@ function _prepare_checkerboard_color_laws(
     accepted = _checkerboard_acceptance_declaration(
         scientific, state.program.temperature, forbid, retire,
         state.seed, state.replica, state.repeat)
+    accepted = merge(accepted, (
+        domain_resources = state.program.domain_resources,
+        periodic = cartesian_periodic_axes(state.program.domain),
+    ))
     declaration = _checkerboard_color_declaration(
         accepted, cell_capacity, state.relationships,
         state.program.tracker_plan, state.trackers)

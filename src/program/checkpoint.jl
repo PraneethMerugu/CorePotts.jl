@@ -46,6 +46,12 @@ end
 
 const _CORE_CHECKPOINT_CAPABILITY_SCHEMA = v"3.0.0"
 
+# Exact continuation is bound to the complete validated executable, not only
+# the compiler-supplied source fingerprint. The integrity fingerprint includes
+# the Cartesian ownership domain and every other compiled execution fact.
+@inline _checkpoint_program_identity(program::CompiledPottsProgram) =
+    program.integrity_fingerprint
+
 function _exact_execution_contract(key::ProgramCapabilityKey)
     lifecycle = key.lifecycle
     component_state = key.component_state
@@ -338,9 +344,10 @@ function program_checkpoint(runtime; extensions = NamedTuple())
         extensions,
         _checkpoint_execution_block(runtime),
     )
+    program_identity = _checkpoint_program_identity(runtime.program)
     checksum = _program_checkpoint_checksum(
         schema,
-        runtime.program.fingerprint,
+        program_identity,
         snapshot,
         parameters,
         runtime.seed,
@@ -356,7 +363,7 @@ function program_checkpoint(runtime; extensions = NamedTuple())
     )
     return ProgramCheckpoint(
         schema,
-        runtime.program.fingerprint,
+        program_identity,
         snapshot,
         parameters,
         runtime.seed,
@@ -408,7 +415,7 @@ function _validate_program_checkpoint(
     )
     checkpoint.schema == v"3.0.0" ||
         throw(ArgumentError("unsupported CorePotts checkpoint schema"))
-    checkpoint.program_fingerprint == program.fingerprint ||
+    checkpoint.program_fingerprint == _checkpoint_program_identity(program) ||
         throw(ArgumentError("checkpoint executable identity does not match"))
     expected = _program_checkpoint_checksum(
         checkpoint.schema,

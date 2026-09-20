@@ -48,7 +48,7 @@ end
         CartesianIndex(1, 1),
         Int32(1),
         Int32(2),
-    ) === CorePotts.OwnerScalarDelta(Int32(2))
+    ) === CorePotts.OwnerValueDelta(Int32(2))
     @test CorePotts.tracker_recompute(
         external_descriptor, probe_source, Int16[2]
     ) == CorePotts.tracker_rebuild(

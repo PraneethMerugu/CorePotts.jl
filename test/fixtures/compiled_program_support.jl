@@ -27,6 +27,8 @@ function test_program(
         lifecycle_plan = CorePotts.NoLifecycleExecutionPlan(),
         parameter_defaults = Float64[],
         scalar_type = Float64,
+        backend = CorePotts.CPUProgramBackend(),
+        domain = nothing,
     )
     T = scalar_type
     scalar(value) = CorePotts.CompiledScalar(T(value))
@@ -34,15 +36,17 @@ function test_program(
         1 -1 0 0
         0 0 1 -1
     ]
+    domain === nothing && (domain =
+        CorePotts._standard_cartesian_ownership_domain(
+            (6, 6), (true, true), 2, 1, Bool[true, false]
+        ))
     checkerboard_plan = engine isa CorePotts.CheckerboardProgramEngine ?
-        CorePotts.CheckerboardPlan((6, 6), (true, true), offsets) :
+        CorePotts.CheckerboardPlan(domain, offsets) :
         CorePotts.NoCheckerboardPlan()
     return CorePotts.CompiledPottsProgram(
-        (6, 6),
-        (true, true),
+        domain,
         offsets,
         2,
-        1,
         scalar(temperature),
         attempts_per_site,
         T.(parameter_defaults),
@@ -51,7 +55,7 @@ function test_program(
         descriptor_plan,
         stage_plan,
         engine,
-        CorePotts.CPUProgramBackend(),
+        backend,
         "core-program-v1-test";
         checkerboard_plan,
         ownership_change_handles,
@@ -84,12 +88,11 @@ function capability_test_program(
     checkerboard_plan = program.engine isa CorePotts.CheckerboardProgramEngine ?
                         program.checkerboard_plan : CorePotts.NoCheckerboardPlan()
     return CorePotts.CompiledPottsProgram(
-        program.shape, program.periodic, program.proposal_offsets,
-        program.kind_count, program.medium_kind, CorePotts.CompiledScalar(T(3)),
+        program.domain, program.proposal_offsets,
+        program.kind_count, CorePotts.CompiledScalar(T(3)),
         program.attempts_per_site, T[], relationships, tracker_plan,
         descriptor_plan, stage_plan, program.engine, backend,
         program.fingerprint * "-capability";
-        medium_kinds = program.medium_kinds,
         lifecycle_plan = program.lifecycle_plan,
         checkerboard_plan,
         ownership_change_handles = program.ownership_change_handles,
@@ -248,7 +251,7 @@ end
         target,
         old_owner::Int32,
         new_owner::Int32,
-    ) = CorePotts.CompilerSPI.OwnerScalarDelta(Int32(2))
+    ) = CorePotts.CompilerSPI.OwnerValueDelta(Int32(2))
 
 struct SingleSiteOwnershipProbe{A <: AbstractMatrix{Int32}} <:
        AbstractMatrix{Int32}

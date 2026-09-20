@@ -5,7 +5,7 @@ narrow MTK-free runtime boundary:
 
 - `ProgramInitialState`, `ProgramRuntime`, `ProgramSnapshot`;
 - `initialize_program`, `initialize_history!`, `advance_mcs!`, `program_snapshot`;
-- parameter updates, execution/capability reports, and failure reports;
+- `update_program_inputs!`, execution/capability reports, and failure reports;
 - `ProgramCheckpoint`, `program_checkpoint`, and
   `restore_program_checkpoint`; and
 - generation-safe lifecycle identities, events, receipts, and receipt access.
@@ -23,6 +23,37 @@ implementations, and an extension should not mix them merely for convenience:
 compiler extensions describe validated scientific/compiler meaning, while
 backend extensions provide execution, storage, and settlement behavior for an
 admitted device profile.
+
+### Cartesian ownership domains
+
+`CompilerSPI.CartesianOwnershipDomain` is the single runtime authority for a
+Cartesian program's shape, per-face boundary law, non-finite owners, fixed
+obstacles, and mutable recipient population. Positive owner codes address
+finite-cell slots, zero names the declared default domain owner, and negative
+codes are handles into the domain-owned non-finite owner directory. Stable
+owner equality is the pair `(category, identity)`, represented by `OwnerKey`;
+kind is scientific metadata and is not an identity substitute.
+
+Each face is explicitly periodic, closed, or fixed to one declared domain
+owner. An explicit Boolean `obstacle_mask` distinguishes a fixed obstacle owned
+by the default owner (handle zero) from a mutable site. `owner_at` applies this
+authority uniformly, while the domain's validated mutable-site set supplies the
+exact sequential and checkerboard recipient population and MCS budget. Fixed
+exterior and obstacle owners participate in owner/contact reads, but they are
+absent from proposal, lifecycle, relationship-endpoint, and write targets.
+
+Compiler clients lower these facts as runtime data, and Core validates and owns
+their realization. Device geometry receives compact face and owner-directory
+payloads; it does not specialize on the completed model's claim graph.
+Sequential and checkerboard execution share the same Cartesian realization and
+owner laws, including periodic alias canonicalization and multi-face
+incompatibility rejection.
+
+Exact-continuation checkpoints bind the complete validated executable identity,
+including face laws, domain-owner metadata, obstacle ownership and the resulting
+mutable-site set. A compiler-supplied source fingerprint is not sufficient by
+itself: restoring into a program with a different Cartesian domain rejects
+before any destination-domain realization can alter the saved logical state.
 
 ```@example core_boundary
 using CorePotts
@@ -68,6 +99,54 @@ foreign or out-of-range source handle is rejected with the descriptor,
 operation, role, and source-table context instead of becoming an anonymous
 integer provenance value.
 
+### Maintained spatial-relation queries
+
+`HamiltonianDomainResources` owns both the finite relation offsets and one
+nonnegative declared measure per lane. `relation_offsets`, `relation_measures`,
+and `relation_measure` expose host-owned compiler views without making those
+tables a second runtime authority.
+
+Compiler extensions declare a `SpatialRelationQueryTracker` under a
+`QualifiedTrackerKey(Val(:spatial_relation_query), relation_handle)`. CorePotts
+initializes and reconstructs its publication
+from the runtime's authoritative ownership and generation tables, and refreshes
+it after accepted ownership changes. Both engines execute one two-stage
+LocalMath path: materialize generation-qualified site identities, then perform
+failure-atomic exact-replacement keyed reductions for pair incidences and
+directed boundary sites. Checkpoints reconstruct this derived state instead of
+persisting a second authority.
+
+The sole pair publication stores exact scalar records keyed by canonical
+generation-qualified owner pair and runtime lane identity. It therefore
+supports several structurally compatible metric tables without duplicating
+topology or generating a different query kernel for each metric. The current
+LocalMath affine-relation backend admits at most 32 lanes; that is an execution
+backend bound, not a semantic limit of spatial queries. A metric
+must preserve the authoritative relation's realized lane count and lane order;
+only its weights may differ. Directed `(owner, site, other owner)` records make
+boundary-site union exact when one site touches several matching owners.
+Repeated bonds remain repeated, reciprocal lanes must have equal measure, and
+periodic seams follow the compiled boundary axes.
+
+Current-snapshot qualified operations expose `contact_edge_count`,
+`contact_measure`, `boundary_site_count`, `neighbor_cell_count`,
+`neighbor_property_sum`, `neighbor_property_mean`, and
+`global_interface_measure`. Owner-relative queries take only the dynamic owner;
+their filter, metric, property handle, and empty-mean policy are cold-lowered in
+a `SpatialQueryRead`. The global query takes no dynamic operands and uses a
+`GlobalSpatialQueryRead`. Neighbor properties and published predicate masks are
+canonical cell-owned state, so neither an author expression graph nor a second
+query-result cache enters the execution boundary. Hypothetical proposal reads
+are intentionally outside this contract.
+
+Finite cells and the current medium-domain ownership encoding participate.
+Fixed exterior and obstacle identities require the Cartesian domain ownership
+contract and are rejected rather than being inferred from a negative owner.
+
+Potts owns author-facing query lowering and filters; CorePotts owns CPM identity,
+maintenance, and contextual projections; LocalMath remains the sole grouping and
+atomic-publication executor.
+
 ### Scheduled state and relationship publication
 
 History storage has one dense trailing retention axis over its declared source
@@ -94,6 +173,19 @@ iteration, and a history append records the value at its position in the
 boundary. Prepared relationship changes publish after those state operations.
 Sequential and checkerboard execution share this contract; checkerboard
 evaluation and publication use the existing LocalMath execution path.
+
+Source-dependent site sums refresh after the boundary's state and relationship
+publications, so simultaneous cell readers still observe the entry-state sum.
+An enabled assignment counts as a publication even when it writes the same
+value. A false condition does not; iterated assignments combine the actual
+publication results from every substep. History dependencies refer to the
+physical retained history block: changing its source alone does not refresh a
+lag sum until that history appends. An inactive boundary therefore preserves
+the cached floating-point value rather than silently replacing it with a
+freshly accumulated sum. Nonfinite derived results reject the unpublished MCS;
+checkpoint-based retry starts from the checkpoint saved before that failure,
+not by repairing the failed runtime.
+
 Lifecycle plan construction rejects state actions without the required participant:
 creation can initialize a new destination but cannot reset a source; removal,
 retirement, and transition can update their source but have no new destination.
@@ -228,6 +320,119 @@ named product by its declared ordinal without converting its value. Authoring
 compilers prove that the ordinal selects an existing field and retain the
 selected field's type, shape, and units. Field spellings and symbolic declaration
 types do not enter the execution callable or create separate operation schemas.
+
+## Publishing settled inputs
+
+`update_program_inputs!(runtime; parameters, descriptor_state)` publishes a
+single combined input transaction at a settled MCS boundary. Omit either
+keyword (or pass `nothing`) to preserve that input; omitting both is a no-op.
+A terminal-failed runtime cannot be repaired through this entrypoint.
+
+Pass parameters in the compiled program's parameter order and auxiliary state
+matching its declared layout. To edit state, start from an independently owned
+`program_snapshot(runtime)` and copy its `descriptor_state` with
+`copy_auxiliary_state`. Candidate buffers are copied, not retained: subsequent
+caller mutations do not change the published runtime.
+
+Both effective inputs and any input-dependent maintained quantities are
+validated together before publication. In particular, a mixed update is not
+evaluated with new parameters over the old state as an intermediate scientific
+boundary. Ordinary validation failure preserves the previous inputs and
+maintained values. This is not a rollback guarantee for arbitrary backend-copy
+failures, nor does it establish support for every maintained quantity or device.
+
+Source-dependent maintained quantities reuse the validated LocalMath plan
+owned by the runtime. Current candidate inputs are copied into plan-owned
+staging buffers, results are written to recipe-owned scratch storage, and the
+plan is prepared task-locally before execution. This keeps combined publication
+atomic and preserves the ordinary LocalMath path while avoiding revalidation
+and relowering of an unchanged tracker law on every update.
+
+CorePotts owns publication to the host mirror and both checkerboard execution
+banks. Downstream adapters must use this public entrypoint rather than mutate
+those buffers separately. Inspect the result with `program_snapshot`; use the
+checkpoint API for persistence. Exact continuation additionally requires the
+checkpoint's execution identity to match the declared program and environment.
+
+Backend adapters coordinating an unpublished MCS with another solver use
+`BackendSPI.stage_program_parameters!` and
+`BackendSPI.stage_program_descriptor_state!` on the existing
+`ProgramStepTransaction`, not the settled-input entrypoint. Stage both inputs
+before requesting `BackendSPI.program_step_snapshot` or prevalidating the
+transaction: each of those operations validates the effective combined inputs
+and maintained values. The returned snapshot owns its storage independently.
+An ordinary transaction with no staged input replacement does not rebuild
+maintained sums merely to normalize their floating-point accumulation.
+
+`SiteSumTracker(T, quantity, expression)` accepts a floating scalar or a
+floating `StaticArrays.SArray` value type `T`, including `SVector` and
+`SMatrix`. Optional absolute and relative
+tolerances use `T`'s scalar leaf type and are applied componentwise. They admit
+checkpoint validation differences; they never replace the persisted value
+with an independently recomputed one. Nonfinite contributions, deltas, or
+results reject the containing transaction. Scalar and fixed-value sums share
+the canonical LocalMath execution path on every supported backend.
+
+`SiteMinimumTracker(Float32, quantity, expression; maximum_sites, empty)`
+maintains a finite scalar minimum over each cell's sites. Both keywords are
+required: `maximum_sites` bounds the complete lattice traversal and `empty`
+is the finite `Float32` value for zero-area or inactive owners. Removal of a
+minimum, including a tied minimum, triggers reconstruction from authoritative
+ownership and the completed source values. Source publications and input
+replacement use that same bounded law; no subtraction or hidden argmin cache
+is used. Reconstruction is lattice-linear per accepted sequential copy or
+checkerboard subround, not a constant-cost update. All contributions must be
+finite, even when an invalid contribution would not win the minimum.
+Its private full-lattice reconstruction bound excludes arithmetic ownership
+deltas and declares reconstruction after completed source staging.
+Ordinary `SiteSumTracker` ownership updates retain their incremental contract.
+
+Lifecycle creation, division, removal, and retirement maintain site sums by
+subtracting each entry contribution and adding its completed ownership/source
+contribution. Minima instead reconstruct after all ownership changes and source
+clears, before cell-state policies run. A reconstruction failure or a later policy failure
+rolls back the entire MCS, including ownership, source values, and caches.
+When neither ownership nor referenced source values change, both engines retain
+the cached values bit-exactly, including incrementally rounded sums.
+Lifecycle preparation allocates temporary entry ownership and
+physical source-parent snapshots only for full-reconstruction trackers. These
+are execution scratch, not checkpointed scientific state. Sequential captures
+them before structural mutation only when requests are selected, then settles
+the same comparison/reconstruction law against the completed candidate.
+Each checkerboard lifecycle enqueue
+copies them unconditionally, including closed/no-effect cadence, then compares
+entry and completed values to gate reconstruction. Copy, comparison, and
+reconstruction have lattice-linear work and scratch cost (including all retained
+samples of referenced history parents); sum-only programs do not pay this cost.
+Queue inspection reports snapshot and reconstruction provider submissions separately.
+
+Each checkerboard MCS is atomic; a queued range is not an all-or-nothing
+transaction. If a later synchronous lifecycle submission fails, recovery drains
+the submitted receipt prefix and discards the incomplete candidate. A prior
+complete queued prefix remains unpublished until `settle_program!` is called.
+Settlement preserves its scientific values and counters but does not synthesize
+lifecycle events from scratch overwritten by the failed later request. Repair
+ordinary invalid inputs at that settled boundary before retrying. Single-step
+enqueue, advance, and staged calls retain their starting MCS on such failure.
+A failed provider drain cannot establish a retryable boundary.
+Settlement remains owned by the task that submitted the prepared receipts.
+A foreign-task settlement rejects without discarding pending receipts or
+recovering on that task; the owner can still settle the original queued work.
+Numerical receipt failures are recoverable only after all retained receipts
+have settled. Validation-error type alone does not establish this boundary.
+
+Published cell-stage reads use the qualified `cell_site_minimum` operation.
+Proposal/hypothetical minimum reads are rejected until a bounded hypothetical
+reconstruction law is provided. Checkpoints persist and verify the exact
+maintained value; restoration does not silently repair it. Scalar `Float32`
+is the admitted minimum value type; vector ordering is not inferred.
+
+Call `BackendSPI.prevalidate_program_step_transaction` for every participating
+token before coordinated publication. `BackendSPI.publish_program_step_transaction!`
+is only the publication half of that protocol, not a substitute for validation.
+`BackendSPI.abort_program_step!` discards the unpublished candidate and preserves
+the last published inputs. For a single token,
+`BackendSPI.commit_program_step!` performs prevalidation and publication together.
 
 ## Diagnosing a settled failure
 
