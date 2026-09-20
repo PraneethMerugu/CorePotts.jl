@@ -36,6 +36,7 @@
         program.tracker_plan,
         runtime.trackers,
         guarded,
+        program.domain,
         Int32(1),
         target,
         Int32(0),
@@ -126,8 +127,10 @@ end
     constraint_instances = typeof(constraint)[constraint]
     source_table = Any[:owned_source]
     domain_offsets = reshape(Int8[1, 0], 2, 1)
+    domain_measures = Float64[1.0]
     domain_resources = CorePotts.HamiltonianDomainResources(
         domain_offsets,
+        domain_measures,
         Int32[1],
         Int32[1],
         Int32[0],
@@ -205,12 +208,13 @@ end
     proposal_offsets = Int8[1 -1 0 0; 0 0 1 -1]
     parameter_defaults = Float64[2.0]
     authority_labels = Symbol[:reviewed]
+    domain = CorePotts._standard_cartesian_ownership_domain(
+        (6, 6), (true, true), 2, 1, Bool[true, false]
+    )
     program = CorePotts.CompiledPottsProgram(
-        (6, 6),
-        (true, true),
+        domain,
         proposal_offsets,
         2,
-        1,
         CorePotts.CompiledScalar(2.0, 1),
         1,
         parameter_defaults,
@@ -221,7 +225,6 @@ end
         CorePotts.SequentialProgramEngine(),
         CorePotts.CPUProgramBackend(),
         "owned-program-v1";
-        medium_kinds = BitVector((true, false)),
         lifecycle_plan,
         ownership_change_handles = (marker_handle,),
         mechanism_authority = (labels = authority_labels,),
@@ -236,6 +239,7 @@ end
     empty!(constraint_instances)
     empty!(source_table)
     fill!(domain_offsets, Int8(0))
+    fill!(domain_measures, 99.0)
     empty!(marker_layout.entries)
     empty!(stage_instances)
     fill!(lifecycle_forbid_extinction, true)
@@ -250,6 +254,7 @@ end
     @test program.descriptor_plan.source_table == Any[:owned_source]
     @test program.descriptor_plan.domain_resources.contact_offsets ==
           reshape(Int8[1, 0], 2, 1)
+    @test program.descriptor_plan.domain_resources.contact_measures == [1.0]
     @test length(program.descriptor_plan.state_layout.entries) == 1
     @test length(program.stage_plan.accepted_copy[1].instances) == 1
     @test program.lifecycle_plan.forbid_extinction == (false, false)
@@ -259,6 +264,10 @@ end
     tampered = deepcopy(program)
     tampered.parameter_defaults[1] = 7.0
     @test_throws ArgumentError CorePotts.program_execution_report(tampered)
+
+    tampered_measure = deepcopy(program)
+    tampered_measure.descriptor_plan.domain_resources.contact_measures[1] = 7.0
+    @test_throws ArgumentError CorePotts.program_execution_report(tampered_measure)
 
     reusable_layout = CorePotts.StateLayout([marker_schema])
     reusable_handle = only(reusable_layout.entries).handle
@@ -620,12 +629,13 @@ end
                 program.checkerboard_plan
             )
             @test plan_report.algorithm === :canonical_realized_greedy_v1
-            @test plan_report.shape == program.shape
-            @test plan_report.periodic == program.periodic
+            @test plan_report.shape == program.domain.shape
+            @test plan_report.domain_identity ==
+                CorePotts.cartesian_domain_identity(program.domain)
             @test plan_report.site_order == Tuple(
                 program.checkerboard_plan.sites
             )
-            @test plan_report.site_count == prod(program.shape)
+            @test plan_report.site_count == length(program.domain.mutable_sites)
             @test plan_report.color_count >= 2
             execution = CorePotts._inspect_checkerboard_execution(
                 first.engine_workspace)
@@ -642,14 +652,15 @@ end
         end
     end
 
+    odd_domain = CorePotts._standard_cartesian_ownership_domain(
+        (3, 3), (true, true), 2, 1, Bool[true, false]
+    )
     odd_periodic = CorePotts.CheckerboardPlan(
-        (3, 3),
-        (true, true),
+        odd_domain,
         Int8[1 -1 0 0; 0 0 1 -1],
     )
     @test_throws ArgumentError CorePotts.CheckerboardPlan(
-        odd_periodic.shape,
-        odd_periodic.periodic,
+        odd_domain,
         reverse(copy(odd_periodic.sites)),
         copy(odd_periodic.color_offsets),
         copy(odd_periodic.conflict_displacements),
@@ -667,8 +678,7 @@ end
     supplied_offsets = copy(odd_periodic.color_offsets)
     supplied_displacements = copy(odd_periodic.conflict_displacements)
     owned_plan = CorePotts.CheckerboardPlan(
-        odd_periodic.shape,
-        odd_periodic.periodic,
+        odd_domain,
         supplied_sites,
         supplied_offsets,
         supplied_displacements,
@@ -684,11 +694,9 @@ end
     checkerboard_program = test_program(CorePotts.CheckerboardProgramEngine())
     function replace_checkerboard_plan(program, plan)
         return CorePotts.CompiledPottsProgram(
-            program.shape,
-            program.periodic,
+            program.domain,
             program.proposal_offsets,
             program.kind_count,
-            program.medium_kind,
             program.temperature,
             program.attempts_per_site,
             program.parameter_defaults,
@@ -699,27 +707,30 @@ end
             program.engine,
             program.backend,
             program.fingerprint;
-            medium_kinds = program.medium_kinds,
             checkerboard_plan = plan,
         )
     end
     @test_throws ArgumentError replace_checkerboard_plan(
         checkerboard_program,
         CorePotts.CheckerboardPlan(
-            (1, 1), (true, true), Int8[1 -1 0 0; 0 0 1 -1]
+            CorePotts._standard_cartesian_ownership_domain(
+                (1, 1), (true, true), 2, 1, Bool[true, false]
+            ),
+            Int8[1 -1 0 0; 0 0 1 -1]
         ),
     )
     @test_throws ArgumentError replace_checkerboard_plan(
         checkerboard_program,
         CorePotts.CheckerboardPlan(
-            checkerboard_program.shape,
-            (false, true),
+            CorePotts._standard_cartesian_ownership_domain(
+                checkerboard_program.domain.shape, (false, true),
+                2, 1, Bool[true, false]
+            ),
             checkerboard_program.proposal_offsets,
         ),
     )
     supplied_plan = CorePotts.CheckerboardPlan(
-        checkerboard_program.shape,
-        checkerboard_program.periodic,
+        checkerboard_program.domain,
         checkerboard_program.proposal_offsets,
     )
     rebound_program = replace_checkerboard_plan(

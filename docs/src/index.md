@@ -27,18 +27,133 @@ lifecycle selection, rollback, and bank authorization. Lifecycle selection is
 therefore reported as a Core KernelAbstractions operation followed by a genuine
 LocalMath compacted-request publication, rather than as one LocalMath law.
 
-Staged native stepping uses `BackendSPI.stage_program_mcs!`, input staging,
-prevalidation, and commit/abort in `execution/sequential_program.jl`. Both
-checkerboard scientific banks own storage independently of the published host
-state. `execution/checkerboard_workspace.jl` constructs and adapts these banks;
-the copy schema in `execution/checkerboard_program_declaration.jl` carries
-scientific values and parameters between them. Commit publishes a settled
-snapshot; abort restores the execution position through the existing
-KernelAbstractions control kernel. `program_snapshot` exposes only settled
-state. Repeated staged publication and abort across both bank parities are
-defended by `test_compiled_program_execution.jl`; schema and lifecycle-bank
-ownership are covered by `test_lifecycle_receipts.jl`. Device guarantees require
-the corresponding actual-backend execution tests, not CPU tests alone.
+Lifecycle preparation selects the tracker entries whose declared update bound
+admits incremental old/new-owner maintenance and binds them into a compact
+accepted-update recipe. Full-lattice reconstruction remains with its existing
+post-structure LocalMath law. The owner-change kernel receives a narrow staged
+state view rather than the complete lifecycle workspace. Dense scalar recipe
+membership is value-level through its bounded capacity class, so adding an
+equivalent maintained quantity does not create a new kernel type solely because
+the member count changed. CPU and device execution retain the same tracker and
+transaction semantics.
+
+Accepted lifecycle ownership transfers consume a prepared recipe containing
+only lattice shape, the caller's prepared tracker plan, and ownership-state
+clear rules. A separate staged-state view carries only ownership, cell kinds,
+tracker values, descriptor state, and transaction status. Backend staging binds
+the admitted incremental tracker subset; host staging uses its authoritative
+tracker state. Both invoke the same transfer implementation, which no longer
+inspects a complete program or lifecycle plan to rediscover those decisions.
+
+The enclosing structural stage follows the same boundary: its recipe owns the
+value-level lifecycle descriptors and the ownership-transfer recipe, while its
+mutable view contains only selected-request indices, placement/partition data,
+cell generations, and the staged fields those effects can change. Create,
+remove, transition, retire, and divide therefore share one structural
+implementation without passing the complete program, lifecycle plan, or
+transaction workspace into the device-reachable boundary.
+
+Lifecycle relationship staging likewise receives a prepared descriptor/rule
+recipe, the ready selected-request sequence, staged cell kinds and relationship
+storage, transaction status, and the lifecycle cadence counters it reads. It
+does not carry selection allocations/source-position maps or the complete
+backend control merely to remove incident or newly incompatible relationships.
+Host and device staging retain the same relationship rules, mutation primitives,
+ordering, and failure semantics; backend action filtering is the physical
+bounded-loop contract rather than a second scientific rule implementation.
+
+`benchmark/compiler_scaling/lifecycle_runtime_boundaries.jl` records the exact
+owner-transfer, relationship-staging, and unchanged proposal-leaf signatures as
+machine-readable TOML. It classifies typed IR, reports aggregate payload size
+without double-counting shared storage, and traces each recipe/state field to
+its semantic owner. Its `typed_method_matches` field describes only the queried
+signature; specialization reuse across values, counts, or operation families is
+reported separately. Compiler-sensitive pull requests upload this longitudinal
+evidence without turning machine-dependent counts or timings into thresholds.
+
+`test_allocation_contracts.jl` checks the exact prepared host owner-change
+signature and an unchanged bound site-contribution leaf with AllocCheck, then
+executes separately constructed, warmed instances and requires zero observed
+heap bytes. Fixture construction, first compilation, checkpoint materialization,
+capacity changes, backend launch and transfers are different boundaries and are
+not covered by that zero-allocation guarantee. Device kernels remain qualified
+by their actual backend tests rather than inferred from the host check.
+`benchmark/prepared_update_contract.jl` uses the same fixture with Chairmarks,
+reports construction and first execution separately, and creates a fresh staged
+transaction for every warm owner-change sample. Its timing and allocation
+samples are review evidence, not machine-independent pass/fail thresholds.
+
+## Settled input publication
+
+The public `update_program_inputs!` entrypoint in
+`execution/program_settlement.jl` owns combined parameter and auxiliary-state
+publication. Auxiliary-state validation uses the storage owner; input-dependent
+tracker reconstruction uses `execution/tracker_plan_runtime.jl` and the
+LocalMath reduction in `execution/tracker_source_execution.jl`. Publication
+updates the host mirror and both execution banks only after scientific
+validation, without creating a separate downstream transaction authority.
+
+Initialization validates and plans each source-dependent tracker reduction
+once. The runtime retains that host-only semantic plan and stages current
+ownership, parameters, and declared state blocks into its inputs for settled
+updates, transaction prevalidation, and scheduled source publication. A typed
+recipe-owned scratch output isolates candidate execution from committed tracker
+storage. Each invocation still creates a task-local LocalMath preparation and
+follows the same reduction executor; cached plans therefore reduce repeated
+compiler work without adding a second scientific implementation or sharing
+task-owned prepared execution state.
+
+Per-owner maintained sums may store either a scalar or a floating
+`StaticArrays.SArray` value, including `SVector` and `SMatrix`.
+`SiteSumTracker` derives comparison tolerances
+from the value's floating-point leaf type, validates fixed values
+componentwise, and uses the same LocalMath reduction and transactional
+publication path for scalars, vectors, and matrices. `DenseOwnerValueStorage`
+and `OwnerValueDelta` describe this durable storage/update meaning; they do not
+introduce a second structured-value executor.
+
+`program_snapshot` exposes the resulting settled state. Ordinary behavior is
+covered by `test_program_input_publication.jl`, its shared
+`fixtures/program_input_publication_support.jl`, and
+`test_source_aware_trackers.jl`; the device entrypoint is
+`metal/corepotts_input_publication.jl`. Device and continuation guarantees
+require the corresponding tests to pass for the selected execution profile.
+
+Coordinated native stepping remains owned by `ProgramStepTransaction` in
+`execution/sequential_program.jl`. Explicitly staged inputs use the same tracker
+reconstruction owner during prevalidation; ordinary no-input transactions retain
+incrementally accumulated values. Candidate snapshot validation receives the
+effective pending parameters without publishing them. The owning regressions
+are in `test_program_step_inputs.jl`, alongside the existing transaction tests in
+`test_compiled_program_execution.jl`.
+
+Scheduled source maintenance follows `stage_runtime.jl` and
+`checkerboard_stage_compiler.jl` into the same source-sum reduction in
+`tracker_source_execution.jl`. The existing assignment scratch retains
+`StageEvaluation` values, including the emitted condition result. Prepared
+checkerboard publication laws reduce those actual results with Boolean OR,
+reset once per boundary, and refresh only dependent sums after all entry-state
+readers and state publications. History append laws supply their own actual
+cadence result; projected lag reads retain the physical history dependency.
+`test_scheduled_source_sums.jl` defends conditional and iterated writes, shared
+readers, inactive-history rounding, initialization, and failed-boundary
+checkpoint retry. `benchmark/scheduled_source_publication.jl` measures the
+public completed-MCS workflow, not an alternate private execution path.
+
+Checkerboard scientific state and parameter buffers belong to each execution
+bank, independently of the published host state. `execution/checkerboard_workspace.jl` constructs
+and adapts those buffers; the scientific copy schema in
+`execution/checkerboard_program_declaration.jl` carries their values when the
+active bank changes. Parameters do not have a separate copy executor. Staging
+can therefore change the candidate's coefficients without publishing host
+inputs; abort restores the execution position through the existing
+KernelAbstractions control kernel. Alternating commit/abort and no-input-step
+regressions live in `test_program_step_inputs.jl`, while
+`test_lifecycle_receipts.jl` exercises copy-schema validation, including empty
+storage. The independent transaction regression in
+`test_compiled_program_execution.jl` also exercises both bank parities.
+Device guarantees require the corresponding actual-backend execution tests,
+not CPU tests alone.
 
 `adapt_program_runtime` is a source-preserving ownership boundary, not an
 ownership transfer. Its public path copies mutable host science and proposal

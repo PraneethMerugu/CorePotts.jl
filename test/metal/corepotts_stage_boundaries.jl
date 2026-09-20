@@ -64,13 +64,15 @@ function _metal_geometry_program()
             CorePotts.CellMomentsTracker{2, Float32}(),
         ), "moment-geometry-trackers"
     )
+    domain = CorePotts._standard_cartesian_ownership_domain(
+        shape, (true, true), 2, 1, Bool[true, false]
+    )
     return CorePotts.CompiledPottsProgram(
-        shape, (true, true), offsets, 2, 1,
+        domain, offsets, 2,
         CorePotts.CompiledScalar(3.0f0), 1, Float32[], (), trackers, descriptors,
         CorePotts.StageExecutionPlan(), CorePotts.CheckerboardProgramEngine(),
         CorePotts.CPUProgramBackend(), "moment-geometry-program";
-        medium_kinds = Bool[true, false],
-        checkerboard_plan = CorePotts.CheckerboardPlan(shape, (true, true), zeros(Int8, 2, 0))
+        checkerboard_plan = CorePotts.CheckerboardPlan(domain, zeros(Int8, 2, 0))
     )
 end
 
@@ -207,6 +209,8 @@ end
         external_gate,
         layout,
         stage_plan,
+        nothing,
+        nothing,
         (UInt64(0), UInt64(0)),
         CorePotts._SCHEDULED_BEFORE_LIFECYCLE,
         Float32,

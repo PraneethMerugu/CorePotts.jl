@@ -68,22 +68,126 @@
     @test CorePotts.program_checkpoint(restored).checksum == checkpoint.checksum
 end
 
+
+@testset "mutable-domain recipients exclude fixed obstacles on both engines" begin
+    base = CorePotts._standard_cartesian_ownership_domain(
+        (6, 6), (true, true), 2, 1, Bool[true, false]
+    )
+    obstacles = zeros(Int32, 6, 6)
+    for site in CartesianIndices(obstacles)
+        isodd(sum(Tuple(site))) && (obstacles[site] = Int32(1))
+    end
+    domain = CorePotts.CartesianOwnershipDomain(
+        base.shape, base.default_owner, base.domain_owners;
+        face_kinds = base.face_kinds,
+        face_owner_handles = base.face_owner_handles,
+        obstacle_owner_handles = obstacles,
+    )
+    ownership = zeros(Int32, 6, 6)
+    ownership[2, 2] = 1
+    initial = CorePotts.ProgramInitialState(
+        ownership, Int16[2]; scalar_type = Float64
+    )
+
+    sequential_program = test_program(
+        CorePotts.SequentialProgramEngine(); domain
+    )
+    sequential = CorePotts.initialize_program(
+        sequential_program, initial, Float64[], UInt64(0xc10), UInt32(1)
+    )
+    for attempt in 1:128
+        address = CorePotts._program_address(
+            CorePotts.ProposalRecipientStream,
+            1,
+            CorePotts._CORE_RNG_OPERATIONS.proposal_recipient,
+            attempt,
+        )
+        draw = Int(CorePotts.bounded_uint(
+            CorePotts.Philox4x64x10V3(),
+            CorePotts._trajectory_key(
+                sequential.seed, sequential.replica, sequential.repeat
+            ),
+            address,
+            UInt32(length(domain.mutable_sites)),
+        )) + 1
+        @test CorePotts._sequential_recipient_site(sequential, attempt) ==
+            domain.mutable_sites[draw]
+        @test domain.mutable_mask[
+            CorePotts._sequential_recipient_site(sequential, attempt)
+        ] == 1
+    end
+
+    checkerboard_program = test_program(
+        CorePotts.CheckerboardProgramEngine(); domain
+    )
+    checkerboard = CorePotts.initialize_program(
+        checkerboard_program, initial, Float64[], UInt64(0xc10), UInt32(1)
+    )
+    for runtime in (sequential, checkerboard)
+        CorePotts.advance_mcs!(runtime)
+        @test runtime.accepted + runtime.rejected + runtime.null_attempts ==
+            length(domain.mutable_sites)
+        for site in eachindex(obstacles)
+            iszero(obstacles[site]) || @test runtime.ownership[site] == -1
+        end
+    end
+end
+
 @testset "all engines admit positive repeated attempt budgets" begin
     for engine in (
             CorePotts.SequentialProgramEngine(),
             CorePotts.CheckerboardProgramEngine(),
         )
-        program = test_program(engine; attempts_per_site = 2)
-        @test program.attempts_per_site == 2
-        runtime = CorePotts.initialize_program(
-            program, test_initial(), Float64[], UInt64(0xa77), UInt32(1)
-        )
-        CorePotts.advance_mcs!(runtime)
-        @test runtime.mcs == 1
+        for budget in (1, 2, 16)
+            program = test_program(engine; attempts_per_site = budget)
+            @test program.attempts_per_site == budget
+            runtime = CorePotts.initialize_program(
+                program, test_initial(), Float64[], UInt64(0xa77), UInt32(1)
+            )
+            mirror = CorePotts.initialize_program(
+                program, test_initial(), Float64[], UInt64(0xa77), UInt32(1)
+            )
+            CorePotts.advance_mcs!(runtime)
+            CorePotts.advance_mcs!(mirror)
+            @test runtime.mcs == 1
+            @test runtime.accepted + runtime.rejected + runtime.null_attempts ==
+                length(program.domain.mutable_sites) * budget
+            @test CorePotts.program_snapshot(runtime).ownership ==
+                CorePotts.program_snapshot(mirror).ownership
+            restored = CorePotts.restore_program_checkpoint(
+                program, CorePotts.program_checkpoint(runtime)
+            )
+            CorePotts.advance_mcs!(runtime)
+            CorePotts.advance_mcs!(restored)
+            @test CorePotts.program_snapshot(runtime).ownership ==
+                CorePotts.program_snapshot(restored).ownership
+            @test (runtime.accepted, runtime.rejected, runtime.null_attempts) ==
+                (restored.accepted, restored.rejected, restored.null_attempts)
+        end
     end
     @test_throws ArgumentError test_program(
         CorePotts.CheckerboardProgramEngine(); attempts_per_site = 0
     )
+    for engine in (
+            CorePotts.SequentialProgramEngine(),
+            CorePotts.CheckerboardProgramEngine(),
+        )
+        @test_throws ArgumentError test_program(
+            engine; attempts_per_site = typemax(Int32),
+        )
+        @test_throws ArgumentError test_program(
+            engine; attempts_per_site = typemax(Int64),
+        )
+    end
+    @test test_program(
+        CorePotts.CheckerboardProgramEngine(); attempts_per_site = 255
+    ).attempts_per_site == 255
+    @test_throws ArgumentError test_program(
+        CorePotts.CheckerboardProgramEngine(); attempts_per_site = 256
+    )
+    @test test_program(
+        CorePotts.SequentialProgramEngine(); attempts_per_site = 256
+    ).attempts_per_site == 256
 end
 
 @testset "checkerboard colors use the versioned unbiased permutation" begin
@@ -525,6 +629,7 @@ end
 @testset "unexpected staged-program failures restore a settled boundary" begin
     program = test_program(
         CorePotts.SequentialProgramEngine();
+        attempts_per_site = 16,
         descriptor_plan = empty_descriptor_plan(; source_table = Any[:injected_failure]),
         stage_plan = injected_failure_stage_plan(),
         parameter_defaults = [2.0],

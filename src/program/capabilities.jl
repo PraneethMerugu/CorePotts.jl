@@ -531,11 +531,10 @@ function _capability_mechanism_profile(program::CompiledPottsProgram)
     support_family, identities, authority, exact_replay =
         _capability_mechanism_support(program, admitted)
     proposal = (
-        shape = program.shape,
+        shape = program.domain.shape,
         offsets = Matrix(program.proposal_offsets),
         kind_count = program.kind_count,
-        medium_kind = program.medium_kind,
-        medium_kinds = Tuple(program.medium_kinds),
+        domain = cartesian_domain_report(program.domain),
         temperature = program.temperature,
         attempts_per_site = program.attempts_per_site,
         parameter_defaults = Tuple(program.parameter_defaults),
@@ -581,7 +580,7 @@ function _capability_key(program::CompiledPottsProgram)
         _capability_engine(program.engine),
         _capability_backend(program.backend),
         _capability_device(program.backend),
-        map(_capability_boundary, program.periodic),
+        map(_capability_boundary, cartesian_periodic_axes(program.domain)),
         eltype(program.parameter_defaults),
         CapabilityMathPolicy(:accurate, :deterministic, :checked),
         _capability_lifecycle_profile(program.lifecycle_plan),

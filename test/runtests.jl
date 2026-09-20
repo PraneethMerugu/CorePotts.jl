@@ -14,6 +14,7 @@ const _COREPOTTS_COMPILED_PROGRAM_TESTS = (
     "test_compiled_program_extensibility_storage.jl",
 )
 const _COREPOTTS_DIRECT_TESTS = (
+    "test_allocation_contracts.jl",
     "test_program_adaptation.jl",
     "test_api_boundary.jl",
     "test_backend_conformance.jl",
@@ -25,8 +26,15 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_scientific_reference.jl",
     "test_surface_tracker_contract.jl",
     "test_scientific_geometry_contract.jl",
+    "test_cartesian_ownership_domain.jl",
     "test_relationship_access_contract.jl",
     "test_descriptor_state_spi.jl",
+    "test_program_input_publication.jl",
+    "test_program_step_inputs.jl",
+    "test_source_aware_trackers.jl",
+    "test_site_minimum.jl",
+    "test_site_tracker_lifecycle.jl",
+    "test_scheduled_source_sums.jl",
     "test_logical_state_values.jl",
     "test_history_sample_storage.jl",
     "test_history_lifecycle.jl",
@@ -43,6 +51,7 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_logical_state_lifecycle.jl",
     "test_lifecycle_value_conversion.jl",
     "test_lifecycle_rule_composition.jl",
+    "test_lifecycle_relationship_staging.jl",
     "test_lifecycle_scalar_retirement.jl",
     "test_lifecycle_numeric_conversion.jl",
     "test_lifecycle_integer_conversion_bounds.jl",
@@ -62,6 +71,7 @@ const _COREPOTTS_DIRECT_TESTS = (
     "test_product_field_operations.jl",
     "test_checkerboard_read_groups.jl",
     "test_compiler_flagship_benchmark.jl",
+    "test_compiler_runtime_boundary_report.jl",
 )
 const _COREPOTTS_TEST_HELPER_EXCLUSIONS = ()
 const _COREPOTTS_DEVICE_CONFORMANCE_WITNESSES = (

@@ -52,6 +52,60 @@ end
     end
 end
 
+function lifecycle_relation_edge_count(runtime, source_handle, owner, other)
+    generation = runtime.cell_generations[other]
+    filter = CorePotts.CompilerSPI.SpatialOwnerFilterRecipe(
+        CorePotts.CompilerSPI.StableOwnerIdentityFilter;
+        identity_owner = other, identity_generation = generation)
+    read = CorePotts.CompilerSPI.SpatialQueryRead(
+        source_handle, filter)
+    context = CorePotts._CellStageEvaluationContext(
+        runtime, Int32(owner), nothing)
+    return CorePotts.CompilerSPI.qualified_tracker_operation_call(
+        CorePotts.ResourceOperation{:contact_edge_count}(), (owner,), context,
+        Val(:spatial_relation_query), Int32(source_handle), read)
+end
+
+@testset "spatial-query publication follows lifecycle identity replacement" begin
+    offsets = Int8[-1 1 0 0; 0 0 -1 1]
+    resources = CorePotts.HamiltonianDomainResources(
+        offsets, ones(Float32, 4), Int32[1], Int32[4], Int32[0])
+    key = CorePotts.QualifiedTrackerKey(Val(:spatial_relation_query), 1)
+    pair = CorePotts.CompilerSPI.SpatialRelationQueryTracker(
+        key, 1; maximum_pairs = 4, maximum_contacts = 144,
+        maximum_sites = 36)
+    tracker_plan = CorePotts.TrackerExecutionPlan(
+        (CorePotts.OwnershipCountTracker(), pair),
+        "cell-lifecycle-relation-pair",
+    )
+    for engine in (
+            CorePotts.SequentialProgramEngine(),
+            CorePotts.CheckerboardProgramEngine(),
+        )
+        runtime, _ = cell_stage_lifecycle_runtime(
+            engine; tracker_plan, domain_resources = resources)
+        @test lifecycle_relation_edge_count(runtime, 1, 1, 2) == 4
+
+        CorePotts.advance_mcs!(runtime)
+        @test !CorePotts.program_failed(runtime)
+        @test lifecycle_relation_edge_count(runtime, 1, 1, 2) == 0
+        restored = CorePotts.restore_program_checkpoint(
+            runtime.program, CorePotts.program_checkpoint(runtime))
+
+        for current in (runtime, restored)
+            CorePotts.advance_mcs!(current)
+            @test !CorePotts.program_failed(current)
+            @test current.cell_generations == UInt32[1, 2]
+            @test lifecycle_relation_edge_count(current, 1, 1, 2) == 4
+            @test CorePotts.validate_tracker_state!(
+                current.program.tracker_plan, current.trackers,
+                current.ownership, current.cell_kinds, current.program;
+                cell_generations = current.cell_generations,
+            ) === current.trackers
+        end
+    end
+end
+
 @testset "lifecycle reset writes the existing source identity" begin
     for engine in (CorePotts.SequentialProgramEngine(), CorePotts.CheckerboardProgramEngine())
         runtime, handle = cell_stage_lifecycle_runtime(

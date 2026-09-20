@@ -57,6 +57,7 @@ end
     LifecycleDetailRelationshipCommitInvalid = 0x0024
     LifecycleDetailAcceptanceNonfinite = 0x0025
     LifecycleDetailAcceptanceZeroTemperatureDrive = 0x0026
+    LifecycleDetailImmutableDomainSite = 0x0027
 end
 
 """Execution stage at which a device status was produced."""

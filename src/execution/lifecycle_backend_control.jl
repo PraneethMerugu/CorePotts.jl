@@ -28,6 +28,16 @@ end
 Adapt.@adapt_structure LifecycleBackendControl
 Adapt.@adapt_structure NoLifecycleBackendControl
 
+"""Backend cadence counters needed to decide whether a lifecycle stage is due."""
+struct _LifecycleCadenceControl{C}
+    counters::C
+end
+
+Adapt.@adapt_structure _LifecycleCadenceControl
+
+@inline _lifecycle_cadence_control(control) =
+    _LifecycleCadenceControl(control.counters)
+
 struct _LifecycleStateDescriptorPlan{R}
     domain_resources::R
 end
@@ -36,18 +46,12 @@ struct _LifecycleStateRelationshipPlan{R}
     relationship_rules::R
 end
 
-struct _LifecycleStateProgram{N, TP, D, L}
+struct _LifecycleStateProgram{N, C, TP, D, L}
     shape::NTuple{N, Int}
-    periodic::NTuple{N, Bool}
-    medium_kind::Int16
+    domain::C
     tracker_plan::TP
     descriptor_plan::D
     lifecycle_plan::L
-end
-
-struct _LifecycleStateEvaluatorPlan{E, S}
-    evaluators::E
-    state_rules::S
 end
 
 struct _LifecycleStatePolicyWorkspace{P}
@@ -75,16 +79,38 @@ end
 Adapt.@adapt_structure _LifecycleStateDescriptorPlan
 Adapt.@adapt_structure _LifecycleStateRelationshipPlan
 Adapt.@adapt_structure _LifecycleStateProgram
-Adapt.@adapt_structure _LifecycleStateEvaluatorPlan
 Adapt.@adapt_structure _LifecycleStatePolicyWorkspace
 Adapt.@adapt_structure _LifecycleStateRuntime
+
+function _lifecycle_structure_launch_payload(state, workspace, tracker_source)
+    lifecycle = state.program.lifecycle_plan
+    tracker_plan, trackers = _bind_lifecycle_tracker_updates(
+        state.program.lifecycle_tracker_plan,
+        workspace.staged_trackers,
+        tracker_source,
+    )
+    structure_state = _lifecycle_structure_state(state, workspace, trackers)
+    recipe = _LifecycleStructureRecipe(
+        lifecycle.descriptors,
+        _OwnershipTransferRecipe(
+            state.program.domain,
+            tracker_plan,
+            lifecycle.ownership_rules,
+        ),
+    )
+    commit_source = _LifecycleTrackerCommitSource(
+        tracker_source.ownership,
+        tracker_source.domain,
+        tracker_source.domain_resources,
+    )
+    return recipe, structure_state, commit_source
+end
 
 function _lifecycle_state_launch_payload(state, workspace)
     lifecycle = state.program.lifecycle_plan
     program = _LifecycleStateProgram(
-        state.program.shape,
-        state.program.periodic,
-        state.program.medium_kind,
+        state.program.domain.shape,
+        state.program.domain,
         state.program.tracker_plan,
         _LifecycleStateDescriptorPlan(
             state.program.domain_resources
@@ -106,10 +132,8 @@ function _lifecycle_state_launch_payload(state, workspace)
         state.repeat,
         state.mcs,
     )
-    plan = _LifecycleStateEvaluatorPlan(
-        lifecycle.evaluators, lifecycle.state_rules
-    )
-    return runtime, lifecycle.descriptors, plan
+    recipe = _lifecycle_state_recipe(lifecycle)
+    return runtime, recipe, _lifecycle_state_view(workspace)
 end
 
 struct _ProgramStatusSlot{S} <: AbstractVector{ProgramStatus}
@@ -196,6 +220,26 @@ end
 
 @inline _lifecycle_workspace_with_status(workspace::NamedTuple, status) =
     merge(workspace, (; status))
+
+@inline function _lifecycle_workspace_with_status(
+        workspace::_LifecycleStateView, status,
+    )
+    return _LifecycleStateView(
+        workspace.descriptor,
+        workspace.anchor,
+        workspace.planned_site_count,
+        workspace.planned_sites,
+        workspace.partition_labels,
+        workspace.partition_owner,
+        workspace.site_index,
+        workspace.selection,
+        workspace.planned_site_request,
+        workspace.staged_cell_generations,
+        workspace.staged_trackers,
+        workspace.staged_descriptor_state,
+        status,
+    )
+end
 
 @inline function _lifecycle_workspace_with_staged_state(
         workspace::LifecycleWorkspace, state

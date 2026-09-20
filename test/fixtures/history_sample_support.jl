@@ -139,7 +139,7 @@ function test_initial_history_capture(engines; backend = CorePotts.CPUProgramBac
             @test (runtime.accepted, runtime.rejected, runtime.null_attempts, runtime.retired_cells) == (0, 0, 0, 0)
             changed = C.copy_auxiliary_state(C.program_snapshot(runtime).descriptor_state)
             fill!(C.state_block(changed, source).values, 17.0f0)
-            C.update_program_descriptor_state!(runtime, changed)
+            C.update_program_inputs!(runtime; descriptor_state = changed)
             restored = adapt_runtime(C.restore_program_checkpoint(runtime.program, C.program_checkpoint(runtime)))
             @test vec(C.state_block(C.program_snapshot(restored).descriptor_state, initial_history).values) == Float32[1, 2, 7]
             @test only(C.state_block(C.program_snapshot(restored).descriptor_state, source).values) == 17.0f0
@@ -153,7 +153,7 @@ function test_initial_history_capture(engines; backend = CorePotts.CPUProgramBac
             changed = C.copy_auxiliary_state(C.program_snapshot(deferred).descriptor_state)
             fill!(C.state_block(changed, source).values, 11.0f0)
             copyto!(C.state_block(changed, initial_history).values, reshape(Float32[20, 30, 40], 1, 3))
-            C.update_program_descriptor_state!(deferred, changed)
+            C.update_program_inputs!(deferred; descriptor_state = changed)
             C.initialize_history!(deferred)
             @test vec(C.state_block(C.program_snapshot(deferred).descriptor_state, initial_history).values) == Float32[20, 30, 11]
             @test vec(C.state_block(C.program_snapshot(deferred).descriptor_state, periodic_history).values) == Float32[4, 5, 6]

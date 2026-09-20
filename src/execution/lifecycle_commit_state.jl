@@ -1,9 +1,381 @@
 # Transaction-local state, relationship, tracker, and ownership commit logic.
 
+# Arithmetic trackers consume entry contributions and the completed site clear;
+# full-reconstruction contracts wait for the completed structural transaction.
+
+"""Prepared semantics for one staged ownership transfer."""
+struct _OwnershipTransferRecipe{D, T, O}
+    domain::D
+    tracker_plan::T
+    ownership_rules::O
+end
+
+Adapt.@adapt_structure _OwnershipTransferRecipe
+
+@inline function _ownership_transfer_recipe(runtime, plan)
+    return _OwnershipTransferRecipe(
+        runtime.program.domain,
+        runtime.program.tracker_plan,
+        plan.ownership_rules,
+    )
+end
+
+"""Mutable state required by one staged ownership transfer."""
+struct _LifecycleOwnerChangeState{O, K, T, D, S}
+    staged_ownership::O
+    staged_cell_kinds::K
+    trackers::T
+    staged_descriptor_state::D
+    status::S
+end
+
+@inline function _lifecycle_owner_change_state(
+        ::HostLifecycleExecution, runtime, workspace,
+    )
+    return _LifecycleOwnerChangeState(
+        workspace.staged_ownership,
+        workspace.staged_cell_kinds,
+        workspace.staged_trackers,
+        workspace.staged_descriptor_state,
+        workspace.status,
+    )
+end
+
+@inline function _lifecycle_owner_change_state(
+        ::BackendLifecycleExecution, runtime, workspace,
+    )
+    return _LifecycleOwnerChangeState(
+        workspace.staged_ownership,
+        workspace.staged_cell_kinds,
+        runtime.trackers,
+        workspace.staged_descriptor_state,
+        workspace.status,
+    )
+end
+
+@inline lifecycle_workspace_status(state::_LifecycleOwnerChangeState) =
+    @inbounds state.status[1]
+
+"""Prepared descriptor and ownership-transfer semantics for structural staging."""
+struct _LifecycleStructureRecipe{D, T}
+    descriptors::D
+    ownership_transfer::T
+end
+
+@inline function _lifecycle_structure_recipe(runtime, plan)
+    return _LifecycleStructureRecipe(
+        plan.descriptors,
+        _ownership_transfer_recipe(runtime, plan),
+    )
+end
+
+"""Selected lifecycle requests needed by staged lifecycle effects."""
+struct _LifecycleSelectedRequestState{B, C, R, A, P}
+    ready::B
+    count::C
+    requests::R
+    allocations::A
+    source_position::P
+end
+
+"""Ready flag, count, and request order needed by relationship staging."""
+struct _LifecycleSelectedRequestSequence{B, C, R}
+    ready::B
+    count::C
+    requests::R
+end
+
+"""Owned-site lookup needed by staged lifecycle effects."""
+struct _LifecycleOwnedSiteIndex{R, S, P}
+    records::R
+    segment_starts::S
+    source_position::P
+end
+
+Adapt.@adapt_structure _LifecycleStructureRecipe
+Adapt.@adapt_structure _LifecycleSelectedRequestState
+Adapt.@adapt_structure _LifecycleSelectedRequestSequence
+Adapt.@adapt_structure _LifecycleOwnedSiteIndex
+
+@inline function _lifecycle_selected_request_state(selection)
+    selected = selection.selected_requests
+    return _LifecycleSelectedRequestState(
+        selection.ready,
+        selected.count,
+        selected.records.request,
+        selected.records.allocation,
+        selected.source_position,
+    )
+end
+
+@inline function _lifecycle_selected_request_sequence(selection)
+    selected = selection.selected_requests
+    return _LifecycleSelectedRequestSequence(
+        selection.ready,
+        selected.count,
+        selected.records.request,
+    )
+end
+
+@inline function _lifecycle_owned_site_index(site_index)
+    return _LifecycleOwnedSiteIndex(
+        site_index.records,
+        site_index.segment_starts,
+        site_index.source_position,
+    )
+end
+
+"""Prepared evaluator and state-rule semantics for lifecycle state staging."""
+struct _LifecycleStateRecipe{D, E, S}
+    descriptors::D
+    evaluators::E
+    state_rules::S
+end
+
+Adapt.@adapt_structure _LifecycleStateRecipe
+
+@inline function _lifecycle_state_recipe(plan)
+    return _LifecycleStateRecipe(
+        plan.descriptors,
+        plan.evaluators,
+        plan.state_rules,
+    )
+end
+
+"""Request-local state required by lifecycle state transforms."""
+struct _LifecycleStateView{
+        V32, M32, V8, SI, SEL, G, T, D, S,
+    }
+    descriptor::V32
+    anchor::V32
+    planned_site_count::V32
+    planned_sites::M32
+    partition_labels::V8
+    partition_owner::V32
+    site_index::SI
+    selection::SEL
+    planned_site_request::V32
+    staged_cell_generations::G
+    staged_trackers::T
+    staged_descriptor_state::D
+    status::S
+end
+
+Adapt.@adapt_structure _LifecycleStateView
+
+@inline function _lifecycle_state_view(workspace)
+    return _LifecycleStateView(
+        workspace.descriptor,
+        workspace.anchor,
+        workspace.planned_site_count,
+        workspace.planned_sites,
+        workspace.partition_labels,
+        workspace.partition_owner,
+        _lifecycle_owned_site_index(workspace.site_index),
+        _lifecycle_selected_request_state(workspace.selection),
+        workspace.planned_site_request,
+        workspace.staged_cell_generations,
+        workspace.staged_trackers,
+        workspace.staged_descriptor_state,
+        workspace.status,
+    )
+end
+
+@inline lifecycle_workspace_status(state::_LifecycleStateView) =
+    @inbounds state.status[1]
+
+@inline _lifecycle_backend_open(state::_LifecycleStateView) =
+    lifecycle_workspace_status(state).code === ProgramStatusSuccess
+
+@inline function _lifecycle_selected_position(
+        state::_LifecycleStateView, request::Integer,
+    )
+    @inbounds state.selection.ready[1] || return Int32(0)
+    return @inbounds state.selection.source_position[Int(request)]
+end
+
+@inline function _lifecycle_request_selected(
+        state::_LifecycleStateView, request::Integer,
+    )
+    return !iszero(_lifecycle_selected_position(state, request))
+end
+
+@inline function _lifecycle_request_allocation(
+        state::_LifecycleStateView, request::Integer,
+    )
+    position = _lifecycle_selected_position(state, request)
+    return iszero(position) ? Int32(0) :
+        @inbounds(state.selection.allocations[position])
+end
+
+"""Prepared relationship-removal semantics for lifecycle staging."""
+struct _LifecycleRelationshipRecipe{D, R}
+    descriptors::D
+    relationship_rules::R
+end
+
+Adapt.@adapt_structure _LifecycleRelationshipRecipe
+
+@inline function _lifecycle_relationship_recipe(plan)
+    return _LifecycleRelationshipRecipe(
+        plan.descriptors,
+        plan.relationship_rules,
+    )
+end
+
+"""Selected requests and mutable relationship state used by lifecycle rules."""
+struct _LifecycleRelationshipState{V, SEL, K, R, S}
+    descriptor::V
+    anchor::V
+    selection::SEL
+    staged_cell_kinds::K
+    staged_relationships::R
+    status::S
+end
+
+Adapt.@adapt_structure _LifecycleRelationshipState
+
+@inline function _lifecycle_relationship_state(workspace)
+    return _LifecycleRelationshipState(
+        workspace.descriptor,
+        workspace.anchor,
+        _lifecycle_selected_request_sequence(workspace.selection),
+        workspace.staged_cell_kinds,
+        workspace.staged_relationships,
+        workspace.status,
+    )
+end
+
+@inline lifecycle_workspace_status(state::_LifecycleRelationshipState) =
+    @inbounds state.status[1]
+
+@inline _lifecycle_backend_open(state::_LifecycleRelationshipState) =
+    lifecycle_workspace_status(state).code === ProgramStatusSuccess
+
+@inline function _lifecycle_selected_count(
+        state::_LifecycleRelationshipState,
+    )
+    @inbounds state.selection.ready[1] || return 0
+    return Int(@inbounds state.selection.count[1])
+end
+
+@inline function _lifecycle_selected_request(
+        state::_LifecycleRelationshipState, position::Integer,
+    )
+    return @inbounds state.selection.requests[position]
+end
+
+"""Mutable request, partition, and staged state used by structural effects."""
+struct _LifecycleStructureState{
+        K, G, T, V32, M32, V8, SI, SEL, O, D, S,
+    }
+    cell_kinds::K
+    cell_generations::G
+    trackers::T
+    descriptor::V32
+    anchor::V32
+    planned_site_count::V32
+    planned_sites::M32
+    partition_labels::V8
+    partition_owner::V32
+    site_index::SI
+    selection::SEL
+    planned_site_request::V32
+    staged_ownership::O
+    staged_cell_kinds::K
+    staged_cell_generations::G
+    staged_descriptor_state::D
+    status::S
+end
+
+Adapt.@adapt_structure _LifecycleStructureState
+
+@inline function _lifecycle_structure_state(
+        ::HostLifecycleExecution, runtime, workspace,
+    )
+    return _lifecycle_structure_state(
+        runtime, workspace, workspace.staged_trackers,
+    )
+end
+
+@inline function _lifecycle_structure_state(
+        ::BackendLifecycleExecution, runtime, workspace,
+    )
+    return _lifecycle_structure_state(runtime, workspace, runtime.trackers)
+end
+
+@inline function _lifecycle_structure_state(
+        runtime, workspace, trackers,
+    )
+    return _LifecycleStructureState(
+        runtime.cell_kinds,
+        runtime.cell_generations,
+        trackers,
+        workspace.descriptor,
+        workspace.anchor,
+        workspace.planned_site_count,
+        workspace.planned_sites,
+        workspace.partition_labels,
+        workspace.partition_owner,
+        _lifecycle_owned_site_index(workspace.site_index),
+        _lifecycle_selected_request_state(workspace.selection),
+        workspace.planned_site_request,
+        workspace.staged_ownership,
+        workspace.staged_cell_kinds,
+        workspace.staged_cell_generations,
+        workspace.staged_descriptor_state,
+        workspace.status,
+    )
+end
+
+@inline lifecycle_workspace_status(state::_LifecycleStructureState) =
+    @inbounds state.status[1]
+
+@inline _lifecycle_backend_open(state::_LifecycleStructureState) =
+    lifecycle_workspace_status(state).code === ProgramStatusSuccess
+
+@inline function _lifecycle_selected_count(state::_LifecycleStructureState)
+    @inbounds state.selection.ready[1] || return 0
+    return Int(@inbounds state.selection.count[1])
+end
+
+@inline function _lifecycle_selected_request(
+        state::_LifecycleStructureState, position::Integer,
+    )
+    return @inbounds state.selection.requests[position]
+end
+
+@inline function _lifecycle_selected_position(
+        state::_LifecycleStructureState, request::Integer,
+    )
+    @inbounds state.selection.ready[1] || return Int32(0)
+    return @inbounds state.selection.source_position[Int(request)]
+end
+
+@inline function _lifecycle_request_allocation(
+        state::_LifecycleStructureState, request::Integer,
+    )
+    position = _lifecycle_selected_position(state, request)
+    return iszero(position) ? Int32(0) :
+        @inbounds(state.selection.allocations[position])
+end
+
+@inline function _lifecycle_owner_change_state(
+        state::_LifecycleStructureState,
+    )
+    return _LifecycleOwnerChangeState(
+        state.staged_ownership,
+        state.staged_cell_kinds,
+        state.trackers,
+        state.staged_descriptor_state,
+        state.status,
+    )
+end
+
 @inline function _commit_lifecycle_tracker_updates!(
         ::HostLifecycleExecution,
-        workspace,
-        runtime,
+        state,
+        recipe,
         source,
         site,
         old_owner,
@@ -11,12 +383,13 @@
     )
     try
         commit_tracker_updates!(
-            workspace.staged_trackers,
-            runtime.program.tracker_plan,
+            state.trackers,
+            recipe.tracker_plan,
             source,
             site,
             old_owner,
             new_owner,
+            _tracker_source_entry_delta,
         )
     catch
         return false
@@ -25,58 +398,149 @@
 end
 @inline function _commit_lifecycle_tracker_updates!(
         ::BackendLifecycleExecution,
-        workspace,
-        runtime,
+        state,
+        recipe,
         source,
         site,
         old_owner,
         new_owner,
     )
+    # Device execution reports the host transaction's recoverable tracker
+    # invariant; evaluator/nonfinite status denotes a terminal scientific stop.
+    _lifecycle_tracker_entry_updates_valid(
+        recipe.tracker_plan.descriptors,
+        state.trackers.values,
+        site,
+        old_owner,
+    ) || return _set_lifecycle_status!(
+        state,
+        ProgramStatusInvariant;
+        anchor = old_owner > 0 ? old_owner : new_owner,
+        detail = LifecycleDetailTrackerCommitInvalid,
+    )
     commit_tracker_updates!(
-        workspace.staged_trackers,
-        runtime.program.tracker_plan,
+        state.trackers,
+        recipe.tracker_plan,
         source,
         site,
         old_owner,
         new_owner,
+        _tracker_source_entry_delta,
     )
     return true
 end
 
-@inline function _stage_owner_change!(
+# This transaction is shared by every structural lifecycle effect. Keep it as
+# one device compiler unit instead of cloning tracker validation, ownership
+# mutation, source clearing, and completed-source publication into each effect.
+Base.@noinline function _stage_owner_change!(
         mode::AbstractLifecycleExecutionMode,
-        runtime,
-        plan,
-        workspace,
+        recipe::_OwnershipTransferRecipe,
+        state::_LifecycleOwnerChangeState,
         tracker_source,
         linear,
         new_owner,
     )
-    old_owner = @inbounds workspace.staged_ownership[linear]
+    @inbounds(recipe.domain.mutable_mask[linear]) != 0 ||
+        return _set_lifecycle_status!(
+            state,
+            ProgramStatusInvariant;
+            anchor = Int32(linear),
+            detail = LifecycleDetailImmutableDomainSite,
+        )
+    old_owner = @inbounds state.staged_ownership[linear]
     old_owner == new_owner && return true
-    site = CartesianIndices(runtime.program.shape)[linear]
+    site = CartesianIndices(recipe.domain.shape)[linear]
     if !_commit_lifecycle_tracker_updates!(
             mode,
-            workspace,
-            runtime,
+            state,
+            recipe,
             tracker_source,
             site,
             old_owner,
             new_owner,
         )
+        _lifecycle_succeeded(state) || return false
         return _set_lifecycle_status!(
-            workspace,
+            state,
             ProgramStatusInvariant;
             anchor = old_owner > 0 ? old_owner : new_owner,
             detail = LifecycleDetailTrackerCommitInvalid,
         )
     end
-    @inbounds workspace.staged_ownership[linear] = new_owner
-    for rule in plan.ownership_rules
+    @inbounds state.staged_ownership[linear] = new_owner
+    for rule in recipe.ownership_rules
         rule.action === ClearLifecycleOwnershipState || continue
-        values = state_block(workspace.staged_descriptor_state, rule.handle).values
+        values = state_block(state.staged_descriptor_state, rule.handle).values
         _clear_site_samples!(values, site)
     end
+    if !_finish_lifecycle_tracker_updates!(
+            mode, recipe, state, tracker_source, site,
+            old_owner, new_owner,
+        )
+        _lifecycle_succeeded(state) || return false
+        return _set_lifecycle_status!(
+            state, ProgramStatusInvariant;
+            anchor = new_owner, detail = LifecycleDetailTrackerCommitInvalid,
+        )
+    end
+    return true
+end
+
+function _finish_lifecycle_tracker_updates!(
+        ::HostLifecycleExecution,
+        recipe,
+        state,
+        source,
+        site,
+        old_owner,
+        new_owner,
+    )
+    try
+        _finish_tracker_source_change!(
+            recipe.tracker_plan.descriptors,
+            state.trackers.values,
+            source,
+            site,
+            old_owner,
+            new_owner,
+            state.staged_cell_kinds,
+        )
+    catch
+        return false
+    end
+    return true
+end
+@inline function _finish_lifecycle_tracker_updates!(
+        ::BackendLifecycleExecution,
+        recipe,
+        state,
+        source,
+        site,
+        old_owner,
+        new_owner,
+    )
+    # Keep completed-source arithmetic in the same recoverable transaction.
+    _lifecycle_tracker_completed_updates_valid(
+        recipe.tracker_plan.descriptors,
+        state.trackers.values,
+        site,
+        new_owner,
+    ) || return _set_lifecycle_status!(
+        state,
+        ProgramStatusInvariant;
+        anchor = new_owner,
+        detail = LifecycleDetailTrackerCommitInvalid,
+    )
+    _finish_tracker_source_change!(
+        recipe.tracker_plan.descriptors,
+        state.trackers.values,
+        source,
+        site,
+        old_owner,
+        new_owner,
+        state.staged_cell_kinds,
+    )
     return true
 end
 
@@ -118,21 +582,28 @@ end
         all(component -> _lifecycle_value_convertible(eltype(T), component), value)
 end
 
-# Retain field types in specialization: a runtime tuple of DataType values is
-# not a device value inside heterogeneous evaluator-bank dispatch.
-@inline function _lifecycle_product_values_convertible(
-        ::Type{T}, components::Tuple, ::Val{I},
-    ) where {T, I}
-    I > fieldcount(T) && return true
-    return _lifecycle_value_convertible(fieldtype(T, I), getfield(components, I)) &&
-        _lifecycle_product_values_convertible(T, components, Val(I + 1))
+# Retain field types and product arity in specialization. Recursing through a
+# runtime Tuple/Val boundary leaves dynamic dispatch in device IR when the
+# caller is reached through a heterogeneous evaluator bank.
+@generated function _lifecycle_product_values_convertible(
+        ::Type{T}, components::C,
+    ) where {T, C <: Tuple}
+    fieldcount(T) == fieldcount(C) || return :(false)
+    checks = map(1:fieldcount(T)) do index
+        :(
+            _lifecycle_value_convertible(
+                $(fieldtype(T, index)), getfield(components, $index)
+            )
+        )
+    end
+    return foldr((left, right) -> :($left && $right), checks; init = :(true))
 end
 
 @inline function _lifecycle_value_convertible(
         ::Type{T}, value::Union{Tuple, NamedTuple},
     ) where {T <: Union{Tuple, NamedTuple}}
     return applicable(convert, T, value) && fieldcount(T) == length(value) &&
-        _lifecycle_product_values_convertible(T, values(value), Val(1))
+        _lifecycle_product_values_convertible(T, values(value))
 end
 
 _convert_lifecycle_state_value(::Type{T}, value) where {T} = convert(T, value)
@@ -243,7 +714,7 @@ end
     elseif descriptor.effect in (
             CreateCellLifecycleEffect, DivideCellLifecycleEffect,
         )
-        _allocated_generation(runtime, destination)
+        _next_allocated_generation(runtime.cell_generations, destination)
     else
         @inbounds runtime.cell_generations[destination]
     end
