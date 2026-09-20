@@ -26,6 +26,10 @@ mutable struct ProgramRuntime{T <: AbstractFloat, N, P, C, R, TS, D, SB, EW, LW}
     stage_buffers::SB
     engine_workspace::EW
     lifecycle_workspace::LW
+    # Host-only, runtime-owned recipes retain validated tracker rebuild plans.
+    # The field is erased so their cold LocalMath graph does not parameterize
+    # ProgramRuntime or any device-reachable execution signature.
+    input_tracker_recipes::Any
     parameters::Vector{T}
     seed::UInt64
     replica::UInt32
@@ -46,7 +50,7 @@ mutable struct ProgramRuntime{T <: AbstractFloat, N, P, C, R, TS, D, SB, EW, LW}
         ) where {T<:AbstractFloat,N,P,C,R,TS,D,SB,EW,LW}
         token === _PROGRAM_RUNTIME_CONSTRUCTION_TOKEN ||
             error("invalid ProgramRuntime construction token")
-        length(args) == 26 || throw(ArgumentError(
+        length(args) == 27 || throw(ArgumentError(
             "ProgramRuntime construction requires its exact runtime state"))
         _require_packed_runtime_relationships(args[7])
         return new{T,N,P,C,R,TS,D,SB,EW,LW}(args...)
@@ -64,7 +68,7 @@ function _rebuild_program_runtime(
         proposal_contributions = runtime.proposal_contributions,
         parameters = runtime.parameters,
     ) where {T, N}
-    return ProgramRuntime{
+    rebuilt = ProgramRuntime{
         T,
         N,
         typeof(runtime.program),
@@ -89,6 +93,7 @@ function _rebuild_program_runtime(
         runtime.stage_buffers,
         engine_workspace,
         runtime.lifecycle_workspace,
+        nothing,
         parameters,
         runtime.seed,
         runtime.replica,
@@ -104,6 +109,8 @@ function _rebuild_program_runtime(
         runtime.failure_status,
         runtime.last_lifecycle_receipt,
     )
+    _prepare_program_input_tracker_recipes!(rebuilt)
+    return rebuilt
 end
 
 function _validate_cell_stage_capacity(plan, layout, sources, capacity)
@@ -155,7 +162,7 @@ function _materialize_program(
     initial_descriptor_state = _program_initial_field(
         initial, :descriptor_state
     )
-    size(initial_ownership) == program.shape ||
+    size(initial_ownership) == program.domain.shape ||
         throw(ArgumentError("initial ownership shape does not match the program"))
     runtime_parameters = _validated_program_parameters(program, parameters)
     lifecycle_plan = program.lifecycle_plan
@@ -166,19 +173,19 @@ function _materialize_program(
     length(initial_cell_kinds) <= cell_capacity || throw(ArgumentError(
         "initial finite-cell count exceeds compiled max_cells=$cell_capacity"
     ))
-    maximum(initial_ownership; init = Int32(0)) <= length(initial_cell_kinds) ||
-        throw(ArgumentError("initial ownership references an unknown cell label"))
-    minimum(initial_ownership; init = Int32(0)) >= -program.kind_count ||
-        throw(ArgumentError("initial ownership references an unknown medium kind"))
-    all(initial_ownership) do owner
-        owner >= 0 || @inbounds(program.medium_kinds[-owner])
-    end || throw(ArgumentError(
-        "initial ownership uses a non-medium kind as a medium domain"
-    ))
+    for site in program.domain.mutable_sites
+        owner = @inbounds initial_ownership[site]
+        owner <= length(initial_cell_kinds) || throw(ArgumentError(
+            "initial ownership references an unknown cell label"
+        ))
+        owner <= 0 && _domain_owner_metadata(program.domain, owner)
+    end
     all(kind -> kind == 0 || 1 <= kind <= program.kind_count, initial_cell_kinds) ||
         throw(ArgumentError("initial cell kind is outside the compiled kind table"))
-    all(kind -> kind == 0 || !program.medium_kinds[kind], initial_cell_kinds) ||
-        throw(ArgumentError("a finite cell cannot use a medium kind"))
+    all(kind -> kind == 0 || !domain_owner_kind(program.domain, kind),
+        initial_cell_kinds) || throw(ArgumentError(
+        "a finite cell cannot use a non-finite domain-owner kind"
+    ))
     length(initial_cell_generations) == length(initial_cell_kinds) ||
         throw(ArgumentError("initial cell generation table has the wrong length"))
     all(eachindex(initial_cell_kinds)) do index
@@ -189,6 +196,12 @@ function _materialize_program(
     repeat > 0 || throw(ArgumentError("ensemble repeat identity must be positive"))
 
     runtime_ownership = copy(initial_ownership)
+    for site in eachindex(program.domain.obstacle_owner_handles)
+        @inbounds program.domain.mutable_mask[site] && continue
+        handle = @inbounds program.domain.obstacle_owner_handles[site]
+        @inbounds runtime_ownership[site] =
+            _domain_owner_code_from_handle(handle)
+    end
     runtime_cell_kinds = zeros(Int16, cell_capacity)
     runtime_cell_generations = zeros(UInt32, cell_capacity)
     copyto!(
@@ -205,21 +218,39 @@ function _materialize_program(
         1,
         length(initial_cell_generations),
     )
+    descriptor_state = if initial_descriptor_state === nothing
+        allocate_auxiliary_state(program.descriptor_plan.state_layout)
+    elseif initial_descriptor_state isa AuxiliaryState
+        copy_auxiliary_state(
+            program.descriptor_plan.state_layout,
+            initial_descriptor_state,
+        )
+    else
+        throw(ArgumentError(
+            "descriptor state must be a CorePotts AuxiliaryState"
+        ))
+    end
     trackers = tracker_checkpoint === nothing ? initialize_tracker_state(
-        program.tracker_plan, runtime_ownership, runtime_cell_kinds, program
+        program.tracker_plan, runtime_ownership, runtime_cell_kinds, program;
+        cell_generations = runtime_cell_generations,
+        parameters = runtime_parameters, descriptor_state,
     ) : reconstruct_tracker_checkpoint(
         program.tracker_plan,
         tracker_checkpoint,
         runtime_ownership,
         runtime_cell_kinds,
-        program,
+        program;
+        cell_generations = runtime_cell_generations,
+        parameters = runtime_parameters, descriptor_state,
     )
     validate_tracker_state!(
         program.tracker_plan,
         trackers,
         runtime_ownership,
         runtime_cell_kinds,
-        program,
+        program;
+        cell_generations = runtime_cell_generations,
+        parameters = runtime_parameters, descriptor_state,
     )
     volumes = tracker_values(
         program.tracker_plan, trackers, Val(:cell_volume)
@@ -244,23 +275,11 @@ function _materialize_program(
         runtime_cell_generations,
         runtime_parameters,
     )
-    descriptor_state = if initial_descriptor_state === nothing
-        allocate_auxiliary_state(program.descriptor_plan.state_layout)
-    elseif initial_descriptor_state isa AuxiliaryState
-        copy_auxiliary_state(
-            program.descriptor_plan.state_layout,
-            initial_descriptor_state,
-        )
-    else
-        throw(ArgumentError(
-            "descriptor state must be a CorePotts AuxiliaryState"
-        ))
-    end
     stage_buffers = program.engine isa CheckerboardProgramEngine ? nothing :
         allocate_stage_runtime_buffers(
             program.stage_plan,
             T,
-            program.shape,
+            program.domain.shape,
             relationships,
             accepted_batch_bound = _accepted_copy_batch_bound(program),
             accepted_relationship_transactions = true,
@@ -297,9 +316,8 @@ function _materialize_program(
     end
     if lifecycle_workspace isa LifecycleWorkspace
         decision_program = _LifecycleDecisionProgram(
-            program.shape,
-            program.periodic,
-            program.medium_kind,
+            program.domain.shape,
+            program.domain,
             program.tracker_plan,
             _LifecycleDecisionDescriptorPlan(
                 program.descriptor_plan.domain_resources
@@ -374,6 +392,7 @@ function _materialize_program(
         stage_buffers,
         engine_workspace,
         lifecycle_workspace,
+        nothing,
         runtime_parameters,
         seed,
         replica,
@@ -399,6 +418,8 @@ function _materialize_program(
             runtime.energy_rejections,
             runtime.retired_cells,
         )
+    runtime.engine_workspace isa CheckerboardWorkspace ||
+        _prepare_program_input_tracker_recipes!(runtime)
     return runtime
 end
 
@@ -488,7 +509,8 @@ end
     runtime.last_lifecycle_receipt
 
 function _materialize_program_state_snapshot(
-        runtime::ProgramRuntime{T, N}, state, mcs::Integer
+        runtime::ProgramRuntime{T, N}, state, mcs::Integer;
+        parameters = runtime.parameters,
     ) where {T, N}
     length(state.relationships) == length(runtime.program.relationships) ||
         throw(ArgumentError(
@@ -507,7 +529,9 @@ function _materialize_program_state_snapshot(
         state.trackers,
         state.ownership,
         state.cell_kinds,
-        runtime.program,
+        runtime.program;
+        cell_generations = state.cell_generations,
+        parameters, descriptor_state = state.descriptor_state,
     )
     relationships = copy(state.relationships)
     descriptor_state = copy_auxiliary_state(

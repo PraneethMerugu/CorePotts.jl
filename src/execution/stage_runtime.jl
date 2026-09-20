@@ -35,6 +35,111 @@ operation_context_supported(::ContextOperation{:energy_anchor_cell}, ::Type{Abst
 @inline state_value(context::_CellStageEvaluationContext, handle::StateHandle, slot) =
     @inbounds state_block(context.runtime.descriptor_state, handle).values[slot]
 
+@inline apply_resource_operation(
+    ::ResourceOperation{:cell_volume}, arguments,
+    context::_CellStageEvaluationContext
+) =
+    program_tracker_value(context.runtime, Val(:cell_volume), only(arguments))
+@inline _compiled_resource_operation(
+    operation::ResourceOperation{:cell_volume}, arguments::Tuple,
+    context::_CellStageEvaluationContext
+) = apply_resource_operation(operation, arguments, context)
+
+@inline qualified_tracker_operation_call(
+    ::Union{ResourceOperation{:cell_site_sum}, ResourceOperation{:cell_site_minimum}}, arguments::Tuple,
+    context::_CellStageEvaluationContext, quantity::Val, source_handle::Int32
+) =
+    program_tracker_value(context.runtime, QualifiedTrackerKey(quantity, source_handle), only(arguments))
+
+@inline _compiled_qualified_tracker_operation(
+    operation::QualifiedTrackerOperation, arguments::Tuple,
+    context::_CellStageEvaluationContext
+) = qualified_tracker_operation_call(
+    operation.operation, arguments, context, operation.quantity,
+    operation.source_handle, operation.payload,
+)
+
+@inline qualified_tracker_operation_call(
+    operation, arguments::Tuple, context, quantity::Val,
+    source_handle::Int32, ::Nothing,
+) = qualified_tracker_operation_call(
+    operation, arguments, context, quantity, source_handle)
+
+@inline function qualified_tracker_operation_call(
+        operation::Union{
+            ResourceOperation{:contact_edge_count},
+            ResourceOperation{:contact_measure},
+            ResourceOperation{:boundary_site_count},
+            ResourceOperation{:neighbor_cell_count},
+            ResourceOperation{:neighbor_property_sum},
+            ResourceOperation{:neighbor_property_mean},
+        },
+        arguments::Tuple,
+        context::_CellStageEvaluationContext,
+        ::Val{:spatial_relation_query},
+        source_handle::Int32,
+        payload::SpatialQueryRead,
+    )
+    length(arguments) == 1 || throw(ArgumentError(
+        "cell spatial queries require exactly one dynamic owner operand"))
+    owner = Int32(only(arguments))
+    state = tracker_values(
+        context.runtime.program.tracker_plan, context.runtime.trackers,
+        QualifiedTrackerKey(Val(:spatial_relation_query), source_handle))
+    state isa SpatialRelationQueryState || throw(ArgumentError(
+        "spatial query does not resolve to its maintained relation state"))
+    owner_view = _spatial_owner_match_view(context.runtime, payload.filter)
+    if operation isa ResourceOperation{:contact_edge_count}
+        return spatial_contact_edge_count(
+            state, owner_view, owner, payload.filter)
+    elseif operation isa ResourceOperation{:contact_measure}
+        metric = _spatial_metric_view(context.runtime, payload.metric_handle)
+        return spatial_contact_measure(
+            state, owner_view, owner, payload.filter, metric)
+    elseif operation isa ResourceOperation{:boundary_site_count}
+        return spatial_boundary_site_count(
+            state, owner_view, owner, payload.filter)
+    elseif operation isa ResourceOperation{:neighbor_cell_count}
+        return spatial_neighbor_cell_count(
+            state, owner_view, owner, payload.filter)
+    end
+    payload.property_handle isa StateHandle || throw(ArgumentError(
+        "neighbor-property queries require one qualified cell-state handle"))
+    property_values = state_block(
+        context.runtime.descriptor_state, payload.property_handle).values
+    total = spatial_neighbor_property_sum(
+        state, owner_view, owner, payload.filter, property_values)
+    operation isa ResourceOperation{:neighbor_property_sum} && return total
+    neighbor_count = spatial_neighbor_cell_count(
+        state, owner_view, owner, payload.filter)
+    if iszero(neighbor_count)
+        payload.empty isa ReturnEmptySpatialMean && return payload.empty.value
+        throw(DomainError(owner,
+            "an empty neighbor-property mean requires an explicit return value"))
+    end
+    return total / neighbor_count
+end
+
+@inline function qualified_tracker_operation_call(
+        ::ResourceOperation{:global_interface_measure},
+        arguments::Tuple,
+        context::_SiteStageEvaluationContext,
+        ::Val{:spatial_relation_query},
+        source_handle::Int32,
+        payload::GlobalSpatialQueryRead,
+    )
+    isempty(arguments) || throw(ArgumentError(
+        "global interface queries do not take a dynamic owner operand"))
+    state = tracker_values(
+        context.runtime.program.tracker_plan, context.runtime.trackers,
+        QualifiedTrackerKey(Val(:spatial_relation_query), source_handle))
+    left_view = _spatial_owner_match_view(context.runtime, payload.left)
+    right_view = _spatial_owner_match_view(context.runtime, payload.right)
+    metric = _spatial_metric_view(context.runtime, payload.metric_handle)
+    return spatial_global_interface_measure(
+        state, left_view, right_view, payload.left, payload.right, metric)
+end
+
 @inline function _cell_stage_eligible(effect::CellAssignmentEffect, kind, generation)
     return kind == effect.domain_kind && !iszero(generation)
 end
@@ -230,7 +335,9 @@ operation_context_supported(::ContextOperation{:energy_anchor_site}, ::Type{Abst
 end
 @inline site_owner(
     context::_SiteStageEvaluationContext, site
-) = @inbounds context.runtime.ownership[site]
+) = owner_at(
+    context.runtime.program.domain, context.runtime.ownership, site
+)
 @inline owner_kind(
     context::_SiteStageEvaluationContext, owner::Integer
 ) = _owner_kind(context.runtime, Int32(owner))
@@ -362,7 +469,7 @@ end
 end
 
 @inline function descriptor_emit_requests!(
-        scratch::AbstractArray{T},
+        scratch::AbstractArray{StageEvaluation{T}},
         descriptor::CompiledStageDescriptor{
             C, V, E, AfterMCSStage,
         },
@@ -388,7 +495,7 @@ end
             value, "after-MCS stage value must be finite"
         )
     )
-    @inbounds scratch[context.site] = value
+    @inbounds scratch[context.site] = StageEvaluation(condition, value)
     return scratch
 end
 
@@ -477,8 +584,15 @@ end
             "unsupported compiled after-MCS effect"
         )
     )
-    copyto!(state_block(state, effect.target).values, scratch)
-    return state
+    values = state_block(state, effect.target).values
+    published = false
+    for index in eachindex(values, scratch)
+        evaluation = @inbounds scratch[index]
+        evaluation.enabled || continue
+        @inbounds values[index] = evaluation.value
+        published = true
+    end
+    return published
 end
 
 @inline _emit_accepted_copy_groups!(
@@ -730,8 +844,7 @@ function _apply_after_mcs_descriptor!(
     scratch = @inbounds runtime.stage_buffers.after_mcs[
         Int(descriptor.buffer_slot),
     ]
-    descriptor_apply_stage!(descriptor, scratch, runtime.descriptor_state)
-    return runtime
+    return descriptor_apply_stage!(descriptor, scratch, runtime.descriptor_state)
 end
 
 function _apply_after_mcs_descriptor!(
@@ -779,6 +892,7 @@ function _apply_after_mcs_descriptor!(
     scratch = @inbounds runtime.stage_buffers.after_mcs[
         Int(descriptor.buffer_slot),
     ]
+    published = false
     for invocation in 0:(Int(descriptor.effect.iterations) - 1)
         for site in CartesianIndices(runtime.ownership)
             descriptor_emit_requests!(
@@ -790,11 +904,11 @@ function _apply_after_mcs_descriptor!(
                 ),
             )
         end
-        descriptor_apply_stage!(
+        published |= descriptor_apply_stage!(
             descriptor, scratch, runtime.descriptor_state
         )
     end
-    return runtime
+    return published
 end
 
 function _apply_after_mcs_descriptor!(
@@ -804,12 +918,11 @@ function _apply_after_mcs_descriptor!(
         },
         boundary::UInt16,
     ) where {C, V, E <: ShiftAppendEffect}
-    _apply_history_effect!(runtime.descriptor_state, descriptor.effect, runtime.mcs + 1)
-    return runtime
+    return _apply_history_effect!(runtime.descriptor_state, descriptor.effect, runtime.mcs + 1)
 end
 
 function _apply_history_effect!(state, effect::ShiftAppendEffect, completed_mcs::Integer)
-    _completed_mcs_due(effect.cadence, effect.cadence_value, completed_mcs) || return state
+    _completed_mcs_due(effect.cadence, effect.cadence_value, completed_mcs) || return false
     target = state_block(state, effect.target).values
     source = state_block(state, effect.source).values
     axis = Int(effect.axis)
@@ -832,17 +945,20 @@ function _apply_history_effect!(state, effect::ShiftAppendEffect, completed_mcs:
         end
     end
     copyto!(selectdim(target, axis, depth), source)
-    return state
+    return !isempty(target)
 end
 
-function _apply_after_mcs_groups!(runtime, ::Tuple{}, boundary::UInt16)
-    return runtime
+function _apply_after_mcs_groups!(runtime, ::Tuple{}, boundary::UInt16, published)
+    return published
 end
-function _apply_after_mcs_groups!(runtime, groups::Tuple, boundary::UInt16)
+function _apply_after_mcs_groups!(runtime, groups::Tuple, boundary::UInt16, published)
     for descriptor in first(groups).instances
-        _apply_after_mcs_descriptor!(runtime, descriptor, boundary)
+        result = _apply_after_mcs_descriptor!(runtime, descriptor, boundary)
+        if result === true && descriptor.effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ShiftAppendEffect}
+            push!(published, descriptor.effect.target)
+        end
     end
-    return _apply_after_mcs_groups!(runtime, Base.tail(groups), boundary)
+    return _apply_after_mcs_groups!(runtime, Base.tail(groups), boundary, published)
 end
 
 function _execute_after_mcs_stage!(runtime, groups, boundary::UInt16)
@@ -857,11 +973,12 @@ function _execute_after_mcs_stage!(runtime, groups, boundary::UInt16)
         runtime.cell_generations,
         runtime.program.relationships,
     )
-    _apply_after_mcs_groups!(runtime, groups, boundary)
+    published = _apply_after_mcs_groups!(runtime, groups, boundary, StateHandle[])
     _publish_relationship_transactions!(
         runtime.relationships,
         runtime.stage_buffers.relationship_transactions,
     )
+    _refresh_published_site_trackers!(runtime, published)
     return nothing
 end
 

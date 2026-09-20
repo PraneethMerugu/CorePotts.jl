@@ -64,9 +64,12 @@ function history_ownership_program(engine; allow = true, fail_assignment = false
         "history-ownership", C.HamiltonianDomainResources(0, 0)
     )
     offsets = Int8[1 -1 0 0; 0 0 1 -1]
-    checkerboard = engine isa C.CheckerboardProgramEngine ? C.CheckerboardPlan(shape, (true, true), offsets) : C.NoCheckerboardPlan()
+    domain = C._standard_cartesian_ownership_domain(
+        shape, (true, true), 2, 1, Bool[true, false]
+    )
+    checkerboard = engine isa C.CheckerboardProgramEngine ? C.CheckerboardPlan(domain, offsets) : C.NoCheckerboardPlan()
     program = C.CompiledPottsProgram(
-        shape, (true, true), offsets, 2, 1,
+        domain, offsets, 2,
         C.CompiledScalar(0.0f0), 1, Float32[], (),
         C.TrackerExecutionPlan((C.OwnershipCountTracker(),), "history-ownership"),
         descriptors, stages, engine, C.CPUProgramBackend(), "history-ownership";

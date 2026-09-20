@@ -9,7 +9,7 @@ on:
       localmath_ref:
         description: LOCALMATH candidate revision
         type: string
-        default: 22e7b42905522e53e04b4c0febadb96e30189a80
+        default: d3d2e5533585de3b16dafbb8ba7c0cb265209254
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,7 +20,7 @@ permissions:
 
 env:
   JULIA_VERSION: '1.12.6'
-  LOCALMATH_REF: ${{ inputs.localmath_ref || '22e7b42905522e53e04b4c0febadb96e30189a80' }}
+  LOCALMATH_REF: ${{ inputs.localmath_ref || 'd3d2e5533585de3b16dafbb8ba7c0cb265209254' }}
   COREPOTTS_TELEMETRY_DIR: corepotts-telemetry
 
 jobs:
@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       execution: ${{ steps.diff.outputs.execution }}
+      compiler: ${{ steps.diff.outputs.compiler }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with: {fetch-depth: 0}
@@ -40,23 +41,32 @@ jobs:
         shell: bash
         run: |
           execution=true
+          compiler=true
           if [[ "$EVENT" == pull_request ]] && git cat-file -e "$BASE^{commit}" && git cat-file -e "$HEAD^{commit}"; then
             git diff --no-renames --name-only -z "$BASE...$HEAD" > "$RUNNER_TEMP/corepotts-changed-paths"
             execution=false
+            compiler=false
             while IFS= read -r -d '' path; do
               case "$path" in
                 AGENTS.md|CONTRIBUTING.md|README.md|LICENSE|CITATION.cff|spec/*.md|design/*.md) ;;
                 *) execution=true; break ;;
               esac
             done < "$RUNNER_TEMP/corepotts-changed-paths"
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                .github/workflows/ci.yml|Project.toml|src/CorePotts.jl|src/execution/*|src/program/*|benchmark/compiler_scaling/*)
+                  compiler=true; break ;;
+              esac
+            done < "$RUNNER_TEMP/corepotts-changed-paths"
           fi
           printf 'execution=%s\n' "$execution" >> "$GITHUB_OUTPUT"
+          printf 'compiler=%s\n' "$compiler" >> "$GITHUB_OUTPUT"
           git rev-parse HEAD
 
   package:
     name: package
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -218,12 +228,53 @@ jobs:
           path: ${{ env.COREPOTTS_TELEMETRY_DIR }}
           if-no-files-found: warn
 
-  metal:
+  compiler-evidence:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.compiler != 'false') }}
+    name: compiler-evidence
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Require a valid change selection
+        if: needs.changes.result != 'success' || (needs.changes.outputs.compiler != 'true' && needs.changes.outputs.compiler != 'false')
+        run: exit 1
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: PraneethMerugu/LocalMath.jl
+          ref: '${{ env.LOCALMATH_REF }}'
+          path: deps/LocalMath
+      - name: Require immutable sibling revisions
+        shell: bash
+        run: |
+          [[ "$LOCALMATH_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "LOCALMATH_REF must be a full commit SHA"; exit 1; }
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
+        with: {version: '${{ env.JULIA_VERSION }}'}
+      - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
+      - name: Resolve the candidate environment
+        run: julia --project=. --startup-file=no -e 'using Pkg; Pkg.develop(path="deps/LocalMath"); Pkg.instantiate()'
+      - name: Record lifecycle runtime-boundary evidence
+        run: julia --project=. --startup-file=no benchmark/compiler_scaling/lifecycle_runtime_boundaries.jl --revision-label=${{ github.sha }} --evidence-reason=Kaimon-is-not-installed-in-the-CI-evidence-environment > lifecycle-runtime-boundaries.toml
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lifecycle-runtime-boundaries-${{ github.sha }}
+          path: |
+            lifecycle-runtime-boundaries.toml
+            Manifest.toml
+
+  metal_witnesses:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.execution != 'false') }}
-    name: metal
+    name: metal / ${{ matrix.group }}
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - program-and-quantities
+          - state-and-history
+          - lifecycle-and-conformance
     steps:
       - name: Require a valid change selection
         if: needs.changes.result != 'success' || (needs.changes.outputs.execution != 'true' && needs.changes.outputs.execution != 'false')
@@ -252,11 +303,32 @@ jobs:
       - name: Precompile Metal environment
         run: julia --startup-file=no .github/scripts/run-phase.jl dependency-precompile julia --project=test/metal --startup-file=no -e 'using Pkg; Pkg.precompile()'
       - name: Metal qualification
-        run: julia --startup-file=no .github/scripts/run-phase.jl metal-qualification julia --project=test/metal --startup-file=no -e 'include("test/metal/runtests.jl")'
+        run: julia --startup-file=no .github/scripts/run-phase.jl metal-qualification julia --project=test/metal --startup-file=no -e 'include("test/metal/runtests.jl")' '${{ matrix.group }}'
       - name: Upload Metal telemetry
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: corepotts-telemetry-metal
+          name: corepotts-telemetry-metal-${{ matrix.group }}
           path: ${{ env.COREPOTTS_TELEMETRY_DIR }}
           if-no-files-found: warn
+
+  metal:
+    needs: [changes, metal_witnesses]
+    if: ${{ !cancelled() }}
+    name: metal
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every selected Metal witness group
+        env:
+          CHANGE_SELECTION: ${{ needs.changes.result }}
+          EXECUTION_REQUIRED: ${{ needs.changes.outputs.execution }}
+          METAL_WITNESSES: ${{ needs.metal_witnesses.result }}
+        shell: bash
+        run: |
+          [[ "$CHANGE_SELECTION" == success ]]
+          if [[ "$EXECUTION_REQUIRED" == true ]]; then
+            [[ "$METAL_WITNESSES" == success ]]
+          else
+            [[ "$EXECUTION_REQUIRED" == false ]]
+            [[ "$METAL_WITNESSES" == skipped ]]
+          fi

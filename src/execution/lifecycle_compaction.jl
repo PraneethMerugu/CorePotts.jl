@@ -71,10 +71,9 @@ struct _LifecycleDecisionDescriptorPlan{R}
     domain_resources::R
 end
 
-struct _LifecycleDecisionProgram{N, TP, D, L}
+struct _LifecycleDecisionProgram{N, C, TP, D, L}
     shape::NTuple{N, Int}
-    periodic::NTuple{N, Bool}
-    medium_kind::Int16
+    domain::C
     tracker_plan::TP
     descriptor_plan::D
     lifecycle_plan::L

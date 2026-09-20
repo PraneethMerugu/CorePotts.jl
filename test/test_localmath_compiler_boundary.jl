@@ -3,6 +3,15 @@ import CorePotts
 import KernelAbstractions
 import LocalMath
 
+_compiler_cartesian_domain(shape, periodic) =
+    CorePotts._standard_cartesian_ownership_domain(
+        shape, periodic, 2, 1, Bool[true, false]
+    )
+
+_compiler_owner_directory(domain, cell_kinds) =
+    CorePotts.OwnerDirectoryKindView(
+        cell_kinds, domain.default_owner, domain.domain_owners)
+
 function _compiler_color_schedule(checkerboard, color)
     schedules = ntuple(Int(checkerboard.color_count)) do candidate
         CorePotts._checkerboard_color_schedule(checkerboard, candidate)
@@ -228,7 +237,8 @@ function _contact_hamiltonian_plan()
         [descriptor], (), (),
         (family = :contact_hamiltonian,))
     resources = CorePotts.HamiltonianDomainResources(
-        reshape(Int8[-1, 1], 1, 2), Int32[1], Int32[2], Int32[0])
+        reshape(Int8[-1, 1], 1, 2), Float64[1.0, 1.0],
+        Int32[1], Int32[2], Int32[0])
     return CorePotts.DescriptorExecutionPlan(
         (group,), CorePotts.StateLayout(CorePotts.StateBlockSchema[]),
         CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]), (),
@@ -245,6 +255,7 @@ function _compiler_test_gathered_context(;
     old_kind = Int16(1),
     new_kind = Int16(2),
     volumes = (Int32(4), Int32(9)),
+    contact_neighbors = (),
     contact_sites = (),
     contact_owners = (),
     contact_kinds = (),
@@ -263,7 +274,7 @@ function _compiler_test_gathered_context(;
         volumes, semantic = Int32(1), mcs = Int64(1), color = Int32(1),
         trajectory_key = (UInt64(1), UInt64(0)), scalar_zero = 0.0,
         parameters = (), state_values = (),
-        contact_sites, contact_owners, contact_kinds,
+        contact_neighbors, contact_sites, contact_owners, contact_kinds,
         reverse_contact_sites, reverse_contact_owners, reverse_contact_kinds,
         contact_ranges,
         tracker_values, bounded_tracker_samples,
@@ -427,6 +438,14 @@ end
     contact_context = _compiler_test_gathered_context(
         source = CartesianIndex(3), target = CartesianIndex(2),
         target_linear = Int32(2), volumes = (Int32(2), Int32(2)),
+        contact_neighbors = (
+            CorePotts.CartesianNeighbor(
+                CorePotts.MutableCartesianNeighbor,
+                Int32(1), Int32(1), Int32(1), (Int64(1),)),
+            CorePotts.CartesianNeighbor(
+                CorePotts.MutableCartesianNeighbor,
+                Int32(3), Int32(2), Int32(2), (Int64(3),)),
+        ),
         contact_sites = (Int32(1), Int32(3)),
         contact_owners = (Int32(1), Int32(2)),
         contact_kinds = (Int16(1), Int16(2)),
@@ -473,11 +492,12 @@ end
 end
 
 @testset "Core compiler materializes checkerboard geometry through LocalMath" begin
+    domain = _compiler_cartesian_domain((5,), (true,))
     checkerboard = CorePotts.CheckerboardPlan(
-        (5,), (true,), reshape(Int16[1], 1, 1))
+        domain, reshape(Int16[1], 1, 1))
     proposal_offsets = reshape(Int8[-1, 1], 1, 2)
     declaration = CorePotts._checkerboard_geometry_declaration(
-        checkerboard, proposal_offsets,
+        domain, checkerboard, proposal_offsets,
         UInt64(0x1234), UInt32(2), UInt32(3))
     backend = KernelAbstractions.CPU()
 
@@ -510,7 +530,7 @@ end
             attempt_round = Int32(1), batch_size = values.batch_size)))
         for item in Int32(1):values.batch_size
             target = values.schedule[item][color]
-            semantic = target
+            semantic = checkerboard.color_offsets[color] + item - Int32(1)
             address = CorePotts._program_address(
                 CorePotts.ProposalDirectionStream, 1, CorePotts._CORE_RNG_OPERATIONS.proposal_direction, semantic;
                 subround = color)
@@ -519,7 +539,7 @@ end
                     declaration.evaluator.trajectory_key,
                 address, UInt32(2))) + 1
             expected_source = CorePotts._checkerboard_neighbor_linear(
-                checkerboard.shape, checkerboard.periodic, target,
+                declaration.evaluator.topology, target,
                 declaration.evaluator.offsets[direction])
             priority_address = CorePotts._program_address(
                 CorePotts.CheckerboardPriorityStream, 1, CorePotts._CORE_RNG_OPERATIONS.checkerboard_priority, semantic;
@@ -543,17 +563,20 @@ end
 end
 
 @testset "Core compiler materializes owner keys through IndexRelation" begin
+    domain = _compiler_cartesian_domain((4,), (false,))
     checkerboard = CorePotts.CheckerboardPlan(
-        (4,), (false,), reshape(Int16[1], 1, 1))
+        domain, reshape(Int16[1], 1, 1))
     declaration = CorePotts._checkerboard_proposal_topology_declaration(
-        checkerboard, reshape(Int8[-1], 1, 1),
-        UInt64(0x44), UInt32(0), UInt32(0))
+        domain, checkerboard, reshape(Int8[-1], 1, 1),
+        UInt64(0x44), UInt32(0), UInt32(0), 3)
     schedule, batch_size = _compiler_color_schedule(
         checkerboard, 1)
     sites = fill((Int32(0), Int32(0)), length(schedule))
     semantic = zeros(Int32, length(schedule))
     raw_priority = zeros(UInt32, length(schedule))
     owners = fill((Int32(0), Int32(0)), length(schedule))
+    kind_routes = fill((Int32(0), Int32(0)), length(schedule))
+    kinds = fill((Int16(0), Int16(0)), length(schedule))
     actionable = fill(false, length(schedule))
     ownership = Int32[1, 2, 2, 3]
     prepared = LocalMath.prepare(
@@ -564,7 +587,13 @@ end
         declaration.semantic => semantic,
         declaration.priority => raw_priority,
         declaration.ownership => ownership,
+        declaration.mutable_mask => fill(true, length(ownership)),
+        declaration.obstacle_owner_handles => zeros(Int32, length(ownership)),
+        declaration.owner_directory_kinds => _compiler_owner_directory(
+            domain, Int16[1, 2, 3]),
         declaration.owners => owners,
+        declaration.kind_routes => kind_routes,
+        declaration.kinds => kinds,
         declaration.actionable => actionable;
         backend = KernelAbstractions.CPU())
     wait(LocalMath.execute!(prepared; parameters = (
@@ -583,10 +612,11 @@ end
 end
 
 @testset "Core executable terms run inside the LocalMath law" begin
+    domain = _compiler_cartesian_domain((4,), (false,))
     checkerboard = CorePotts.CheckerboardPlan(
-        (4,), (false,), reshape(Int16[1], 1, 1))
+        domain, reshape(Int16[1], 1, 1))
     declaration = CorePotts._checkerboard_scientific_declaration(
-        checkerboard, reshape(Int8[-1], 1, 1),
+        domain, checkerboard, reshape(Int8[-1], 1, 1),
         UInt64(0x55), UInt32(0), UInt32(0),
         _context_proposal_plan(false), CorePotts.StageExecutionPlan(),
         _compiler_test_tracker_plan(), (),
@@ -620,9 +650,13 @@ end
         declaration.semantic => storage.semantic,
         declaration.priority => storage.raw_priority,
         declaration.ownership => ownership,
+        declaration.mutable_mask => fill(true, length(ownership)),
+        declaration.obstacle_owner_handles => zeros(Int32, length(ownership)),
         declaration.owners => storage.owners,
         declaration.actionable => storage.actionable,
-        declaration.cell_kinds => cell_kinds,
+        declaration.owner_directory_kinds => _compiler_owner_directory(
+            domain, cell_kinds),
+        declaration.kind_routes => fill((Int32(0), Int32(0)), count),
         declaration.cell_volumes => cell_volumes,
         declaration.kinds => storage.kinds,
         declaration.volumes => storage.volumes,
@@ -659,10 +693,11 @@ end
 end
 
 @testset "Core acceptance lowers to typed LocalMath disposition ports" begin
+    domain = _compiler_cartesian_domain((4,), (false,))
     checkerboard = CorePotts.CheckerboardPlan(
-        (4,), (false,), reshape(Int16[1], 1, 1))
+        domain, reshape(Int16[1], 1, 1))
     scientific = CorePotts._checkerboard_scientific_declaration(
-        checkerboard, reshape(Int8[-1], 1, 1),
+        domain, checkerboard, reshape(Int8[-1], 1, 1),
         UInt64(0x55), UInt32(0), UInt32(0),
         _context_proposal_plan(false), CorePotts.StageExecutionPlan(),
         _compiler_test_tracker_plan(), (),
@@ -703,9 +738,13 @@ end
         declaration.semantic => storage.semantic,
         declaration.priority => storage.raw_priority,
         declaration.ownership => ownership,
+        declaration.mutable_mask => fill(true, length(ownership)),
+        declaration.obstacle_owner_handles => zeros(Int32, length(ownership)),
         declaration.owners => storage.owners,
         declaration.actionable => storage.actionable,
-        declaration.cell_kinds => cell_kinds,
+        declaration.owner_directory_kinds => _compiler_owner_directory(
+            domain, cell_kinds),
+        declaration.kind_routes => fill((Int32(0), Int32(0)), count),
         declaration.cell_volumes => cell_volumes,
         declaration.kinds => storage.kinds,
         declaration.volumes => storage.volumes,
@@ -724,8 +763,8 @@ end
         for read in stage.reads)
     @test inspected[2].reads[1].role === :ownership
     @test inspected[2].reads[1].mode === :samples
-    @test inspected[3].reads[1].role === :cell_kinds
-    @test all(read.mode === :samples for read in inspected[3].reads)
+    @test inspected[3].reads[1].role === :owner_directory_kinds
+    @test all(read.mode === :required for read in inspected[3].reads)
     wait(LocalMath.execute!(prepared; parameters = (
         mcs = Int64(1), color = Int32(1), attempt_round = Int32(1),
         batch_size)))
@@ -742,10 +781,11 @@ end
 end
 
 @testset "Core compiler composes acceptance and mutual-maxima selection" begin
+    domain = _compiler_cartesian_domain((4,), (false,))
     checkerboard = CorePotts.CheckerboardPlan(
-        (4,), (false,), reshape(Int16[1], 1, 1))
+        domain, reshape(Int16[1], 1, 1))
     scientific = CorePotts._checkerboard_scientific_declaration(
-        checkerboard, reshape(Int8[-1], 1, 1),
+        domain, checkerboard, reshape(Int8[-1], 1, 1),
         UInt64(0x55), UInt32(0), UInt32(0),
         _context_proposal_plan(), CorePotts.StageExecutionPlan(),
         _compiler_test_tracker_plan(), (),
@@ -800,9 +840,13 @@ end
         declaration.semantic => storage.semantic,
         declaration.priority => storage.raw_priority,
         declaration.ownership => ownership,
+        declaration.mutable_mask => fill(true, length(ownership)),
+        declaration.obstacle_owner_handles => zeros(Int32, length(ownership)),
         declaration.owners => storage.owners,
         declaration.actionable => storage.actionable,
-        declaration.cell_kinds => cell_kinds,
+        declaration.owner_directory_kinds => _compiler_owner_directory(
+            domain, cell_kinds),
+        declaration.kind_routes => fill((Int32(0), Int32(0)), count),
         declaration.cell_volumes => cell_volumes,
         declaration.kinds => storage.kinds,
         declaration.volumes => storage.volumes,

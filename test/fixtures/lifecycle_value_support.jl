@@ -112,7 +112,7 @@ function test_lifecycle_value_conversion(
     @test CorePotts.program_failed(runtime) == invalid
     @test runtime.settled
     @test after.mcs == (invalid ? 0 : 1)
-    @test after.ownership == (invalid ? before.ownership : fill(Int32(-1), 6, 6))
+    @test after.ownership == (invalid ? before.ownership : fill(Int32(0), 6, 6))
     @test after.cell_kinds == (invalid ? before.cell_kinds : Int16[0])
     for (index, handle) in enumerate(handles)
         expected = invalid ? CorePotts.state_block(before.descriptor_state, handle).values :

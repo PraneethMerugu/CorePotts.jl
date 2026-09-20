@@ -29,7 +29,11 @@ function _empty_descriptor_plan()
     )
 end
 
-function _flagship_descriptor()
+function _flagship_descriptor(;
+        effect = CorePotts.RemoveCellLifecycleEffect,
+        destination_kind::Integer = 0,
+        relationship_rule_count::Integer = 0,
+    )
     return CorePotts.LifecycleDescriptor{2, Float64}(
         Int32(1),
         UInt64(101),
@@ -39,11 +43,11 @@ function _flagship_descriptor()
         Int32(1),
         CorePotts.EveryMCSCadence,
         Int32(1),
-        CorePotts.RemoveCellLifecycleEffect,
+        effect,
         Int32(0),
         CorePotts.ErrorLifecycleInadmissible,
-        Int16(0),
-        Int16(1),
+        Int16(destination_kind),
+        Int32(0),
         CorePotts.NoLifecyclePlacement,
         Int32(0),
         Int32(1),
@@ -63,7 +67,7 @@ function _flagship_descriptor()
         Int32(1),
         Int32(0),
         Int32(1),
-        Int32(0),
+        Int32(relationship_rule_count),
         Int32(0),
         Int32(0),
         Int32(0),
@@ -103,12 +107,13 @@ function _flagship_fixture()
         "compiler-ownership-count-v1",
     )
     lifecycle_plan = _flagship_lifecycle_plan()
+    domain = CorePotts._standard_cartesian_ownership_domain(
+        (6, 6), (true, true), 2, 1, Bool[true, false]
+    )
     program = CorePotts.CompiledPottsProgram(
-        (6, 6),
-        (true, true),
+        domain,
         offsets,
         2,
-        1,
         CorePotts.CompiledScalar(3.0),
         1,
         Float64[],
@@ -145,6 +150,171 @@ function _timing(f)
         "recompile_seconds" => result.recompile_time,
         "allocated_bytes" => result.bytes,
         "gc_seconds" => result.gctime,
+    )
+end
+
+function _compiler_expression_calls(value)
+    value isa Expr || return 0
+    return (value.head in (:call, :invoke) ? 1 : 0) +
+        sum(_compiler_expression_calls, value.args; init = 0)
+end
+
+function _typed_ir_metrics(callable, signature)
+    typed = only(code_typed(callable, signature; optimize = true))
+    info = typed isa Pair ? first(typed) : typed[1]
+    return_type = typed isa Pair ? last(typed) : typed[2]
+    ssa_types = info.ssavaluetypes isa Vector ? info.ssavaluetypes : Any[]
+    return Dict{String,Any}(
+        "statements" => length(info.code),
+        "calls" => sum(_compiler_expression_calls, info.code; init = 0),
+        "any_slots" => count(==(Any), info.slottypes),
+        "any_ssa" => count(==(Any), ssa_types),
+        "root_any" => return_type === Any,
+        "return_type" => string(return_type),
+    )
+end
+
+function _method_specialization_count(callable, signature)
+    method = which(callable, signature)
+    return count(!isnothing, Base.specializations(method))
+end
+
+function _contact_neighbors(topology, target, offsets, categories, sites, owners)
+    degree = length(categories)
+    builder = CorePotts._checkerboard_contact_neighbor_builder(
+        topology, target, offsets, categories, sites, owners)
+    return ntuple(builder, Val(degree))
+end
+
+function _cartesian_contact_probe(degree::Int)
+    base_offsets = (
+        (Int8(1), Int8(0)), (Int8(-1), Int8(0)),
+        (Int8(0), Int8(1)), (Int8(0), Int8(-1)),
+    )
+    offsets = ntuple(index -> base_offsets[mod1(index, 4)], degree)
+    topology = CorePotts.CartesianContactTopology(
+        (8, 8),
+        ntuple(_ -> CorePotts.PeriodicCartesianFace, 4),
+        ntuple(_ -> Int32(0), 4),
+    )
+    evaluator = CorePotts._CheckerboardContactGeometryEvaluator(
+        topology, offsets)
+    categories = ntuple(
+        _ -> UInt8(CorePotts.MutableCartesianNeighbor), degree)
+    sites = ntuple(Int32, degree)
+    owners = ntuple(_ -> Int32(0), degree)
+    target = CartesianIndex(4, 4)
+    geometry_signature = Tuple{typeof(evaluator),CartesianIndex{2}}
+    geometry_method = which(
+        CorePotts._checkerboard_contact_geometry, geometry_signature)
+    specializations_before = _method_specialization_count(
+        CorePotts._checkerboard_contact_geometry, geometry_signature)
+    geometry = _typed_ir_metrics(
+        CorePotts._checkerboard_contact_geometry, geometry_signature)
+    CorePotts._checkerboard_contact_geometry(
+        evaluator, CartesianIndex(4, 4))
+    specializations_after = _method_specialization_count(
+        CorePotts._checkerboard_contact_geometry, geometry_signature)
+    reconstruction = _typed_ir_metrics(
+        _contact_neighbors,
+        Tuple{
+            typeof(topology),typeof(target),typeof(offsets),
+            typeof(categories),typeof(sites),typeof(owners),
+        },
+    )
+    return Dict{String,Any}(
+        "degree" => degree,
+        "geometry" => geometry,
+        "geometry_method" => string(geometry_method),
+        "geometry_specializations_before" => specializations_before,
+        "geometry_specializations_after" => specializations_after,
+        "neighbor_reconstruction" => reconstruction,
+        "geometry_payload_bytes" =>
+            sizeof(NTuple{degree,Int32}) * 3 +
+            sizeof(NTuple{degree,UInt8}),
+    )
+end
+
+function _cartesian_contact_compiler_evidence()
+    medium = CorePotts.DomainOwnerMetadata(
+        0, CorePotts.MediumDomainOwnerCategory, 1)
+    wall = CorePotts.DomainOwnerMetadata(
+        9, CorePotts.WallDomainOwnerCategory, 3)
+    periodic = CorePotts.CartesianOwnershipDomain((8, 8), medium, [wall])
+    fixed = CorePotts.CartesianOwnershipDomain(
+        (8, 8), medium, [wall];
+        face_kinds = (
+            CorePotts.FixedExteriorCartesianFace,
+            CorePotts.ClosedCartesianFace,
+            CorePotts.PeriodicCartesianFace,
+            CorePotts.PeriodicCartesianFace,
+        ),
+        face_owner_handles = (Int32(1), Int32(0), Int32(0), Int32(0)),
+    )
+    obstacle_handles = zeros(Int32, 8, 8)
+    obstacle_handles[3, 4] = Int32(1)
+    masked = CorePotts.CartesianOwnershipDomain(
+        (8, 8), medium, [wall];
+        obstacle_owner_handles = obstacle_handles,
+    )
+    domains = (periodic, fixed, masked)
+    offsets = (
+        (Int8(1), Int8(0)), (Int8(-1), Int8(0)),
+        (Int8(0), Int8(1)), (Int8(0), Int8(-1)),
+    )
+    geometry_evaluators = map(domains) do domain
+        CorePotts._CheckerboardContactGeometryEvaluator(
+            CorePotts.cartesian_contact_topology(domain), offsets)
+    end
+    geometry_types = map(typeof, geometry_evaluators)
+    owner_types = map(domains) do domain
+        typeof(CorePotts._CheckerboardContactOwnerEvaluator{4}(
+            CorePotts.owner_directory_layout(domain, 16)))
+    end
+    view_types = map(domains) do domain
+        typeof(CorePotts.OwnerAtView(domain, zeros(Int32, 8, 8)))
+    end
+    degree_trend = collect(map(_cartesian_contact_probe, (4, 8, 16)))
+    geometry_signature = Tuple{first(geometry_types),CartesianIndex{2}}
+    geometry_method = which(
+        CorePotts._checkerboard_contact_geometry, geometry_signature)
+    geometry_before = _method_specialization_count(
+        CorePotts._checkerboard_contact_geometry, geometry_signature)
+    foreach(geometry_evaluators) do evaluator
+        CorePotts._checkerboard_contact_geometry(
+            evaluator, CartesianIndex(4, 4))
+    end
+    geometry_after = _method_specialization_count(
+        CorePotts._checkerboard_contact_geometry, geometry_signature)
+    # This control is an unchanged, unrelated relationship primitive from the
+    # parent revision. It distinguishes broad compiler-environment growth from
+    # growth introduced by the Cartesian contact boundary itself.
+    control_signature = Tuple{Int32,Int32}
+    control_method = which(CorePotts._canonical_endpoints, control_signature)
+    control_before = _method_specialization_count(
+        CorePotts._canonical_endpoints, control_signature)
+    control = _typed_ir_metrics(CorePotts._canonical_endpoints, control_signature)
+    CorePotts._canonical_endpoints(Int32(7), Int32(9))
+    control_after = _method_specialization_count(
+        CorePotts._canonical_endpoints, control_signature)
+    return Dict{String,Any}(
+        "degree_trend" => degree_trend,
+        "runtime_face_mask_type_invariant" =>
+            allequal(map(typeof, domains)) &&
+            allequal(geometry_types) &&
+            allequal(owner_types) &&
+            allequal(view_types),
+        "distinct_domain_types" => length(unique(map(typeof, domains))),
+        "distinct_geometry_evaluator_types" => length(unique(geometry_types)),
+        "distinct_owner_evaluator_types" => length(unique(owner_types)),
+        "distinct_owner_view_types" => length(unique(view_types)),
+        "runtime_variant_geometry_method" => string(geometry_method),
+        "runtime_variant_specializations_before" => geometry_before,
+        "runtime_variant_specializations_after" => geometry_after,
+        "unchanged_control" => control,
+        "unchanged_control_method" => string(control_method),
+        "unchanged_control_specializations_before" => control_before,
+        "unchanged_control_specializations_after" => control_after,
     )
 end
 
@@ -372,6 +542,8 @@ Base.@noinline function _emit_flagship_report(
         "first_request_index" => first_request_index,
         "first_selection" => first_selection,
         "warm_execution" => warm,
+        "cartesian_contact_compiler" =>
+            _cartesian_contact_compiler_evidence(),
     )
     TOML.print(io, report; sorted = true)
     return nothing

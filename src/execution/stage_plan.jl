@@ -573,7 +573,116 @@ function _validate_state_write_handles(layout::StateLayout, handles, source)
     return nothing
 end
 
-function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources, kind_count, medium_kinds)
+_validate_stage_tracker_anchor(::AbstractStaticExpression, effect, source) = nothing
+function _validate_stage_tracker_anchor(expression::OperationExpression, effect, source)
+    operation = expression.operation
+    source_tracker = operation isa Union{ResourceOperation{:cell_site_sum}, ResourceOperation{:cell_site_minimum}} ||
+        (operation isa QualifiedTrackerOperation && operation.operation isa Union{ResourceOperation{:cell_site_sum}, ResourceOperation{:cell_site_minimum}})
+    if source_tracker || (effect isa CellAssignmentEffect && operation isa ResourceOperation{:cell_volume})
+        effect isa CellAssignmentEffect || throw(ArgumentError("site-expression tracker at $source requires a scheduled cell context"))
+        !source_tracker || operation isa QualifiedTrackerOperation ||
+            throw(ArgumentError("site-expression tracker at $source requires a compiler-bound tracker key"))
+        length(expression.arguments) == 1 &&
+            only(expression.arguments) isa ContextExpression{ContextOperation{:energy_anchor_cell}} ||
+            throw(ArgumentError("cell tracker read at $source requires the current bound cell"))
+    end
+    foreach(argument -> _validate_stage_tracker_anchor(argument, effect, source), expression.arguments)
+    return nothing
+end
+
+_validate_spatial_query_expression(
+    ::AbstractStaticExpression, resources, domain, plan, layout,
+    effect, source,
+) = nothing
+
+function _validate_spatial_query_expression(
+        expression::OperationExpression,
+        resources,
+        domain,
+        plan,
+        layout,
+        effect,
+        source,
+    )
+    operation = expression.operation
+    if operation isa QualifiedTrackerOperation &&
+            operation.quantity isa Val{:spatial_relation_query}
+        payload = operation.payload
+        payload isa Union{SpatialQueryRead, GlobalSpatialQueryRead} || throw(
+            ArgumentError(
+                "spatial query at $source requires a cold-lowered query payload"))
+        payload.query_handle == operation.source_handle || throw(ArgumentError(
+            "spatial query at $source must use its qualified relation handle"))
+        if operation.operation isa ResourceOperation{:global_interface_measure}
+            effect isa ModelAssignmentEffect || throw(ArgumentError(
+                "global interface query at $source requires a model assignment"))
+        else
+            effect isa CellAssignmentEffect || throw(ArgumentError(
+                "owner-relative spatial query at $source requires a cell assignment"))
+        end
+        filters = payload isa SpatialQueryRead ? (payload.filter,) :
+            (payload.left, payload.right)
+        for filter in filters
+            filter.kind === PublishedOwnerPredicateFilter || continue
+            entry = state_read_source(plan, layout, filter.predicate_mask)
+            entry.schema.domain === :cell || throw(ArgumentError(
+                "spatial predicate mask at $source must be cell-owned state"))
+            entry.schema.element_type === Bool || throw(ArgumentError(
+                "spatial predicate mask at $source must contain Bool values"))
+        end
+        if operation.operation isa Union{
+                ResourceOperation{:neighbor_property_sum},
+                ResourceOperation{:neighbor_property_mean},
+            }
+            payload isa SpatialQueryRead &&
+                payload.property_handle isa StateHandle || throw(ArgumentError(
+                    "neighbor-property query at $source requires a state handle"))
+            entry = state_read_source(plan, layout, payload.property_handle)
+            entry.schema.domain === :cell || throw(ArgumentError(
+                "neighbor-property query at $source requires cell-owned state"))
+            element_type = entry.schema.element_type
+            isconcretetype(element_type) && isbitstype(element_type) &&
+                element_type <: Number && element_type !== Bool || throw(
+                    ArgumentError(
+                        "neighbor-property query at $source requires a concrete numeric scalar"))
+        end
+        metric_handle = payload.metric_handle
+        if operation.operation isa Union{
+                ResourceOperation{:contact_measure},
+                ResourceOperation{:global_interface_measure},
+            }
+            metric_handle > 0 || throw(ArgumentError(
+                "measured spatial query at $source requires a metric handle"))
+            _validate_spatial_metric_relation(
+                resources, operation.source_handle, metric_handle,
+                domain.shape, cartesian_periodic_axes(domain))
+        end
+    end
+    foreach(expression.arguments) do argument
+        _validate_spatial_query_expression(
+            argument, resources, domain, plan, layout, effect, source)
+    end
+    return nothing
+end
+
+function _validate_stage_spatial_queries(plan, layout, resources, domain)
+    for group in (plan.accepted_copy..., plan.before_lifecycle...,
+            plan.after_lifecycle...), descriptor in group.instances
+        source = "stage source handle $(descriptor.source_handle)"
+        _validate_spatial_query_expression(
+            descriptor.condition.expression, resources, domain,
+            plan, layout, descriptor.effect, source)
+        _validate_spatial_query_expression(
+            descriptor.value.expression, resources, domain,
+            plan, layout, descriptor.effect, source)
+    end
+    return nothing
+end
+
+function _validate_stage_state_domains(
+        plan::StageExecutionPlan, layout, sources, kind_count,
+        domain_kind_mask, tracker_plan,
+    )
     for group in (plan.accepted_copy..., plan.before_lifecycle..., plan.after_lifecycle...),
             descriptor in group.instances
         source = _descriptor_source(
@@ -584,6 +693,9 @@ function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources
         _validate_model_read_domain(descriptor.value.expression, layout, nothing, source, plan)
         _validate_state_write_handles(layout, descriptor.access.writes, source)
         effect = descriptor.effect
+        _validate_stage_tracker_anchor(descriptor.condition.expression, effect, source)
+        _validate_stage_tracker_anchor(descriptor.value.expression, effect, source)
+        effect isa CellAssignmentEffect && _stage_tracker_descriptors(descriptor, tracker_plan, source)
         effect isa ShiftAppendEffect && _history_contract(plan, layout, effect.target)
         if effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect, ModelAssignmentEffect, CellAssignmentEffect}
             index = findfirst(entry -> entry.handle == effect.target, layout.entries)
@@ -598,7 +710,7 @@ function _validate_stage_state_domains(plan::StageExecutionPlan, layout, sources
             end
         end
         if effect isa CellAssignmentEffect
-            effect.domain_kind <= kind_count && !medium_kinds[effect.domain_kind] ||
+            effect.domain_kind <= kind_count && !domain_kind_mask[effect.domain_kind] ||
                 throw(ArgumentError("cell-stage at $source requires a declared finite-cell kind"))
             expression_handles = (expression_state_handles(descriptor.condition.expression)...,
                 expression_state_handles(descriptor.value.expression)...)
@@ -673,7 +785,7 @@ function allocate_stage_runtime_buffers(
     site_descriptors = _stage_buffer_descriptors(_after_mcs_groups(plan), Int(plan.after_mcs_scratch_count), effect -> effect isa Union{SiteAssignmentEffect, IteratedSiteAssignmentEffect})
     after = map(site_descriptors) do descriptor
         V = _stage_value_type(descriptor.effect, T)
-        map(_ -> _state_value_zero(V), CartesianIndices(shape))
+        map(_ -> _state_value_zero(StageEvaluation{V}), CartesianIndices(shape))
     end
     model_count = sum(
         (

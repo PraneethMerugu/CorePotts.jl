@@ -173,13 +173,19 @@ function _plan_creation!(
         selected > 0 || return _lifecycle_planning_inadmissible(
             LifecycleDetailPlacementOutOfBounds
         )
+        @inbounds(runtime.program.domain.mutable_mask[selected]) != 0 ||
+            return _lifecycle_planning_inadmissible(
+                LifecycleDetailImmutableDomainSite
+            )
         for prior in 1:(position - 1)
             @inbounds workspace.planned_sites[prior, request] == selected &&
                 return _lifecycle_planning_inadmissible(
                     LifecycleDetailDuplicatePlacementSite
                 )
         end
-        owner = @inbounds runtime.ownership[selected]
+        owner = owner_at(
+            runtime.program.domain, runtime.ownership, selected
+        )
         owner <= 0 || return _lifecycle_planning_inadmissible(
             LifecycleDetailPlacementSiteUnavailable
         )
@@ -197,7 +203,7 @@ end
         runtime, descriptor, anchor, generation, ::_RandomPlanePartitionPlan
     )
     T = eltype(runtime.parameters)
-    N = length(runtime.program.shape)
+    N = length(runtime.program.domain.shape)
     N == 2 || return nothing
     draw = _lifecycle_uniform(
         T,
@@ -216,7 +222,7 @@ end
         runtime, anchor, ::Val{Major}
     ) where {Major}
     T = eltype(runtime.parameters)
-    length(runtime.program.shape) == 2 || return nothing
+    length(runtime.program.domain.shape) == 2 || return nothing
     statistics = _cell_shape_statistics(runtime, anchor)
     statistics === nothing && return nothing
     covariance = statistics[3]
@@ -265,7 +271,7 @@ function _label_division_sites!(
     for record in records
         linear = Int(record.site)
         position = Int(_lifecycle_site_position(workspace, linear))
-        site = CartesianIndices(runtime.program.shape)[linear]
+        site = CartesianIndices(runtime.program.domain.shape)[linear]
         projection = zero(T)
         for dimension in 1:N
             projection += (
@@ -293,7 +299,7 @@ function _label_division_sites!(
     for record in records
         linear = Int(record.site)
         position = Int(_lifecycle_site_position(workspace, linear))
-        site = CartesianIndices(runtime.program.shape)[linear]
+        site = CartesianIndices(runtime.program.domain.shape)[linear]
         context = _LifecyclePartitionContext(
             runtime,
             descriptor.source_identity,
@@ -384,14 +390,16 @@ function _partition_connected(
         linear = Int(@inbounds workspace.site_queue[head])
         head += 1
         visited += 1
-        center = CartesianIndices(runtime.program.shape)[linear]
+        center = CartesianIndices(runtime.program.domain.shape)[linear]
         for direction in axes(relation, 2)
             neighbor = _neighbor_index(
                 runtime.program, center, relation, Int(direction)
             )
             neighbor === nothing && continue
-            neighbor_linear = LinearIndices(runtime.program.shape)[neighbor]
-            @inbounds runtime.ownership[neighbor_linear] == anchor || continue
+            neighbor_linear = LinearIndices(runtime.program.domain.shape)[neighbor]
+            owner_at(
+                runtime.program.domain, runtime.ownership, neighbor_linear
+            ) == anchor || continue
             position = Int(_lifecycle_site_position(
                 workspace, neighbor_linear
             ))

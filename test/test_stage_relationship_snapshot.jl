@@ -85,10 +85,13 @@ function _relationship_snapshot_runtime(engine; ordered_tail = nothing)
         relationships, Int16[2, 2], UInt32[1, 1], relationship_schema,
         [CorePotts.CreateRelationshipRequest(1, 2, (0.0f0,); generation_a = 1, generation_b = 1, identity = 1)],
     )
+    domain = CorePotts._standard_cartesian_ownership_domain(
+        (6, 6), (true, true), 2, 1, Bool[true, false]
+    )
     checkerboard_plan = engine isa CorePotts.CheckerboardProgramEngine ?
-        CorePotts.CheckerboardPlan((6, 6), (true, true), zeros(Int8, 2, 0)) : CorePotts.NoCheckerboardPlan()
+        CorePotts.CheckerboardPlan(domain, zeros(Int8, 2, 0)) : CorePotts.NoCheckerboardPlan()
     program = CorePotts.CompiledPottsProgram(
-        (6, 6), (true, true), zeros(Int8, 2, 1), 2, 1,
+        domain, zeros(Int8, 2, 1), 2,
         CorePotts.CompiledScalar(0.0f0), 1, Float32[], (relationship_schema,),
         CorePotts.TrackerExecutionPlan((CorePotts.OwnershipCountTracker(),), "mixed-stage-count"),
         descriptor_plan, stage_plan, engine, CorePotts.CPUProgramBackend(),
