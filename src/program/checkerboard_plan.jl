@@ -8,6 +8,13 @@ struct NoCheckerboardPlan <: AbstractCheckerboardPlan end
 
 struct _VerifiedCheckerboardPlanToken end
 
+@inline function _validate_checkerboard_site_count(site_count::Integer)
+    0 <= site_count < typemax(Int32) || throw(ArgumentError(
+        "checkerboard site count leaves no representable Int32 offset sentinel"
+    ))
+    return Int(site_count)
+end
+
 """Validated color classes, site mappings, and proposal geometry for checkerboard execution."""
 struct CheckerboardPlan{
         N,
@@ -16,7 +23,7 @@ struct CheckerboardPlan{
         D <: AbstractMatrix{Int16},
     } <: AbstractCheckerboardPlan
     shape::NTuple{N, Int}
-    periodic::NTuple{N, Bool}
+    domain_identity::UInt64
     sites::S
     color_offsets::O
     conflict_displacements::D
@@ -24,7 +31,7 @@ struct CheckerboardPlan{
     maximum_color_size::Int32
     function CheckerboardPlan(
             shape::NTuple{N, Int},
-            periodic::NTuple{N, Bool},
+            domain_identity::UInt64,
             sites::S,
             color_offsets::O,
             conflict_displacements::D,
@@ -39,7 +46,7 @@ struct CheckerboardPlan{
         }
         return new{N, S, O, D}(
             shape,
-            periodic,
+            domain_identity,
             sites,
             color_offsets,
             conflict_displacements,
@@ -80,49 +87,46 @@ function _canonical_conflict_displacements(
 end
 
 @inline function _realized_conflict_site(
-        shape::NTuple{N, Int},
-        periodic::NTuple{N, Bool},
+        domain::CartesianOwnershipDomain{N},
         indices::CartesianIndices{N},
-        linear::LinearIndices{N},
         site::Int,
         displacements::Matrix{Int16},
         column::Int,
     ) where {N}
-    coordinates = Tuple(indices[site])
-    neighbor = ntuple(N) do dimension
-        value = coordinates[dimension] + Int(displacements[dimension, column])
-        if periodic[dimension]
-            mod1(value, shape[dimension])
-        elseif 1 <= value <= shape[dimension]
-            value
-        else
-            0
-        end
-    end
-    any(iszero, neighbor) && return 0
-    return linear[CartesianIndex(neighbor)]
+    neighbor = realize_cartesian_neighbor(
+        domain,
+        domain.obstacle_owner_handles,
+        indices[site],
+        displacements,
+        column,
+        MutableSiteRelationAccess,
+    )
+    return neighbor.category === MutableCartesianNeighbor ?
+        Int(neighbor.site) : 0
 end
 
 function _canonical_checkerboard_fields(
-        shape::NTuple{N, Int},
-        periodic::NTuple{N, Bool},
+        domain::CartesianOwnershipDomain{N},
         displacements::AbstractMatrix{<:Integer},
     ) where {N}
+    shape = domain.shape
     all(>(0), shape) || throw(ArgumentError(
         "checkerboard dimensions must be positive"
     ))
     canonical = _canonical_conflict_displacements(displacements, N)
-    site_count = prod(shape; init = 1)
+    site_count = _validate_checkerboard_site_count(
+        _cartesian_site_count(shape)
+    )
     indices = CartesianIndices(shape)
-    linear = LinearIndices(shape)
     colors = zeros(Int32, site_count)
     forbidden = falses(size(canonical, 2) + 1)
     maximum_color = 0
-    for site in 1:site_count
+    for site32 in domain.mutable_sites
+        site = Int(site32)
         fill!(forbidden, false)
         for column in axes(canonical, 2)
             neighbor = _realized_conflict_site(
-                shape, periodic, indices, linear, site, canonical, column
+                domain, indices, site, canonical, column
             )
             (neighbor == 0 || neighbor >= site) && continue
             color = Int(@inbounds colors[neighbor])
@@ -136,9 +140,10 @@ function _canonical_checkerboard_fields(
         maximum_color = max(maximum_color, color)
     end
 
-    for site in 1:site_count, column in axes(canonical, 2)
+    for site32 in domain.mutable_sites, column in axes(canonical, 2)
+        site = Int(site32)
         neighbor = _realized_conflict_site(
-            shape, periodic, indices, linear, site, canonical, column
+            domain, indices, site, canonical, column
         )
         (neighbor == 0 || neighbor == site) && continue
         @inbounds colors[neighbor] != colors[site] || error(
@@ -151,7 +156,8 @@ function _canonical_checkerboard_fields(
     maximum_color_size = 0
     for color in 1:maximum_color
         first_index = length(sites) + 1
-        for site in 1:site_count
+        for site32 in domain.mutable_sites
+            site = Int(site32)
             @inbounds colors[site] == color && push!(sites, Int32(site))
         end
         push!(offsets, Int32(length(sites) + 1))
@@ -159,8 +165,8 @@ function _canonical_checkerboard_fields(
             maximum_color_size, length(sites) - first_index + 1
         )
     end
-    length(sites) == site_count || error(
-        "checkerboard coloring did not schedule every site exactly once"
+    length(sites) == length(domain.mutable_sites) || error(
+        "checkerboard coloring did not schedule every mutable site exactly once"
     )
     return (
         sites,
@@ -172,19 +178,20 @@ function _canonical_checkerboard_fields(
 end
 
 function CheckerboardPlan(
-        shape::NTuple{N, Int},
-        periodic::NTuple{N, Bool},
+        domain::CartesianOwnershipDomain{N},
         displacements::AbstractMatrix{<:Integer},
     ) where {N}
-    fields = _canonical_checkerboard_fields(shape, periodic, displacements)
+    fields = _canonical_checkerboard_fields(domain, displacements)
     return CheckerboardPlan(
-        shape, periodic, fields..., _VerifiedCheckerboardPlanToken()
+        domain.shape,
+        cartesian_domain_identity(domain),
+        fields...,
+        _VerifiedCheckerboardPlanToken(),
     )
 end
 
 function CheckerboardPlan(
-        shape::NTuple{N, Int},
-        periodic::NTuple{N, Bool},
+        domain::CartesianOwnershipDomain{N},
         sites::AbstractVector{Int32},
         color_offsets::AbstractVector{Int32},
         conflict_displacements::AbstractMatrix{Int16},
@@ -192,7 +199,7 @@ function CheckerboardPlan(
         maximum_color_size::Integer,
     ) where {N}
     fields = _canonical_checkerboard_fields(
-        shape, periodic, conflict_displacements
+        domain, conflict_displacements
     )
     supplied = (
         collect(sites),
@@ -205,8 +212,8 @@ function CheckerboardPlan(
         "checkerboard plan fields are not the canonical verified coloring"
     ))
     return CheckerboardPlan(
-        shape,
-        periodic,
+        domain.shape,
+        cartesian_domain_identity(domain),
         fields...,
         _VerifiedCheckerboardPlanToken(),
     )
@@ -217,7 +224,7 @@ function checkerboard_plan_report(plan::CheckerboardPlan)
     return (
         algorithm = :canonical_realized_greedy_v1,
         shape = plan.shape,
-        periodic = plan.periodic,
+        domain_identity = plan.domain_identity,
         color_count = Int(plan.color_count),
         maximum_color_size = Int(plan.maximum_color_size),
         site_count = length(plan.sites),
@@ -234,7 +241,7 @@ checkerboard_plan_report(::NoCheckerboardPlan) = nothing
 function Adapt.adapt_structure(to, plan::CheckerboardPlan)
     return CheckerboardPlan(
         plan.shape,
-        plan.periodic,
+        plan.domain_identity,
         Adapt.adapt(to, plan.sites),
         Adapt.adapt(to, plan.color_offsets),
         Adapt.adapt(to, plan.conflict_displacements),

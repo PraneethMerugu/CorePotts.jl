@@ -161,11 +161,10 @@ function _checkerboard_kernel_program(
     extinction_policies = _checkerboard_compiled_extinction_policies(program)
     relationship_layout = _checkerboard_compiled_relationship_layout(program)
     return CheckerboardKernelProgram(
-        program.shape,
-        program.periodic,
+        program.domain.shape,
+        to === nothing ? program.domain : Adapt.adapt(to, program.domain),
         to === nothing ? program.proposal_offsets :
             Adapt.adapt(to, program.proposal_offsets),
-        program.medium_kind,
         program.temperature,
         program.attempts_per_site,
         to === nothing ? program.relationships :
@@ -192,8 +191,7 @@ _checkerboard_domain_resources(program) =
 tracker_source_view(program::CheckerboardKernelProgram, ownership) =
     TrackerSourceView(
         ownership,
-        program.shape,
-        program.periodic,
+        program.domain,
         program.domain_resources,
     )
 
