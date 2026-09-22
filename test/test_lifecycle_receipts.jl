@@ -665,6 +665,57 @@ function receipt_program(plan; domain = nothing)
     )
 end
 
+@testset "compiled programs carry Cartesian domain facts to lifecycle consumers" begin
+    default_medium = CorePotts.DomainOwnerMetadata(
+        0, CorePotts.MediumDomainOwnerCategory, 1
+    )
+    reservoir = CorePotts.DomainOwnerMetadata(
+        9, CorePotts.MediumDomainOwnerCategory, 1
+    )
+    wall = CorePotts.DomainOwnerMetadata(
+        10, CorePotts.WallDomainOwnerCategory, 1
+    )
+    domain = CorePotts.CartesianOwnershipDomain(
+        (6, 6), default_medium, [reservoir, wall]
+    )
+    plan = receipt_lifecycle_plan()
+    remove_index = findfirst(
+        descriptor -> descriptor.effect === CorePotts.RemoveCellLifecycleEffect,
+        plan.descriptors,
+    )
+    reservoir_code = CorePotts.domain_owner_code(domain, reservoir)
+    plan.descriptors[remove_index] = receipt_descriptor(
+        2, CorePotts.RemoveCellLifecycleEffect;
+        domain_kind = 2,
+        replacement_owner = reservoir_code,
+    )
+
+    program = receipt_program(plan; domain)
+    compiled_domain = CorePotts.cartesian_domain(program)
+    @test compiled_domain !== domain
+    @test CorePotts.owner_metadata(
+        compiled_domain, Int16[], UInt32[], reservoir_code
+    ) ==
+        CorePotts.OwnerMetadata(
+            reservoir.identity,
+            reservoir.category,
+            reservoir.kind,
+            UInt32(0),
+        )
+    @test only(filter(
+        descriptor -> descriptor.effect === CorePotts.RemoveCellLifecycleEffect,
+        program.lifecycle_plan.descriptors,
+    )).replacement_owner == reservoir_code
+
+    invalid_plan = receipt_lifecycle_plan()
+    invalid_plan.descriptors[remove_index] = receipt_descriptor(
+        2, CorePotts.RemoveCellLifecycleEffect;
+        domain_kind = 2,
+        replacement_owner = CorePotts.domain_owner_code(domain, wall),
+    )
+    @test_throws ArgumentError receipt_program(invalid_plan; domain)
+end
+
 @testset "remove-cell settlement preserves the selected medium owner" begin
     default_medium = CorePotts.DomainOwnerMetadata(
         0, CorePotts.MediumDomainOwnerCategory, 1
