@@ -116,8 +116,7 @@ function _lifecycle_structure_launch_payload(state, tracker_source)
     )
     commit_source = _LifecycleTrackerCommitSource(
         tracker_source.ownership,
-        tracker_source.shape,
-        tracker_source.periodic,
+        tracker_source.domain,
         tracker_source.domain_resources,
     )
     return runtime, plan, commit_source

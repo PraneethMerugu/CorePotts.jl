@@ -378,10 +378,9 @@ end
 Adapt.@adapt_structure TrackerSourceView
 
 """Ownership geometry required by lifecycle tracker updates."""
-struct _LifecycleTrackerCommitSource{O, S, P, R} <: AbstractTrackerCommitSource
+struct _LifecycleTrackerCommitSource{O, D, R} <: AbstractTrackerCommitSource
     ownership::O
-    shape::S
-    periodic::P
+    domain::D
     domain_resources::R
 end
 

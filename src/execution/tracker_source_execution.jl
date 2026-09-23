@@ -608,7 +608,7 @@ function _site_tracker_source_bindings(declaration, source; backend, copy_source
             copyto!(values, source.parameters)
         end
         (declaration.parameter_field => _checkerboard_parameter_view(values,
-            Val(declaration.parameter_count), Tuple(source.shape)),)
+            Val(declaration.parameter_count), Tuple(source.domain.shape)),)
     end
     return (
         declaration.ownership => source.ownership,
@@ -621,7 +621,9 @@ function _execute_site_tracker_rebuild(
         descriptor, source, cell_kinds;
         backend = KernelAbstractions.CPU(), copy_source = false
     )
-    declaration = _site_tracker_rebuild_declaration(descriptor, source.shape, length(cell_kinds), eltype(source.parameters))
+    declaration = _site_tracker_rebuild_declaration(
+        descriptor, source.domain.shape, length(cell_kinds), eltype(source.parameters)
+    )
     prepared = LocalMath.prepare(
         declaration.law,
         _site_tracker_source_bindings(declaration, source; backend, copy_source)...,
@@ -705,7 +707,7 @@ function _prepare_lifecycle_site_trackers(bank, open, backend, lease_capacity, l
         imported = LocalMath.Field(gate_space, Bool)
         gate = LocalMath.Field(gate_space, Bool)
         declaration = _site_tracker_rebuild_declaration(
-            descriptor, source.shape,
+            descriptor, source.domain.shape,
             length(workspace.staged_cell_kinds), eltype(source.parameters); gate
         )
         domain = declaration.ownership.space
