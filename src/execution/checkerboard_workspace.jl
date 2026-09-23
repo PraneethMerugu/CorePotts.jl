@@ -158,7 +158,7 @@ function _checkerboard_kernel_program(
     tracker_kernel = to === nothing ?
         tracker_kernel_plan(program.tracker_plan) :
         adapt_tracker_kernel_plan(to, program.tracker_plan, backend)
-    lifecycle_tracker_kernel = _checkerboard_lifecycle_tracker_plan(program)
+    lifecycle_tracker_kernel = _lifecycle_tracker_kernel_plan(program)
     extinction_policies = _checkerboard_compiled_extinction_policies(program)
     relationship_layout = _checkerboard_compiled_relationship_layout(program)
     return CheckerboardKernelProgram(
@@ -185,9 +185,9 @@ function _checkerboard_kernel_program(
     )
 end
 
-_checkerboard_lifecycle_tracker_plan(program::CheckerboardKernelProgram) =
+_lifecycle_tracker_kernel_plan(program::CheckerboardKernelProgram) =
     program.lifecycle_tracker_plan
-_checkerboard_lifecycle_tracker_plan(program) =
+_lifecycle_tracker_kernel_plan(program) =
     _lifecycle_tracker_kernel_plan(program.tracker_plan)
 
 _checkerboard_domain_resources(program::CheckerboardKernelProgram) =

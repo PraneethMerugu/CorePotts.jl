@@ -102,9 +102,9 @@ function _lifecycle_structure_launch_payload(state, tracker_source)
     lifecycle = state.program.lifecycle_plan
     runtime = _LifecycleStructureRuntime(
         _LifecycleStructureProgram(
-            state.program.shape,
+            tracker_source.domain.shape,
             _bind_lifecycle_tracker_plan(
-                state.program.lifecycle_tracker_plan, tracker_source
+                _lifecycle_tracker_kernel_plan(state.program), tracker_source
             ),
         ),
         state.cell_kinds,
