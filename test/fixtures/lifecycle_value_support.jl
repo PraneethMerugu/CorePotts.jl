@@ -196,6 +196,21 @@ function test_lifecycle_rule_composition(engine; adapt_to = identity)
     return
 end
 
+function test_named_product_lifecycle_retirement(engine; adapt_to = identity)
+    initial = (count = Int32(1), active = false,
+        direction = StaticArrays.SVector(Int32(1), Int32(2)))
+    numeric = (count = 2.0f0, active = 1.0f0,
+        direction = StaticArrays.SVector(3.0f0, 4.0f0))
+    expected = (count = Int32(2), active = true,
+        direction = StaticArrays.SVector(Int32(3), Int32(4)))
+    test_lifecycle_value_conversion(
+        engine; adapt_to, values = (numeric,), invalid = false,
+        initial_values = (initial,), expected_values = (expected,),
+        rule_indices = (1,), state_evaluator_values = (numeric,),
+    )
+    return
+end
+
 function test_lifecycle_small_numeric_values(engine; adapt_to = identity)
     for target_type in (Int32, UInt32, Bool), value in (0.0f0, -0.0f0, nextfloat(0.0f0), prevfloat(0.0f0), 0.5f0)
         invalid = !(value === 0.0f0 || value === -0.0f0)

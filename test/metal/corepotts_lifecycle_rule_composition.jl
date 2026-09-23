@@ -9,6 +9,10 @@ include(joinpath(@__DIR__, "..", "fixtures", "lifecycle_value_support.jl"))
     Metal.functional() || error("lifecycle rule composition requires functional Metal")
     Metal.allowscalar(false)
     test_lifecycle_rule_composition(CorePotts.CheckerboardProgramEngine(); adapt_to = Metal.MtlArray)
+    @testset "named product retirement" begin
+        test_named_product_lifecycle_retirement(
+            CorePotts.CheckerboardProgramEngine(); adapt_to = Metal.MtlArray)
+    end
     @testset "scalar evaluator preserves unselected product state" begin
         test_lifecycle_scalar_evaluator(CorePotts.CheckerboardProgramEngine(); adapt_to = Metal.MtlArray)
     end

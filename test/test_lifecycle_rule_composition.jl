@@ -4,6 +4,9 @@ include("fixtures/lifecycle_value_support.jl")
     for engine in (CorePotts.SequentialProgramEngine(), CorePotts.CheckerboardProgramEngine())
         @testset "$(nameof(typeof(engine)))" begin
             test_lifecycle_rule_composition(engine)
+            @testset "named product retirement" begin
+                test_named_product_lifecycle_retirement(engine)
+            end
             @testset "scalar evaluator preserves unselected product state" begin
                 test_lifecycle_scalar_evaluator(engine)
             end
