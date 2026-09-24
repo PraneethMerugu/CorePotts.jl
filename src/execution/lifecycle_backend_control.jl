@@ -78,6 +78,50 @@ Adapt.@adapt_structure _LifecycleStateEvaluatorPlan
 Adapt.@adapt_structure _LifecycleStatePolicyWorkspace
 Adapt.@adapt_structure _LifecycleStateRuntime
 
+struct _LifecycleStructureProgram{N, T}
+    shape::NTuple{N, Int}
+    tracker_plan::T
+end
+
+struct _LifecycleStructureRuntime{P, K, G}
+    program::P
+    cell_kinds::K
+    cell_generations::G
+end
+
+struct _LifecycleStructurePlan{D, O}
+    descriptors::D
+    ownership_rules::O
+end
+
+Adapt.@adapt_structure _LifecycleStructureProgram
+Adapt.@adapt_structure _LifecycleStructureRuntime
+Adapt.@adapt_structure _LifecycleStructurePlan
+
+function _lifecycle_structure_launch_payload(state, tracker_source)
+    lifecycle = state.program.lifecycle_plan
+    runtime = _LifecycleStructureRuntime(
+        _LifecycleStructureProgram(
+            tracker_source.domain.shape,
+            _bind_lifecycle_tracker_plan(
+                _lifecycle_tracker_kernel_plan(state.program), tracker_source
+            ),
+        ),
+        state.cell_kinds,
+        state.cell_generations,
+    )
+    plan = _LifecycleStructurePlan(
+        lifecycle.descriptors,
+        lifecycle.ownership_rules,
+    )
+    commit_source = _LifecycleTrackerCommitSource(
+        tracker_source.ownership,
+        tracker_source.domain,
+        tracker_source.domain_resources,
+    )
+    return runtime, plan, commit_source
+end
+
 function _lifecycle_state_launch_payload(state, workspace)
     lifecycle = state.program.lifecycle_plan
     program = _LifecycleStateProgram(

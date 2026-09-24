@@ -770,9 +770,17 @@ end
 
     counters = (restored.accepted, restored.rejected, restored.null_attempts)
     before_obstacle = copy(restored.ownership)
+    tracker_source = CorePotts.tracker_source_view(
+        program, restored.ownership;
+        parameters = restored.parameters,
+        descriptor_state = restored.descriptor_state,
+    )
+    _, _, commit_source = CorePotts._lifecycle_structure_launch_payload(
+        restored, tracker_source
+    )
     @test !CorePotts._stage_owner_change!(
         CorePotts.HostLifecycleExecution(), restored, plan,
-        restored.lifecycle_workspace, nothing, 36, Int32(0),
+        restored.lifecycle_workspace, commit_source, 36, Int32(0),
     )
     @test restored.ownership == before_obstacle
     @test (restored.accepted, restored.rejected, restored.null_attempts) == counters

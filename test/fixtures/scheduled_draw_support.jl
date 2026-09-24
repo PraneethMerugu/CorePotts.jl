@@ -1,4 +1,5 @@
-function scheduled_draw_runtime(engine; reverse_order = false, generations = UInt32[7, 11, 0], failure = false)
+function scheduled_draw_runtime(engine; reverse_order = false, generations = UInt32[7, 11, 0], failure = false,
+        backend = CorePotts.CPUProgramBackend())
     names = (:model_sample, :cell_sample, :site_sample, :iterated_sample)
     domains = (:model, :cell, :site, :site)
     shapes = ((1,), (4,), (6, 6), (6, 6))
@@ -73,7 +74,7 @@ function scheduled_draw_runtime(engine; reverse_order = false, generations = UIn
         CorePotts.WorkspaceLayout(CorePotts.WorkspaceSchema[]), (),
         Any[names..., :fixed_ownership], 1, "scheduled-draw-resources", CorePotts.HamiltonianDomainResources(0, 0),
     )
-    program = test_program(engine; descriptor_plan, stage_plan, scalar_type = Float32, parameter_defaults = Float32[1])
+    program = test_program(engine; descriptor_plan, stage_plan, scalar_type = Float32, parameter_defaults = Float32[1], backend)
     ownership = ones(Int32, 6, 6)
     ownership[1] = 2
     initial_values = map(layout.entries) do entry

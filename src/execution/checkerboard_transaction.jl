@@ -429,7 +429,7 @@ struct _CheckerboardCompiledRelationshipTransition{P,S}
     schema::S
 end
 
-struct _CheckerboardScalarTrackerEvaluator{N,D,R,S,A}
+struct _CheckerboardOwnerValueEvaluator{N,D,R,S,A}
     descriptors::D
     contact_ranges::R
     shape::S
@@ -483,6 +483,8 @@ struct _CheckerboardTrackerValueDomain{T} end
     typemin(T) <= value <= typemax(T)
 @inline (::_CheckerboardTrackerValueDomain{T})(value) where {T<:AbstractFloat} =
     isfinite(value)
+@inline (::_CheckerboardTrackerValueDomain{T})(value) where {T<:StaticArrays.SArray} =
+    all(isfinite, value)
 @inline _checkerboard_tracker_validation_combine(accumulator, value) = accumulator
 @inline _checkerboard_tracker_validation_finish(accumulator, count) = accumulator
 @inline _checkerboard_tracker_reduce(left, right) = left + right
@@ -553,29 +555,29 @@ end
         new_owner > 0 && (new_amount += neighbor_owner == new_owner ?
             Int32(-1) : Int32(1))
     end
-    return OldNewOwnerScalarDelta(old_amount, new_amount)
+    return OldNewOwnerValueDelta(old_amount, new_amount)
 end
 
-@inline _checkerboard_scalar_tracker_delta(
+@inline _checkerboard_owner_value_delta(
     ::OwnershipCountTracker, contact_sites, contact_owners, contact_ranges,
     target, old_owner, new_owner,
-) = OwnerScalarDelta(Int32(1))
+) = OwnerValueDelta(Int32(1))
 
-@inline _checkerboard_scalar_tracker_delta(
+@inline _checkerboard_owner_value_delta(
     descriptor::CellSurfaceTracker, contact_sites, contact_owners,
     contact_ranges, target, old_owner, new_owner,
 ) = _checkerboard_surface_tracker_delta(
     descriptor, contact_sites, contact_owners, contact_ranges,
     target[1], old_owner, new_owner)
 
-@inline _checkerboard_scalar_tracker_delta(
+@inline _checkerboard_owner_value_delta(
     descriptor::AbstractTrackerDescriptor, contact_sites, contact_owners,
     contact_ranges, target, old_owner, new_owner,
 ) = tracker_ownership_delta(
     descriptor, target[2], old_owner, new_owner)
 
-@inline function _checkerboard_scalar_tracker_pair(
-        delta::OwnerScalarDelta,
+@inline function _checkerboard_owner_value_pair(
+        delta::OwnerValueDelta,
         old_owner::Int32,
         new_owner::Int32,
         column::Int32,
@@ -594,8 +596,8 @@ end
     )
 end
 
-@inline function _checkerboard_scalar_tracker_pair(
-        delta::OldNewOwnerScalarDelta,
+@inline function _checkerboard_owner_value_pair(
+        delta::OldNewOwnerValueDelta,
         old_owner::Int32,
         new_owner::Int32,
         column::Int32,
@@ -614,12 +616,12 @@ end
     )
 end
 
-@inline _checkerboard_scalar_tracker_contributions(
+@inline _checkerboard_owner_value_contributions(
     ::Tuple{}, contact_sites, contact_owners, contact_ranges, target,
     old_owner, new_owner, column, owner_capacity, accepted, accumulator_type,
 ) = ()
 
-@inline function _checkerboard_scalar_tracker_contributions(
+@inline function _checkerboard_owner_value_contributions(
         descriptors::Tuple,
         contact_sites,
         contact_owners,
@@ -632,21 +634,21 @@ end
         accepted,
         accumulator_type,
     )
-    delta = _checkerboard_scalar_tracker_delta(
+    delta = _checkerboard_owner_value_delta(
         first(descriptors), contact_sites, contact_owners, contact_ranges,
         target, old_owner, new_owner)
     return (
-        _checkerboard_scalar_tracker_pair(
+        _checkerboard_owner_value_pair(
             delta, old_owner, new_owner, column, owner_capacity, accepted,
             accumulator_type)...,
-        _checkerboard_scalar_tracker_contributions(
+        _checkerboard_owner_value_contributions(
             Base.tail(descriptors), contact_sites, contact_owners,
             contact_ranges, target, old_owner, new_owner, column + Int32(1),
             owner_capacity, accepted, accumulator_type)...,
     )
 end
 
-@inline function (evaluator::_CheckerboardScalarTrackerEvaluator{Name,D,R,S,A})(
+@inline function (evaluator::_CheckerboardOwnerValueEvaluator{Name,D,R,S,A})(
         item::Int32, reads, parameters) where {Name,D,R,S,A}
     disposition = something(@inbounds getfield(reads, 1)[1].value)
     owners = something(@inbounds getfield(reads, 2)[1].value)
@@ -656,7 +658,7 @@ end
     contact_owners = fieldcount(typeof(reads)) >= 5 ?
         something(@inbounds getfield(reads, 5)[1].value) : ()
     accepted = disposition == _PROGRAM_CHECKERBOARD_ACCEPTED
-    contributions = _checkerboard_scalar_tracker_contributions(
+    contributions = _checkerboard_owner_value_contributions(
         evaluator.descriptors, contact_sites, contact_owners,
         evaluator.contact_ranges,
         (sites[1], _checkerboard_cartesian_site(evaluator.shape, sites[1])),
@@ -733,6 +735,7 @@ function _checkerboard_tracker_accumulator_type(::Type{T}) where {T<:Integer}
     return _TrackerWideInteger
 end
 _checkerboard_tracker_accumulator_type(::Type{T}) where {T<:AbstractFloat} = T
+_checkerboard_tracker_accumulator_type(::Type{T}) where {T<:StaticArrays.SArray} = T
 _checkerboard_tracker_scratch(field::LocalMath.Field) = LocalMath.Field(
     field.space, _checkerboard_tracker_accumulator_type(eltype(field)))
 
@@ -788,20 +791,26 @@ function _checkerboard_transactional_tracker_group(laws_builder,
             terminal_gate, Symbol(:checkerboard_tracker_commit_,
                 tracker_index, :_, index))
         for (index, (source, scratch)) in enumerate(zip(source_fields, fields)))
-    laws = laws_builder(fields)
+    declaration = laws_builder(fields)
     validations = filter(!isnothing, ntuple(length(fields)) do index
         _checkerboard_tracker_validation(
             fields[index], eltype(source_fields[index]), tracker_index, index)
     end)
     return (; tracker_index = Int32(tracker_index), source_fields, fields,
-        paths, initialization_laws, laws,
+        paths, initialization_laws, laws = declaration.laws,
         validation_laws = map(validation -> validation.law, validations),
-        validation_bindings = Tuple(pair for validation in validations
-            for pair in validation.bindings),
+        bindings = (declaration.bindings..., Tuple(pair for validation in validations
+            for pair in validation.bindings)...),
         commit_laws)
 end
 
-function _checkerboard_scalar_tracker_laws(
+function _checkerboard_owner_tracker_declaration(accepted, field, descriptor,
+        owner_capacity, terminal_gate, label)
+    return (laws = _checkerboard_owner_value_laws(accepted, field, (descriptor,), 1,
+        owner_capacity, terminal_gate, label), bindings = ())
+end
+
+function _checkerboard_owner_value_laws(
         accepted,
         field,
         descriptors::Tuple,
@@ -820,7 +829,7 @@ function _checkerboard_scalar_tracker_laws(
     relation = LocalMath.RuntimeRelation(
         accepted.source_space => field.space;
         degree_bound = 2chunk_count, key_type = Int32)
-    evaluator = _CheckerboardScalarTrackerEvaluator{
+    evaluator = _CheckerboardOwnerValueEvaluator{
         name,typeof(chunk),typeof(accepted.contact_ranges),
         typeof(accepted.shape),eltype(field)}(
             chunk, accepted.contact_ranges, accepted.shape,
@@ -842,7 +851,7 @@ function _checkerboard_scalar_tracker_laws(
     )
     return (
         LocalMath.LocalLaw(stage),
-        _checkerboard_scalar_tracker_laws(
+        _checkerboard_owner_value_laws(
             accepted, field, remaining,
             first_column + chunk_count, owner_capacity, terminal_gate,
             label_prefix)...,
@@ -899,7 +908,9 @@ end
 function _checkerboard_tracker_group(
         accepted, descriptor, value, tracker_index::Integer,
         owner_capacity::Integer, terminal_gate)
-    if descriptor isa DenseScalarTrackerGroup
+    if descriptor isa Union{
+            DenseScalarTrackerGroup, _DenseScalarTrackerKernelGroup,
+        }
         descriptors = Tuple(descriptor.descriptors)
         source_fields = map(enumerate(descriptors)) do indexed
             column, instance = indexed
@@ -913,27 +924,28 @@ function _checkerboard_tracker_group(
         end
         return _checkerboard_transactional_tracker_group(
             tracker_index, source_fields, paths, terminal_gate) do fields
-            Tuple(law for (column, field) in enumerate(fields)
-                for law in _checkerboard_scalar_tracker_laws(
-                    accepted, field, (descriptors[column],), 1,
-                    owner_capacity, terminal_gate,
-                    Symbol(:checkerboard_tracker_, tracker_index, :_, column)))
+            declarations = map(enumerate(fields)) do (column, field)
+                _checkerboard_owner_tracker_declaration(accepted, field, descriptors[column],
+                    owner_capacity, terminal_gate, Symbol(:checkerboard_tracker_, tracker_index, :_, column))
+            end
+            (laws = Tuple(law for declaration in declarations for law in declaration.laws),
+                bindings = Tuple(binding for declaration in declarations for binding in declaration.bindings))
         end
     elseif descriptor isa OwnershipCountTracker
         return _checkerboard_transactional_tracker_group(
             tracker_index, (accepted.cell_volumes,), (nothing,),
             terminal_gate) do fields
-            _checkerboard_scalar_tracker_laws(
-                accepted, only(fields), (descriptor,), 1, owner_capacity,
+            _checkerboard_owner_tracker_declaration(
+                accepted, only(fields), descriptor, owner_capacity,
                 terminal_gate, Symbol(:checkerboard_tracker_, tracker_index))
         end
-    elseif tracker_storage(descriptor) isa DenseOwnerScalarStorage
-        if !(descriptor isa Union{OwnershipCountTracker,CellSurfaceTracker})
+    elseif tracker_storage(descriptor) isa Union{DenseOwnerScalarStorage, DenseOwnerValueStorage}
+        if !(descriptor isa Union{OwnershipCountTracker, CellSurfaceTracker, _SiteExpressionTracker})
             target_type = CartesianIndex{length(accepted.shape)}
             hasmethod(tracker_ownership_delta, Tuple{
                 typeof(descriptor),target_type,Int32,Int32}) || throw(
                 ArgumentError(
-                    "custom checkerboard scalar tracker delta must be " *
+                    "custom checkerboard owner-value tracker delta must be " *
                     "computable from its descriptor, target, and owners"))
         end
         match = findfirst(==(descriptor), accepted.tracker_descriptors)
@@ -942,8 +954,8 @@ function _checkerboard_tracker_group(
         return _checkerboard_transactional_tracker_group(
             tracker_index, (source,),
             (match === nothing ? :self : nothing,), terminal_gate) do fields
-            _checkerboard_scalar_tracker_laws(
-                accepted, only(fields), (descriptor,), 1, owner_capacity,
+            _checkerboard_owner_tracker_declaration(
+                accepted, only(fields), descriptor, owner_capacity,
                 terminal_gate, Symbol(:checkerboard_tracker_, tracker_index))
         end
     elseif descriptor isa CellMomentsTracker
@@ -980,7 +992,7 @@ function _checkerboard_tracker_group(
                         eltype(value.second), 1, owner_capacity, terminal_gate,
                         Symbol(:checkerboard_tracker_, tracker_index,
                             :_second_, slot)))
-                (first_laws..., second_laws...)
+                (laws = (first_laws..., second_laws...), bindings = ())
             end
         end
         first_field = _checkerboard_tracker_field(value.first)
@@ -1004,7 +1016,7 @@ function _checkerboard_tracker_group(
                 accepted, fields[2], second_components, eltype(value.second),
                 dimensions * dimensions, owner_capacity, terminal_gate,
                 Symbol(:checkerboard_tracker_, tracker_index, :_second))
-            (first_laws..., second_laws...)
+            (laws = (first_laws..., second_laws...), bindings = ())
         end
     end
     throw(ArgumentError(

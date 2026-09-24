@@ -303,6 +303,15 @@ function _preflight_checkerboard_mcs!(
     end
     if execution.lifecycle_reductions !== nothing
         reductions = execution.lifecycle_reductions[destination_bank_index]
+        length(reductions.site_trackers) == policy.lifecycle_site_snapshot_submissions_per_mcs ==
+            policy.lifecycle_site_reconstruction_submissions_per_mcs || throw(
+            ArgumentError(
+                "checkerboard lifecycle site reconstruction submission policy is inconsistent"
+            )
+        )
+        for tracker in reductions.site_trackers, prepared in values(tracker)
+            preparations = (preparations..., (:lifecycle_site_trackers, prepared, 1))
+        end
         preparations = (
             preparations...,
             (
@@ -359,30 +368,22 @@ function _enqueue_checkerboard_mcs_after_preflight!(
     execute_checkerboard_mcs!(execution, current_mcs, destination; workgroup_size)
     bank = _checkerboard_authorized_bank(execution, destination)
     _execute_compiled_stage_boundary!(
-        execution, execution.stage_boundaries.before, destination)
-    lifecycle_receipts = enqueue_lifecycle_backend_index!(
+        execution, execution.stage_boundaries.before, destination
+    )
+    # Retain each submitted prefix immediately: a later native kernel launch
+    # can fail before lifecycle enqueue returns its complete receipt group.
+    enqueue_lifecycle_backend_index!(
         destination,
         execution.lifecycle_reductions === nothing ? nothing :
             execution.lifecycle_reductions[bank];
         workgroup_size,
+        record_receipt = (kind, receipt) -> _record_checkerboard_receipt!(
+            getproperty(execution.receipts.lifecycle, kind), bank, receipt
+        ),
     )
-    lifecycle_receipts === nothing || begin
-        current = execution.receipts.lifecycle
-        _record_checkerboard_receipt!(
-            current.direct, bank, lifecycle_receipts.direct)
-        _record_checkerboard_receipt!(
-            current.planning, bank, lifecycle_receipts.planning)
-        _record_checkerboard_receipt!(
-            current.site_index, bank, lifecycle_receipts.site_index)
-        _record_checkerboard_receipt!(
-            current.request_index, bank, lifecycle_receipts.request_index)
-        _record_checkerboard_receipt!(
-            current.emission, bank, lifecycle_receipts.emission)
-        _record_checkerboard_receipt!(
-            current.selection, bank, lifecycle_receipts.selection)
-    end
     _execute_compiled_stage_boundary!(
-        execution, execution.stage_boundaries.after, destination)
+        execution, execution.stage_boundaries.after, destination
+    )
     _enqueue_program_bank_publication!(
         destination, workspace.report, destination_bank, current_mcs + 1
     )

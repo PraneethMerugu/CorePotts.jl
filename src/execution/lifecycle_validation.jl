@@ -255,27 +255,54 @@ function _stage_lifecycle_transactions!(
     copyto_auxiliary_state!(
         workspace.staged_descriptor_state, runtime.descriptor_state
     )
-    # The inactive bank is the concrete planned-after state. Finish structural
+    # The current transaction bank is the concrete planned-after state. Finish structural
     # and derived consequences before state policies observe that view; no
     # scientific value is published until every phase validates.
     tracker_source = tracker_source_view(
-        runtime.program, workspace.staged_ownership
+        runtime.program, workspace.staged_ownership;
+        parameters = runtime.parameters, descriptor_state = workspace.staged_descriptor_state
     )
+    site_trackers = try
+        prepared = _prepare_lifecycle_site_trackers(
+            runtime, Bool[true], KernelAbstractions.CPU(), 1,
+            runtime.program.descriptor_plan.state_layout, runtime.program.stage_plan
+        )
+        for tracker in prepared
+            wait(_execute_lifecycle_site_tracker_snapshot!(tracker))
+        end
+        prepared
+    catch
+        _set_lifecycle_status!(workspace, ProgramStatusInvariant; detail = LifecycleDetailTrackerCommitInvalid)
+        _stamp_host_lifecycle_failure!(runtime, plan, workspace, ProgramStageStructure)
+        return -1
+    end
     for position in 1:selected_count
         request = Int(_lifecycle_selected_request(workspace, position))
         _stage_lifecycle_request_structure!(
             HostLifecycleExecution(), runtime, plan, workspace,
             tracker_source, request,
-        ) || return (_stamp_host_lifecycle_failure!(
-            runtime, plan, workspace, ProgramStageStructure
-        ); -1)
+        ) || return (
+            _stamp_host_lifecycle_failure!(
+                runtime, plan, workspace, ProgramStageStructure
+            ); -1
+        )
+    end
+    try
+        for tracker in site_trackers
+            wait(LocalMath.execute!(tracker.reconstruction))
+        end
+    catch
+        _set_lifecycle_status!(workspace, ProgramStatusInvariant; detail = LifecycleDetailTrackerCommitInvalid)
+        _stamp_host_lifecycle_failure!(runtime, plan, workspace, ProgramStageStructure)
+        return -1
     end
     for position in 1:selected_count
         request = Int(_lifecycle_selected_request(workspace, position))
         _stage_lifecycle_request_relationships!(
             HostLifecycleExecution(), runtime, plan, workspace, request
-        ) || return (_stamp_host_lifecycle_failure!(
-            runtime, plan, workspace, ProgramStageRelationships
+        ) || return (
+            _stamp_host_lifecycle_failure!(
+                runtime, plan, workspace, ProgramStageRelationships
         ); -1)
     end
     for position in 1:selected_count
